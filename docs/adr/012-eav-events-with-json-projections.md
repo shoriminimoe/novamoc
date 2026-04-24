@@ -1,0 +1,92 @@
+# ADR-012: EAV-Grain Events with Materialized JSON Projections
+
+## Status
+
+Proposed
+
+## Context
+
+ADR-005 establishes that reads operate over entities with a `properties` JSON column — one row per entity, user-defined values accessed via `json_extract`. ADR-007 establishes per-field last-write-wins as the projection fold. These two decisions are in tension: per-field LWW requires events at per-field grain, but JSON-per-entity is per-entity grain.
+
+If we recorded events at JSON-per-entity grain, two offline events against different fields of the same entity would appear to the fold as two writes to the same column (`properties`) — and the fold would pick one, losing the other user's contribution. This is the exact failure mode per-field LWW is meant to prevent.
+
+If we abandoned the JSON read projection and adopted EAV for reads, we would get per-field fold trivially but inherit all the EAV pathology ADR-005 was designed to avoid: self-join-heavy queries, type erasure, row count explosion, difficult aggregates.
+
+The resolution is to use different grains for the event log and the read projection. Events are at field grain. Reads project into entity-grain JSON. A disciplined write path keeps both consistent.
+
+## Decision
+
+All non-schema data that is synchronized produces events at field grain. Each event targets a single (entity, field) pair — or an entire row for create and delete operations. Entity tables expose a per-entity JSON projection (ADR-005) for reads. Whenever an event updates a field, the corresponding entity's JSON properties are updated in the same transaction to reflect the new value.
+
+**Field-grain projection tables.** For each entity family that carries user-defined fields, a per-field-value table holds the current folded value of each field of each entity:
+
+```sql
+CREATE TABLE asset_field_values (
+  tenant_id   TEXT NOT NULL,
+  asset_id    TEXT NOT NULL,
+  field_id    TEXT NOT NULL,
+  value_json  TEXT,               -- NULL means the field was cleared
+  hlc         TEXT NOT NULL,
+  node_id     TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, asset_id, field_id)
+);
+
+CREATE TABLE maintenance_record_field_values (
+  tenant_id             TEXT NOT NULL,
+  maintenance_record_id TEXT NOT NULL,
+  field_id              TEXT NOT NULL,
+  value_json            TEXT,
+  hlc                   TEXT NOT NULL,
+  node_id               TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, maintenance_record_id, field_id)
+);
+```
+
+Parallel tables exist on client and server. The fold is applied per row, which because of the primary key structure means per `(entity, field)` — the grain we need. These tables are projections of the event log (ADR-011), maintained incrementally as events are applied.
+
+**Fixed (non-user-defined) entity columns** are event-sourced at column grain. Each event records the table, entity_id, and column name in `field_id` using a reserved `col:` namespace (e.g. `col:name`) to distinguish column names from user field ids (which are opaque identifiers). Each fixed column folds under LWW independently, the same way user-defined fields do.
+
+**Row creation and deletion.** Row creation is an event with `field_id = NULL` and `op = 'set'` carrying **no column values** — it asserts only that the entity exists under its id. Columns are set by separate per-column events. This keeps creation and column-set disjoint so there is no ambiguity about which fold wins when a row-create's "payload" collides with a later column set. In practice, creating an asset with initial values is a batch of events in one transaction: one existence event followed by one event per column and per user-defined field.
+
+Row deletion is an event with `field_id = NULL` and `op = 'delete'`. Per ADR-007, a later `set` (existence) event with a higher HLC restores the entity; a later column set whose HLC exceeds the delete's HLC also restores the entity implicitly (the row is logically present once any column-grain event with a higher HLC exists for it). Projection materialization must honour this: the entity row is present in projection tables if and only if the highest-HLC row-level event is a `set`, *or* any field-grain event with HLC exceeding the highest row-level `delete` HLC exists for it.
+
+**Entity-grain JSON projection.** Entity tables retain a `properties` JSON column as in ADR-005. Whenever a row in a `*_field_values` table is updated on the client or server, the `properties` JSON of the corresponding entity row is updated to reflect the new value. The mechanism is an application-level transaction: append the event to the event log, attempt the HLC-guarded upsert into the field-value projection, and — **only if that upsert actually updated the row** — write the new value into the entity's JSON column. All three writes happen in one transaction.
+
+This conditional write is essential. The field-value upsert in ADR-011 is guarded by `WHERE excluded.hlc > asset_field_values.hlc`, so a late-arriving stale event leaves the field-value projection untouched. If the JSON update were unconditional, a stale event would still overwrite the JSON key, and the two projections would diverge. The concrete pattern:
+
+```
+1. INSERT INTO event_log ...
+2. INSERT INTO asset_field_values ... ON CONFLICT ... DO UPDATE ...
+   WHERE excluded.hlc > asset_field_values.hlc
+   RETURNING 1;
+3. If step 2 returned a row (the upsert actually applied):
+     UPDATE assets SET properties = json_set(properties, '$.<field>', <value>)
+     WHERE id = ? AND tenant_id = ?;
+```
+
+Equivalent behavior can be implemented as a SQLite trigger if both environments (client and server) support triggers cleanly; the semantics are the same. Starting with application-level transactions gives more explicit control and easier debugging; migrating to triggers later is an implementation detail.
+
+**Clears.** Setting a field value to NULL via a `set` event with `value_json = NULL`, or a `delete` event, removes the corresponding key from the JSON properties projection.
+
+**Event log entries.** Data events are recorded in the event log (ADR-011) at field grain. One event per field write. This is the grain at which events flow over the wire and the grain at which the fold resolves them.
+
+**Reads.** Application queries read from entity tables and use `json_extract(properties, '$.field_name')` for user-defined fields, as in ADR-005. The field-value tables are projection bookkeeping; they are not the primary read surface for application code.
+
+## Consequences
+
+We get per-field fold semantics without sacrificing the JSON read projection. Two mechanics editing different fields on the same truck both have their events contribute to the projection. Two mechanics editing the same field fold by HLC with no data loss in the event log — only in the projection value.
+
+There is a derived relationship between the field-value tables and the JSON properties:
+
+- The event log (ADR-011) is the source of truth.
+- The field-value tables are a projection of the event log at field grain, carrying HLC metadata for incremental fold.
+- The JSON properties are a projection optimized for application reads and query patterns.
+- Keeping all three consistent requires a disciplined write path — every event append updates the field-value projection and the JSON projection in one transaction.
+
+Storage cost is higher than a projection-only model: each field value exists in the event log, as a row in the field-value projection, and as a JSON key in the entity projection. For the target scale (small teams, thousands-to-tens-of-thousands of assets with tens of fields each) this is negligible.
+
+The write path is slightly more complex: a field edit is three related table writes (event log, field-value projection, JSON projection), not one. This complexity is encapsulated in the sync engine and does not leak into application code. Application code issues a single command; the engine handles the event append and the projection updates.
+
+Reads remain fast and natural. Queries like "assets of type X where mileage > N" use `json_extract` on the entity's `properties`, optionally backed by a generated-column index. No joins into the field-value tables are needed for reads.
+
+If a query ever needs field-level history — "what was the mileage on truck 47 six months ago" — it goes to the event log directly. This is a temporal projection and is acceptable to be slower than ordinary entity reads, consistent with the event-sourcing discipline that reserves the log for audit and temporal queries.
