@@ -1,0 +1,26 @@
+{
+  "enabledPlugins": {
+    "svelte@svelte": true,
+    "playwright@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "astral@astral-sh": true,
+    "litestar@shoriminimoe": true
+  },
+  "extraKnownMarketplaces": {
+    "svelte": {
+      "source": {
+        "source": "github",
+        "repo": "sveltejs/ai-tools"
+      },
+      "autoUpdate": true
+    },
+    "astral-sh": {
+      "source": {
+        "source": "github",
+        "repo": "astral-sh/claude-code-plugins"
+      },
+      "autoUpdate": true
+    }
+  }
+}
