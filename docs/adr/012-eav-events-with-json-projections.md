@@ -6,13 +6,11 @@ Proposed
 
 ## Context
 
-ADR-005 establishes that reads operate over entities with a `properties` JSON column — one row per entity, user-defined values accessed via `json_extract`. ADR-007 establishes per-field last-write-wins as the projection fold. These two decisions are in tension: per-field LWW requires events at per-field grain, but JSON-per-entity is per-entity grain.
+ADR-005 establishes that reads operate over entities with a `properties` JSON column — one row per entity, user-defined values accessed via `json_extract`. ADR-007 establishes per-field last-write-wins as the projection fold, which forces the event log to record events at field grain: the fold can only resolve `(entity, field)` writes independently if it sees writes at that grain. Events never target `properties` directly; the JSON column is purely a read projection, never an event target.
 
-If we recorded events at JSON-per-entity grain, two offline events against different fields of the same entity would appear to the fold as two writes to the same column (`properties`) — and the fold would pick one, losing the other user's contribution. This is the exact failure mode per-field LWW is meant to prevent.
+So events are field-grain by construction, and reads are entity-grain JSON by construction. What ADR-005 and ADR-007 do not specify is how the two are connected: what the fold actually runs against (the `properties` JSON column has no per-field HLC metadata to drive an HLC-guarded LWW), and how the JSON column stays consistent with the fold result. That is the gap this ADR fills.
 
-If we abandoned the JSON read projection and adopted EAV for reads, we would get per-field fold trivially but inherit all the EAV pathology ADR-005 was designed to avoid: self-join-heavy queries, type erasure, row count explosion, difficult aggregates.
-
-The resolution is to use different grains for the event log and the read projection. Events are at field grain. Reads project into entity-grain JSON. A disciplined write path keeps both consistent.
+The resolution introduces a second projection. Field-grain events fold into per-field projection tables that carry the HLC metadata the fold needs. The entity-grain `properties` JSON is a downstream projection of those tables, updated as a side effect of each field-value upsert. A disciplined write path keeps both consistent.
 
 ## Decision
 
@@ -44,7 +42,13 @@ CREATE TABLE maintenance_record_field_values (
 
 Parallel tables exist on client and server. The fold is applied per row, which because of the primary key structure means per `(entity, field)` — the grain we need. These tables are projections of the event log (ADR-011), maintained incrementally as events are applied.
 
-**Fixed (non-user-defined) entity columns** are event-sourced at column grain. Each event records the table, entity_id, and column name in `field_id` using a reserved `col:` namespace (e.g. `col:name`) to distinguish column names from user field ids (which are opaque identifiers). Each fixed column folds under LWW independently, the same way user-defined fields do.
+**Fixed (non-user-defined) entity columns** are event-sourced at column grain. Each event records the table, entity_id, and column name in `field_id` using a reserved `col:` namespace (e.g. `col:name`). Each fixed column folds under LWW independently, the same way user-defined fields do.
+
+The `col:` prefix exists because the event log's single `field_id` column carries two naming spaces — opaque user-field ids allocated by the meta-schema, and human-readable fixed-column names like `name` or `type_id`. The prefix serves three purposes:
+
+1. *Routing at apply time.* A fixed-column event lands in `assets.<column>`; a user-field event lands in `asset_field_values`. The prefix is the routing signal, so the apply path does not need a meta-schema lookup per event to decide where the value goes.
+2. *Structural disjointness.* Without a prefix, the two namespaces would only be disjoint by convention on the id allocator. The prefix makes the disjointness a property of the encoding, not a hidden invariant that can be violated silently.
+3. *Audit readability.* `col:name` in `event_log` is unambiguous; a bareword `name` would not be distinguishable from an opaque user-field id without consulting the meta-schema.
 
 **Row creation and deletion.** Row creation is an event with `field_id = NULL` and `op = 'set'` carrying **no column values** — it asserts only that the entity exists under its id. Columns are set by separate per-column events. This keeps creation and column-set disjoint so there is no ambiguity about which fold wins when a row-create's "payload" collides with a later column set. In practice, creating an asset with initial values is a batch of events in one transaction: one existence event followed by one event per column and per user-defined field.
 
