@@ -47,8 +47,9 @@ The fold is per-row, which under the primary key is per `(entity, field)` — th
 The entity table carries two derived columns to materialize this state:
 
 ```sql
-ALTER TABLE assets ADD COLUMN deleted       BOOLEAN NOT NULL DEFAULT 0;
-ALTER TABLE assets ADD COLUMN row_state_hlc TEXT    NOT NULL;
+-- columns on assets, maintenance_records, etc.
+deleted       BOOLEAN NOT NULL DEFAULT 0,
+row_state_hlc TEXT    NOT NULL,
 ```
 
 `row_state_hlc` is the HLC of the most recent row-level event; `deleted` is its resolved state. Apply rule:
