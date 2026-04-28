@@ -52,7 +52,28 @@ The `col:` prefix exists because the event log's single `field_id` column carrie
 
 **Row creation and deletion.** Row creation is an event with `field_id = NULL` and `op = 'set'` carrying **no column values** — it asserts only that the entity exists under its id. Columns are set by separate per-column events. This keeps creation and column-set disjoint so there is no ambiguity about which fold wins when a row-create's "payload" collides with a later column set. In practice, creating an asset with initial values is a batch of events in one transaction: one existence event followed by one event per column and per user-defined field.
 
-Row deletion is an event with `field_id = NULL` and `op = 'delete'`. Per ADR-007, a later `set` (existence) event with a higher HLC restores the entity; a later column set whose HLC exceeds the delete's HLC also restores the entity implicitly (the row is logically present once any column-grain event with a higher HLC exists for it). Projection materialization must honour this: the entity row is present in projection tables if and only if the highest-HLC row-level event is a `set`, *or* any field-grain event with HLC exceeding the highest row-level `delete` HLC exists for it.
+Row deletion is an event with `field_id = NULL` and `op = 'delete'`. Row visibility is governed solely by the highest-HLC row-level event for the entity: the row is visible iff that event is `op = 'set'`. Field-grain events apply to `*_field_values` regardless of the row's current visibility — a post-delete field set updates the field-value projection but does not unhide the row. A subsequent row-level `set` event with HLC greater than the latest delete (a "restore") brings the row back; on restoration, `properties` reflects the latest LWW result for every field, including any post-delete field events. There is no separate `restore` op — restoration is a row-level `set`, the same shape as creation, distinguished only by what came before it.
+
+This rule makes deletes sticky. A field edit on a deleted row does not silently resurrect it with stale pre-delete values; resurrection requires an explicit row-level event. Field events that land on a deleted row are not lost — they update `*_field_values` so that a future restore surfaces the latest fold for every field — but they remain invisible until a restore event flips row state.
+
+The entity table carries two derived columns to materialize this state:
+
+```sql
+ALTER TABLE assets ADD COLUMN deleted       BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE assets ADD COLUMN row_state_hlc TEXT    NOT NULL;
+```
+
+`row_state_hlc` is the HLC of the most recent row-level event applied to this entity; `deleted` is the resolved state derived from that event's op. When a row-level event arrives:
+
+```sql
+UPDATE assets
+   SET deleted       = (excluded.op = 'delete'),
+       row_state_hlc = excluded.hlc
+ WHERE id = ? AND tenant_id = ?
+   AND excluded.hlc > row_state_hlc;
+```
+
+Both columns are HLC-guarded so a late-arriving stale row-level event leaves the state untouched. Reads filter on `WHERE deleted = 0`. Like `properties`, both columns are projection state — they can be rebuilt at any time by folding row-level events for the entity under LWW.
 
 **Entity-grain JSON projection.** Entity tables retain a `properties` JSON column as in ADR-005. Whenever a row in a `*_field_values` table is updated on the client or server, the `properties` JSON of the corresponding entity row is updated to reflect the new value. The mechanism is an application-level transaction: append the event to the event log, attempt the HLC-guarded upsert into the field-value projection, and — **only if that upsert actually updated the row** — write the new value into the entity's JSON column. All three writes happen in one transaction.
 
@@ -91,6 +112,8 @@ Storage cost is higher than a projection-only model: each field value exists in 
 
 The write path is slightly more complex: a field edit is three related table writes (event log, field-value projection, JSON projection), not one. This complexity is encapsulated in the sync engine and does not leak into application code. Application code issues a single command; the engine handles the event append and the projection updates.
 
-Reads remain fast and natural. Queries like "assets of type X where mileage > N" use `json_extract` on the entity's `properties`, optionally backed by a generated-column index. No joins into the field-value tables are needed for reads.
+Reads remain fast and natural. Queries like "assets of type X where mileage > N" use `json_extract` on the entity's `properties`, optionally backed by a generated-column index. No joins into the field-value tables are needed for reads. Reads add a `WHERE deleted = 0` predicate to filter out tombstoned rows.
+
+Deletes are sticky and restorable. A deleted row stays deleted until an explicit row-level `set` event with a higher HLC restores it. Field events arriving while a row is deleted are still applied to `*_field_values`, so a future restoration brings back the latest LWW result for every field — including any post-delete edits — without losing data. This matches the soft-delete pattern users already know (delete makes it disappear; restore brings it back) and avoids the failure mode where a single post-delete field edit silently resurrects an entity with stale pre-delete values for every other field.
 
 If a query ever needs field-level history — "what was the mileage on truck 47 six months ago" — it goes to the event log directly. This is a temporal projection and is acceptable to be slower than ordinary entity reads, consistent with the event-sourcing discipline that reserves the log for audit and temporal queries.
