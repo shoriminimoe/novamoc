@@ -8,6 +8,13 @@
     "litestar@shoriminimoe": true
   },
   "extraKnownMarketplaces": {
+    "shoriminimoe": {
+      "source": {
+        "source": "github",
+        "repo": "shoriminimoe/ai-tools"
+      },
+      "autoUpdate": true
+    },
     "svelte": {
       "source": {
         "source": "github",
