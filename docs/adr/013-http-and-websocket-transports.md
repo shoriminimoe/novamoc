@@ -56,9 +56,9 @@ Events with `seq <= gap_target` are covered by the gap-close query; events with 
 { "type": "ping" }
 
 // Server -> client
-{ "type": "welcome", "server_seq": N }
-{ "type": "event", "seq": N, "event": { ... } }
-{ "type": "ack", "event_id": "...", "seq": N,
+{ "type": "welcome", "server_seq": N, "schema_version": V }
+{ "type": "event", "seq": N, "schema_version": V, "event": { ... } }
+{ "type": "ack", "event_id": "...", "seq": N, "schema_version": V,
   "status": "applied" | "rejected", "reason": "..." }
 { "type": "schema_changed", "version": V }
 { "type": "pong" }
@@ -70,11 +70,13 @@ The `event_id` on client-sent messages is a client-generated identifier for the 
 
 **Broadcast ordering.** Server fan-out happens after the event is committed to the log, never inside the transaction. Broadcasts are sent in `seq` order — a single broadcaster task reads new log entries in order and fans them out to relevant tenant subscribers. This decouples commit from fan-out and guarantees ordered delivery to every subscriber.
 
+**Schema version tagging on events.** Every event broadcast (over WebSocket or HTTP) carries the `schema_version` that was active on the server when the event was accepted. `schema_changed` lives outside the event log and has no `seq`, so its ordering relative to in-flight event broadcasts is not guaranteed. Rather than enforce that ordering, clients gate event application on `schema_version`: any received event with `schema_version > active_schema_version` is buffered locally and held until the client transitions through the upgrade flow (ADR-009). This makes the delivery order of `schema_changed` non-load-bearing — a client that receives a post-change event before the `schema_changed` notification arrives at the same conclusion (block, prompt for upgrade) via the version mismatch on the event itself.
+
 **Heartbeats and dead connections.** Client sends `ping` every 20-30 seconds. Server treats a subscriber as dead if no `ping` has arrived in 60 seconds, closes the WebSocket, and removes the subscriber from the registry. Both sides implement reconnection with exponential backoff (1s, 2s, 4s, ..., capped at 30s).
 
 **Reconnection.** On WebSocket close the client starts backoff. If the socket has been down for more than roughly 30 seconds on reconnect, the client does an HTTP `/sync` first to catch up efficiently, then opens a new WebSocket from the updated cursor. Short drops can reconnect and resume directly.
 
-**Schema change notifications.** When the server commits a schema change, it broadcasts `schema_changed` to all connected subscribers of the affected tenant. Clients transition to blocked state (ADR-009). The WebSocket remains open but no events flow in either direction until the client's `active_schema_version` catches up.
+**Schema change notifications.** When the server commits a schema change, it broadcasts `schema_changed` to all connected subscribers of the affected tenant. Clients transition to blocked state (ADR-009). The WebSocket remains open but no events flow in either direction until the client's `active_schema_version` catches up. A client may also discover the change via the `schema_version` tag on a delivered event arriving before `schema_changed`; the response is the same (block, hold post-change events, prompt the user to accept the upgrade).
 
 **Transport interchangeability.** The wire format of an event is identical regardless of transport. The HTTP endpoint is not a fallback with a different protocol — it is the same protocol over a different pipe. We should routinely test with WebSocket disabled to ensure the application remains functional on pure HTTP, as corporate proxies and some browser configurations block WebSocket upgrades.
 

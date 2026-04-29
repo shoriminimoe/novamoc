@@ -24,9 +24,11 @@ A client may sync data only while its cached schema version matches the server's
 
 **Notification.** When the server commits a schema change, it broadcasts a `schema_changed` message over the WebSocket (ADR-013) to all connected clients for that tenant. Offline or disconnected clients discover the mismatch on their next HTTP sync attempt.
 
+**Per-event schema-version tagging.** `schema_changed` lives outside the event log and has no `seq`, so its delivery cannot be strictly ordered against in-flight event broadcasts that carry post-change `seq` values. To make ordering non-load-bearing, every event the server broadcasts is tagged with the `schema_version` that was active when the event was accepted (ADR-013). The client gates application on that tag: any event with `schema_version > active_schema_version` is held in a post-change buffer rather than applied or rejected. Whichever signal arrives first — the explicit `schema_changed` notification or a tagged post-change event — drives the client into blocked state and the same upgrade flow. After the user accepts the upgrade, buffered events are applied (or surfaced as part of the same reconciliation pass that handles pending local events).
+
 **Blocked state.** While blocked, the client:
 - Stops sending events to the server
-- Does not receive events from the server (the WebSocket remains open for `schema_changed` and heartbeats but carries no event traffic)
+- Stops applying events from the server: any in-flight events tagged with a newer `schema_version` are held in a post-change buffer rather than applied to projections or rejected (the WebSocket remains open for `schema_changed` and heartbeats)
 - Allows the user to continue generating events locally; local events accumulate in the pending-event queue
 - Displays a non-intrusive UI affordance indicating a schema upgrade is available
 
@@ -37,11 +39,12 @@ A client may sync data only while its cached schema version matches the server's
 4. Events referencing removed or incompatibly-changed fields are surfaced to the user for reconciliation (keep as note, discard, or map to a different field)
 5. Surviving pending events are sent; server acknowledges
 6. Client's `active_schema_version` is updated to the server's current version
-7. UI re-renders against the new schema
+7. Buffered post-change events (those tagged with the new version that arrived during the block) are now applied in `seq` order
+8. UI re-renders against the new schema
 
 **Pending-event reconciliation.** The flush of pending events must happen under the new schema, not the old. Local events generated before the upgrade are not automatically valid; they are subject to the validation pass in step 3. Reconciliation is a user-level decision — the user chooses what to do with events whose target has changed meaning.
 
-**Transport behavior during block.** The WebSocket remains connected during block state. Only `schema_changed` notifications and heartbeats traverse it. Events in either direction are suspended until upgrade accept.
+**Transport behavior during block.** The WebSocket remains connected during block state. `schema_changed` notifications and heartbeats traverse it as usual. The server may also continue to deliver post-change event broadcasts; these are tagged with the new `schema_version` and held in the client's post-change buffer rather than applied. Outbound events from the client are suspended until upgrade accept.
 
 ## Consequences
 
@@ -56,3 +59,5 @@ Schema changes propagate in near-real time to connected clients via WebSocket no
 The upgrade diff UX is load-bearing. Users need a clear view of what changed (fields added, removed, renamed) and what it means for their pending events. `introduced_in_version` and `removed_in_version` columns on field rows support this diff computation. Changes across multiple versions compact to a single effective diff; users upgrading from N to N+5 see one net change, not five sequential ones.
 
 A client offline for an extended period may return to find the schema has advanced several versions. The upgrade flow handles this transparently — the diff is still computed between the client's `active_schema_version` and the server's current version regardless of how many intermediate versions existed.
+
+Tagging events with their accepted `schema_version` and gating client application on it removes the need to order `schema_changed` against in-flight event broadcasts. The server can commit a schema change between events N and N+1 without coordinating fan-out timing: the client correctly blocks and buffers regardless of which message arrives first. The invariant "every accepted event was valid against the schema at acceptance time" remains a server-side property; the client now has a corresponding invariant — "no event is applied against a schema version other than the one it was accepted under" — which is what makes the server invariant useful end-to-end.
