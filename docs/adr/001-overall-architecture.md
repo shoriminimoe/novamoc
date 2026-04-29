@@ -30,7 +30,7 @@ The system consists of three components: a browser client, a Python server, and 
 
 **Server.** A Python service built on Litestar, backed by SQLite. The server is authoritative for the schema and acts as the sync hub for data: it validates incoming events, appends them to the canonical event log, and fans them out to other connected clients.
 
-**Sync protocol.** An event-log-based protocol using Hybrid Logical Clocks (HLCs) for ordering and per-field last-write-wins (LWW) as the projection fold. Events flow bidirectionally between client and server. Data synchronization is peer-aware but server-mediated: clients never talk to each other directly, but the server is not an authoritative resolver — it applies the same deterministic fold every client does.
+**Sync protocol.** An event-log-based protocol using Hybrid Logical Clocks (HLCs) for ordering and per-field last-write-wins (LWW) as the projection fold. Events flow bidirectionally between client and server. Data synchronization is peer-aware but server-mediated: clients never talk to each other directly. The server's authority is over *acceptance* — schema validation, HLC drift bound (ADR-006), and tenant scoping decide which events enter the canonical log. *Resolution* is not server-authoritative: the server applies the same deterministic fold (ADR-007) over the same accepted event set as every client, and arrives at the same projection.
 
 **Event sourcing for data; current-state for schema.** All synchronized data is event-sourced: the event log is the source of truth, and entity tables are projections (ADR-002). Schema is not event-sourced — it is server-authoritative state with a monotonic version number, fetched and cached by clients.
 
@@ -46,7 +46,7 @@ The system consists of three components: a browser client, a Python server, and 
 
 The client is a substantial piece of software, not a thin view over a server API. It holds data, generates HLCs, validates events against its cached schema, and manages a local pending-event queue. This is inherent to local-first and is the cost of the offline capability.
 
-The server is comparatively simple. It validates events against a single current schema, appends to the event log, and fans out. It does not compute merges, reconcile conflicts, or reason about history — the event log plus the LWW fold does that deterministically on every participant.
+The server is comparatively simple. Its authoritative role is gatekeeping: validating events against a single current schema, enforcing the HLC drift bound, and scoping to a tenant before appending to the event log and fanning out. It does not compute merges, reconcile conflicts, or reason about history — the event log plus the LWW fold does that deterministically on every participant, server included.
 
 SQLite on both sides gives us one mental model for storage and lets us share schema shape between client and server with minimal translation. It constrains our choice of off-the-shelf sync engines (most of which target Postgres on the server), which pushes us toward hand-rolling the sync layer. We consider this an acceptable trade for the simplicity and portability of SQLite.
 
