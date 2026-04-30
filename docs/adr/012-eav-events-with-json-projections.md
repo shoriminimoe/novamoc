@@ -38,11 +38,11 @@ CREATE TABLE maintenance_record_field_values (
 
 The fold is per-row, which under the primary key is per `(entity, field)` — the grain ADR-007 needs. These tables are projections of the event log (ADR-011), maintained incrementally on both client and server.
 
-**Fixed (non-user-defined) entity columns** are event-sourced at column grain. The event records the column name in `field_id` under a reserved `col:` namespace (e.g. `col:name`); each fixed column folds under LWW independently. The prefix routes events at apply time without a meta-schema lookup, makes the user-field-id and column-name namespaces structurally disjoint rather than disjoint-by-convention, and keeps log rows unambiguous in audit contexts.
+**Fixed (non-user-defined) entity columns** are event-sourced at column grain. The event records the column name in `field_id` under a reserved `col:` namespace (e.g. `col:name`); each fixed column folds under LWW independently. HLC tracking and the HLC-guarded upsert reuse `*_field_values` — a `col:name` event lands in `asset_field_values` with `field_id = 'col:name'`, the same as a user field; only the downstream projection target differs (the named entity column rather than `properties`). The prefix routes events at apply time without a meta-schema lookup, makes the user-field-id and column-name namespaces structurally disjoint rather than disjoint-by-convention, and keeps log rows unambiguous in audit contexts.
 
 **Row creation.** A row-level event with `field_id = NULL` and `op = 'set'` carries no column values — it asserts only that the entity exists. Columns are set by separate per-column events, so creation and column-set never compete in the fold. Creating an asset with initial values is a batch in one transaction: one existence event plus one event per column and per user-defined field.
 
-**Row deletion and visibility.** A row-level event with `field_id = NULL` and `op = 'delete'` tombstones the entity. Row visibility is governed solely by the highest-HLC row-level event for the entity: the row is visible iff that event is `op = 'set'`. Field-grain events apply to `*_field_values` regardless of visibility — post-delete edits update the projection but do not unhide the row. A later row-level `set` with HLC greater than the latest delete restores the row, at which point `properties` reflects the latest LWW for every field, including any post-delete edits. There is no separate `restore` op; restoration is just a row-level `set`.
+**Row deletion and visibility.** A row-level event with `field_id = NULL` and `op = 'delete'` tombstones the entity. Row visibility is governed solely by the highest-HLC row-level event for the entity: the row is visible iff that event is `op = 'set'`. Field-grain events apply to `*_field_values` regardless of visibility — post-delete edits update the projection but do not unhide the row. A later row-level `set` with HLC greater than the latest delete restores the row, at which point its materialized state (`properties` and fixed columns alike) reflects the latest LWW for every field, including any post-delete edits. There is no separate `restore` op; restoration is just a row-level `set`.
 
 The entity table carries two derived columns to materialize this state:
 
@@ -64,21 +64,25 @@ UPDATE assets
 
 Reads filter on `WHERE deleted = 0`. Like `properties`, both columns can be rebuilt by re-folding row-level events from the event log.
 
-**Entity-grain JSON projection.** The `properties` JSON column is a downstream projection of `*_field_values`. Whenever a field-value row is updated, the corresponding JSON key is updated in the same transaction. The JSON write must be conditional on the field-value upsert actually applying; otherwise a stale event would update the JSON without updating the field-value table, diverging the two projections:
+**Entity-grain projection writes.** The entity table — `properties` for user fields, named columns for `col:` events — is a downstream projection of `*_field_values`. Whenever a field-value row is updated, the corresponding entity-table cell is updated in the same transaction, conditional on the field-value upsert actually applying; otherwise a stale event would update the entity table without updating the field-value table, diverging the two projections:
 
 ```
 1. INSERT INTO event_log ...
 2. INSERT INTO asset_field_values ... ON CONFLICT ... DO UPDATE ...
    WHERE excluded.hlc > asset_field_values.hlc
    RETURNING 1;
-3. If step 2 returned a row:
-     UPDATE assets SET properties = json_set(properties, '$.<field>', <value>)
-     WHERE id = ? AND tenant_id = ?;
+3. If step 2 returned a row, route by field_id:
+     - col:<column>:
+         UPDATE assets SET <column> = <value>
+         WHERE id = ? AND tenant_id = ?;
+     - user field id:
+         UPDATE assets SET properties = json_set(properties, '$.<field>', <value>)
+         WHERE id = ? AND tenant_id = ?;
 ```
 
 Equivalent behavior can be implemented as a SQLite trigger if both environments support triggers cleanly; the semantics are the same. Application-level transactions give more explicit control to start with.
 
-**Clears.** A `set` event with `value_json = NULL`, or a field-grain `delete`, removes the corresponding key from `properties`.
+**Clears.** A `set` event with `value_json = NULL`, or a field-grain `delete`, removes the corresponding key from `properties` for user fields, or sets the corresponding column to NULL for `col:` events.
 
 **Reads.** Application queries read from entity tables using `json_extract(properties, '$.field_name')` for user-defined fields, as in ADR-005. The `*_field_values` tables are projection bookkeeping, not a read surface for application code.
 
