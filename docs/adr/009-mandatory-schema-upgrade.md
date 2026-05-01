@@ -33,16 +33,30 @@ A client may sync data only while its cached schema version matches the server's
 - Displays a non-intrusive UI affordance indicating a schema upgrade is available
 
 **Upgrade flow.** When the user accepts:
-1. Client fetches the new schema from the server
-2. Client computes a diff against the cached schema using `introduced_in_version` and `removed_in_version`
+1. Client fetches the new schema projection from the server
+2. Client requests rows from `schema_change_log` with `seq > active_schema_version AND seq <= server_version` for the tenant and reduces them per `entity_id` using the diff narrative below. Command grain makes this a single pass.
 3. Client validates each pending event against the new schema
-4. Events referencing removed or incompatibly-changed fields are surfaced to the user for reconciliation (keep as note, discard, or map to a different field)
+4. Events referencing `delete_*`-d fields, or fields with incompatible property changes (e.g., a type change that invalidates the existing value), are surfaced to the user for reconciliation. Events targeting merely `deactivate_*`-d (`active = false`) fields are not invalid — the field still exists, just hidden — so they pass through without user intervention.
 5. Surviving pending events are sent; server acknowledges
 6. Client's `active_schema_version` is updated to the server's current version
 7. Buffered post-change events (those tagged with the new version that arrived during the block) are now applied in `seq` order
 8. UI re-renders against the new schema
 
-**Pending-event reconciliation.** The flush of pending events must happen under the new schema, not the old. Local events generated before the upgrade are not automatically valid; they are subject to the validation pass in step 3. Reconciliation is a user-level decision — the user chooses what to do with events whose target has changed meaning.
+**Diff narrative.** For each `entity_id` touched in `(V_old, V_new]`, the per-entity reduction picks the most recent terminal state and summarizes the path to it:
+
+| Sequence ending in… | Resulting label |
+|---|---|
+| `activate` (no later `deactivate` or `delete`) | "Added" |
+| `deactivate` (currently tombstoned) | "Hidden" |
+| `delete` | "Removed" |
+| `update` with a name change | "Renamed" |
+| `update` (other property changes) | "Modified" |
+| `clear` (fields only) | "Field values cleared" |
+| `activate → deactivate → activate` | "Restored" |
+
+Compound paths fold to a single effective label. A user upgrading from N to N+5 sees one net change per entity, not five sequential ones.
+
+**Pending-event reconciliation.** The flush of pending events must happen under the new schema, not the old. Local events generated before the upgrade are not automatically valid; they are subject to the validation pass in step 3. Reconciliation is a user-level decision *only* for events whose target has been `delete_*`-d or whose value is no longer valid against changed properties. Tombstones (`deactivate_*`) do not trigger reconciliation.
 
 **Transport behavior during block.** The WebSocket remains connected during block state. `schema_changed` notifications and heartbeats traverse it as usual. The server may also continue to deliver post-change event broadcasts; these are tagged with the new `schema_version` and held in the client's post-change buffer rather than applied. Outbound events from the client are suspended until upgrade accept.
 
@@ -56,7 +70,7 @@ The product accepts that a user who defers upgrade indefinitely cannot participa
 
 Schema changes propagate in near-real time to connected clients via WebSocket notification, but apply only when users accept. This separates "awareness" from "application" — an important distinction for a tool used in the field.
 
-The upgrade diff UX is load-bearing. Users need a clear view of what changed (fields added, removed, renamed) and what it means for their pending events. `introduced_in_version` and `removed_in_version` columns on field rows support this diff computation. Changes across multiple versions compact to a single effective diff; users upgrading from N to N+5 see one net change, not five sequential ones.
+The upgrade diff UX is load-bearing. Users need a clear view of what changed (fields added, removed, renamed) and what it means for their pending events. The schema change log (ADR-008) is command-grain, so each row is one user action and the per-entity reduction follows the table above directly.
 
 A client offline for an extended period may return to find the schema has advanced several versions. The upgrade flow handles this transparently — the diff is still computed between the client's `active_schema_version` and the server's current version regardless of how many intermediate versions existed.
 

@@ -15,7 +15,7 @@ The sync engine needs a way to represent state changes such that they can be:
 - Streamed incrementally (a client with cursor N must efficiently receive events with sequence > N)
 - Retained long enough to support offline clients returning after extended periods
 
-A natural representation meeting these criteria is an append-only log of events, each carrying an HLC, a node id, and enough structure to identify the target and the operation. This is the canonical event-sourcing pattern (ADR-002): the event log as the system of record, projections as derived views.
+A natural representation meeting these criteria is an append-only log of events, each carrying an HLC and enough structure to identify the target and the operation. This is the canonical event-sourcing pattern (ADR-002): the event log as the system of record, projections as derived views.
 
 ## Decision
 
@@ -24,17 +24,17 @@ The server maintains a single append-only `event_log` table. Every accepted even
 **Schema (server).**
 ```sql
 CREATE TABLE event_log (
-  seq           INTEGER PRIMARY KEY AUTOINCREMENT,
-  tenant_id     TEXT NOT NULL,
-  hlc           TEXT NOT NULL,
-  node_id       TEXT NOT NULL,
-  table_name    TEXT NOT NULL,  -- e.g. 'asset_field_values', 'assets'
-  entity_id     TEXT NOT NULL,
-  field_id      TEXT,           -- NULL for row-level operations
-  op            TEXT NOT NULL,  -- 'set' | 'delete'
-  value_json    TEXT,           -- NULL for deletes
-  received_at   TEXT NOT NULL,
-  UNIQUE (tenant_id, node_id, hlc)
+  seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id       TEXT NOT NULL,
+  hlc             TEXT NOT NULL,
+  schema_version  INTEGER NOT NULL,  -- schema seq at acceptance time (ADR-009)
+  table_name      TEXT NOT NULL,     -- e.g. 'asset_field_values', 'assets'
+  entity_id       TEXT NOT NULL,
+  field_id        TEXT,              -- NULL for row-level operations
+  op              TEXT NOT NULL,     -- 'set' | 'delete'
+  value_json      TEXT,              -- NULL for deletes
+  received_at     TEXT NOT NULL,
+  UNIQUE (tenant_id, hlc)
 );
 
 CREATE INDEX idx_event_log_tenant_seq ON event_log(tenant_id, seq);
@@ -43,18 +43,17 @@ CREATE INDEX idx_event_log_tenant_seq ON event_log(tenant_id, seq);
 **Properties of the event log.**
 - Append-only. Rows are never updated or deleted (except via explicit retention policies, which are out of scope here).
 - Per-tenant sequencing via `(tenant_id, seq)`. Each tenant has its own monotonic view of the log even though the underlying `seq` is globally monotonic. Clients use their tenant's `seq` range.
-- Idempotent by `UNIQUE (tenant_id, node_id, hlc)`. A retried event with the same HLC from the same node is recognized and skipped rather than double-applied.
+- Idempotent by `UNIQUE (tenant_id, hlc)`. A retried event with the same HLC is recognized and skipped rather than double-applied.
 - The HLC determines logical ordering and the LWW fold. `seq` determines streaming order for replication.
 
 **Projection tables.** The current state of entities is held in projection tables (`assets`, `asset_field_values`, etc.) which are updated as events are applied:
 
 ```sql
-INSERT INTO asset_field_values (tenant_id, asset_id, field_id, value_json, hlc, node_id)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO asset_field_values (tenant_id, asset_id, field_id, value_json, hlc)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (tenant_id, asset_id, field_id) DO UPDATE SET
   value_json = excluded.value_json,
-  hlc        = excluded.hlc,
-  node_id    = excluded.node_id
+  hlc        = excluded.hlc
 WHERE excluded.hlc > asset_field_values.hlc;
 ```
 

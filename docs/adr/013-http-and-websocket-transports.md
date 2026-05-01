@@ -66,7 +66,7 @@ Events with `seq <= gap_target` are covered by the gap-close query; events with 
 
 The `event_id` on client-sent messages is a client-generated identifier for the in-flight message, used by the client to correlate acks with pending events. It is distinct from the event's HLC (which is the canonical identity of the event in the log).
 
-**Bidirectional event flow.** Events travel in both directions over the WebSocket. Client sends event messages and waits for an `ack` before marking the event as acknowledged in its local pending queue. The `UNIQUE (tenant_id, node_id, hlc)` constraint on the event log (ADR-011) makes replay idempotent, so a client whose WebSocket drops before an ack arrives can safely retry the event later over HTTP or a reconnected WebSocket.
+**Bidirectional event flow.** Events travel in both directions over the WebSocket. Client sends event messages and waits for an `ack` before marking the event as acknowledged in its local pending queue. The `UNIQUE (tenant_id, hlc)` constraint on the event log (ADR-011) makes replay idempotent, so a client whose WebSocket drops before an ack arrives can safely retry the event later over HTTP or a reconnected WebSocket.
 
 **Broadcast ordering.** Server fan-out happens after the event is committed to the log, never inside the transaction. Broadcasts are sent in `seq` order — a single broadcaster task reads new log entries in order and fans them out to relevant tenant subscribers. This decouples commit from fan-out and guarantees ordered delivery to every subscriber.
 
@@ -77,6 +77,18 @@ The `event_id` on client-sent messages is a client-generated identifier for the 
 **Reconnection.** On WebSocket close the client starts backoff. If the socket has been down for more than roughly 30 seconds on reconnect, the client does an HTTP `/sync` first to catch up efficiently, then opens a new WebSocket from the updated cursor. Short drops can reconnect and resume directly.
 
 **Schema change notifications.** When the server commits a schema change, it broadcasts `schema_changed` to all connected subscribers of the affected tenant. Clients transition to blocked state (ADR-009). The WebSocket remains open but no events flow in either direction until the client's `active_schema_version` catches up. A client may also discover the change via the `schema_version` tag on a delivered event arriving before `schema_changed`; the response is the same (block, hold post-change events, prompt the user to accept the upgrade).
+
+**HTTP `/schema`.** Schema mutations flow over a separate HTTP endpoint, not the data sync transports. The request body is a flat envelope:
+
+```json
+{
+  "command": "activate_asset_type",
+  "entity_id": "...",
+  "payload": { ... }
+}
+```
+
+`command` is one of the verb-prefixed names defined by `SchemaCommand` (ADR-008: `activate_*`, `deactivate_*`, `update_*`, `clear_*_field`, `delete_*`). The server's request decoder is responsible for validating that `command` is a known member of the enum and that `payload` matches the command's expected shape; it is also where the database stores `command` as plain TEXT. After decoder validation, the server validates the command against the current schema projection, applies the mutation, appends a row to `schema_change_log`, and returns the assigned `seq` (the new `schema_version`). The flow is synchronous — the response is the acknowledgement, and projection-level `UNIQUE` constraints surface duplicate-create attempts as informative errors. There is no offline queue and no fallback transport: schema commands are online-only by construction (ADR-001, ADR-008). Schema changes are surfaced to other clients via the `schema_changed` notification described above; the broadcast payload carries the new `schema_version`, and the command-grain change-log entries are fetched on demand during the upgrade diff (ADR-009).
 
 **Transport interchangeability.** The wire format of an event is identical regardless of transport. The HTTP endpoint is not a fallback with a different protocol — it is the same protocol over a different pipe. We should routinely test with WebSocket disabled to ensure the application remains functional on pure HTTP, as corporate proxies and some browser configurations block WebSocket upgrades.
 
