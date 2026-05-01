@@ -22,7 +22,7 @@ This ADR governs the **read projection** for entities. The **event grain** used 
 
 We model user-defined schemas as data in a meta-schema, and we store the read projection of entities as one row per entity with a JSON `properties` column holding user-defined field values.
 
-The meta-schema consists of fixed tables known at build time: `asset_types`, `asset_type_fields`, `maintenance_record_types`, `maintenance_record_type_fields`. Rows in these tables describe the user-defined schema: which types exist, which fields they have, each field's data type and validation rules.
+The meta-schema consists of fixed tables known at build time: `asset_types`, `asset_type_fields`, `maintenance_record_types`, `maintenance_record_type_fields`. Rows in these tables describe the user-defined schema: which types exist, which fields they have, each field's data type and validation rules. The meta-schema tables are server-authoritative current state and carry an `active` lifecycle column (ADR-008); the schema change log records mutation history but does not produce the projection. Mutations are applied to the meta-schema tables in the same transaction that appends the corresponding row to the change log.
 
 Entity tables (`assets`, `maintenance_records`) have fixed columns (id, tenant_id, type_id, name, timestamps, etc.) plus a `properties` JSON column holding the values of user-defined fields. Applications read user-defined values via `json_extract(properties, '$.field_name')`.
 

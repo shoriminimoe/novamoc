@@ -21,7 +21,6 @@ CREATE TABLE asset_field_values (
   field_id    TEXT NOT NULL,
   value_json  TEXT,               -- NULL means the field was cleared
   hlc         TEXT NOT NULL,
-  node_id     TEXT NOT NULL,
   PRIMARY KEY (tenant_id, asset_id, field_id)
 );
 
@@ -31,7 +30,6 @@ CREATE TABLE maintenance_record_field_values (
   field_id              TEXT NOT NULL,
   value_json            TEXT,
   hlc                   TEXT NOT NULL,
-  node_id               TEXT NOT NULL,
   PRIMARY KEY (tenant_id, maintenance_record_id, field_id)
 );
 ```
@@ -85,6 +83,8 @@ Equivalent behavior can be implemented as a SQLite trigger if both environments 
 **Clears.** A `set` event with `value_json = NULL`, or a field-grain `delete`, removes the corresponding key from `properties` for user fields, or sets the corresponding column to NULL for `col:` events.
 
 **Reads.** Application queries read from entity tables using `json_extract(properties, '$.field_name')` for user-defined fields, as in ADR-005. The `*_field_values` tables are projection bookkeeping, not a read surface for application code.
+
+**Data fold decoupled from schema visibility.** Schema fields can be tombstoned (`active = false`) per ADR-008. The data fold does *not* reject events targeting tombstoned fields and does *not* strip the field's key from `properties`: `*_field_values` rows stay populated, the JSON key stays on each affected entity row, and the event applies as if the field were active. Visibility is a *read-time* concern resolved by joining against the schema projection. Two clients can race — one tombstones a field while another emits values for it — and the data event is accepted regardless; other clients hide the field at the read layer. The cost is some wire traffic for events that never display; the benefit is that the data fold stays a pure function of the data event log with no cross-log coupling at write time.
 
 ## Consequences
 
