@@ -264,14 +264,14 @@ def test_create_maintenance_record_type_field() -> None:
         "tenant_id": _TENANT,
         "entity_id": _ENTITY,
         "payload": {
-            "maintenance_record_type_id": _PARENT,
+            "parent_id": _PARENT,
             "name": "mileage_at_service",
             "data_type": "integer",
         },
     })
     assert isinstance(obj, _payloads.CreateMaintenanceRecordTypeField)
     assert isinstance(obj.payload, _payloads._MaintenanceRecordTypeFieldCreatePayload)
-    assert obj.payload.maintenance_record_type_id == UUID(_PARENT)
+    assert obj.payload.parent_id == UUID(_PARENT)
     assert obj.payload.name == "mileage_at_service"
     assert obj.payload.data_type == "integer"
 

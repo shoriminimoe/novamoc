@@ -37,7 +37,7 @@ async def _make_field(
         data={
             "tenant_id": _T,
             "id": fid,
-            "maintenance_record_type_id": parent,
+            "parent_id": parent,
             "name": "mileage",
             "data_type": "number",
             "validation": None,
@@ -60,7 +60,7 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
             tenant_id=_T,
             entity_id=fid,
             payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
-                maintenance_record_type_id=parent,
+                parent_id=parent,
                 name="mileage",
                 data_type=FieldDataType.NUMBER,
             ),
@@ -79,7 +79,7 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
                 tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
-                    maintenance_record_type_id=uuid4(),
+                    parent_id=uuid4(),
                     name="mileage",
                     data_type=FieldDataType.NUMBER,
                 ),

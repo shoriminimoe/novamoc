@@ -241,11 +241,11 @@ class _MaintenanceRecordTypeFieldCreatePayload(
 ):
     """Payload for ``create_maintenance_record_type_field``.
 
-    ``maintenance_record_type_id``, ``name``, and ``data_type`` are
-    required; ``validation`` is optional.
+    ``parent_id``, ``name``, and ``data_type`` are required;
+    ``validation`` is optional.
     """
 
-    maintenance_record_type_id: UUID
+    parent_id: UUID
     name: str
     data_type: FieldDataType
     validation: dict[str, Any] | None = None

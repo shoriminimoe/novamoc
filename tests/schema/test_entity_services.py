@@ -36,7 +36,7 @@ async def test_type_service_round_trip(service_cls, session: AsyncSession) -> No
     ("type_svc_cls", "field_svc_cls", "parent_fk"),
     [
         (AssetTypeService, AssetTypeFieldService, "parent_id"),
-        (MaintenanceRecordTypeService, MaintenanceRecordTypeFieldService, "maintenance_record_type_id"),
+        (MaintenanceRecordTypeService, MaintenanceRecordTypeFieldService, "parent_id"),
     ],
 )
 async def test_field_service_round_trip(

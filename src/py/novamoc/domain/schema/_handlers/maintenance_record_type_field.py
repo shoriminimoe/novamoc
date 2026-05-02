@@ -30,7 +30,7 @@ async def create(
     services: ServiceBundle, req: _payloads.CreateMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     parent = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.payload.maintenance_record_type_id,
+        tenant_id=req.tenant_id, id=req.payload.parent_id,
     )
     if parent is None:
         raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
@@ -39,7 +39,7 @@ async def create(
             data={
                 "tenant_id": req.tenant_id,
                 "id": req.entity_id,
-                "maintenance_record_type_id": req.payload.maintenance_record_type_id,
+                "parent_id": req.payload.parent_id,
                 "name": req.payload.name,
                 "data_type": req.payload.data_type,
                 "validation": req.payload.validation,
