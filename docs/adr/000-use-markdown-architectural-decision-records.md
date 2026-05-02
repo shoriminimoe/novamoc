@@ -2,24 +2,31 @@
 
 ## Status
 
-Superseded by ADR-016 (format refinement; the practice itself carries over).
+Accepted
 
 ## Context
 
-novaMOC is a local-first web application for asset maintenance tracking with user-defined schemas and offline support. The architecture involves a number of consequential decisions — storage engine, sync protocol, schema modeling, conflict resolution strategy, transport — each of which constrains or enables the others. Without a written record of these decisions and their reasoning, future contributors (including our future selves) will have no way to distinguish decisions that were made deliberately from decisions that accreted by accident, and no way to revisit a decision knowing which other decisions depended on it.
+novaMOC's architecture involves a number of consequential decisions — storage engine, sync protocol, schema modeling, conflict resolution, transport — each of which constrains or enables the others. Without a written record of those decisions and their reasoning, future contributors (including our future selves) lose the ability to distinguish deliberate choices from accidental drift, or to revisit a decision knowing what depended on it.
 
-We want a lightweight, version-controlled, text-based format that lives alongside the code, is easy to diff and review, and captures the reasoning behind each decision rather than just the outcome.
+We need a lightweight, version-controlled, text-based format that lives alongside the code, diffs and reviews like any other change, and captures the *why* of each decision rather than just the outcome.
 
 ## Decision
 
-We will use Architecture Decision Records (ADRs) to document significant architectural decisions for novaMOC. We will use the MADR (Markdown Architectural Decision Records) format.
+We use Architecture Decision Records (ADRs) in [MADR](https://adr.github.io/madr/) format, stored as Markdown files in `docs/adr/` and numbered sequentially from 000.
 
-ADRs will be stored as Markdown files in `docs/adr/` within the repository and numbered sequentially starting from 000. ADR-000 (this document) establishes the practice itself. ADR-001 provides the overall architecture context; subsequent ADRs record specific decisions within that architecture.
+ADRs record decisions, not designs. Design content — pipelines, code samples, evolving spec — belongs in the developer docs, not in ADRs.
 
-Each ADR has a status of Proposed, Accepted, Deprecated, or Superseded. A superseded ADR names the ADR that replaces it; the replacement names the ADR it supersedes. ADRs are not edited after acceptance except to change status or to correct factual errors — new decisions get new ADRs.
+Each ADR has four sections:
+
+- **Status** — Proposed | Accepted | Deprecated | Superseded (cite the replacement when superseded).
+- **Context** — brief problem statement; only the background needed to make the decision intelligible.
+- **Decision** — one sentence stating the choice, followed by the rationale. The rationale is required and is one of the most important parts of the document — it is what makes a decision revisitable. Clarity beats brevity, though it shouldn't be verbose for its own sake.
+- **Consequences** — two or three of the most important tradeoffs. Not exhaustive.
+
+ADRs are not edited after acceptance except to change status or correct factual errors; new decisions get new ADRs. ADRs cite each other by number rather than recapping upstream facts.
+
+The rationale: code shows the present shape but cannot answer "what would have to change for us to undo this?" without preserved reasoning, and an ADR is the artifact that makes that question answerable. MADR is the lightest format that still captures the pieces that matter — context, decision, rationale, consequences — and keeping ADRs in-tree means each one ships with the change it justifies, gets PR review, and can't drift from a separate wiki the way out-of-tree docs do. Constraining ADRs to *decisions, not designs* keeps them small enough that recording one at the moment of decision stays cheap; design content has its own iterative, sometimes-throwaway lifecycle that doesn't fit immutability-after-accept and belongs in the developer docs instead.
 
 ## Consequences
 
-Architectural decisions are reviewable in pull requests like any other change. The reasoning behind a decision is preserved alongside the decision itself, which makes revisiting a decision substantially easier than reconstructing intent from code. New contributors can read the ADRs in order to understand how the system arrived at its current shape.
-
-The practice requires discipline: decisions made in chat, in meetings, or in code reviews have to be written up after the fact, or they don't exist as ADRs. We accept this cost.
+Architectural decisions become reviewable in pull requests like any other change, and the reasoning is preserved alongside the decision rather than reconstructed from code later. The tight format — brief context, one-line decision plus rationale, 2–3 key tradeoffs — keeps the cost of recording a decision low enough that the practice stays sustainable. The cost is discipline: decisions made in chat, meetings, or code reviews don't exist as ADRs unless someone writes them up afterward, and we accept that.
