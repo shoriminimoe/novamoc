@@ -105,6 +105,7 @@ Prefer the specialized tooling below over generic Bash/Read/Edit when the task f
 
 ## ADR pointers (read these when touching the relevant subsystem)
 
+- ADR-000 / ADR-016 — the practice itself. ADR-016 defines the tight format new ADRs use (brief context, one-line decision + rationale, 2–3 key tradeoffs); design content goes in specs/plans, not ADRs.
 - ADR-001 overall architecture — three components, two transports, two data classes.
 - ADR-002 / ADR-011 / ADR-012 — event-sourced data + append-only EAV log + JSON-projected entity tables.
 - ADR-005 / ADR-008 — schema-as-data, server-authoritative; the meta-schema tables and the command verbs.

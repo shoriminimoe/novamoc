@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-016 (format refinement; the practice itself carries over).
 
 ## Context
 
