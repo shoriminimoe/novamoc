@@ -31,18 +31,22 @@ class MaintenanceRecordTypeField(TenantScopedAuditBase):
     __tablename__ = "maintenance_record_type_fields"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["tenant_id", "maintenance_record_type_id"],
+            ["tenant_id", "parent_id"],
             ["maintenance_record_types.tenant_id", "maintenance_record_types.id"],
             ondelete="CASCADE",
         ),
         UniqueConstraint(
-            "tenant_id", "maintenance_record_type_id", "name",
+            "tenant_id",
+            "parent_id",
+            "name",
             name="uq_maintenance_record_type_fields_tenant_type_name",
         ),
     )
 
-    maintenance_record_type_id: Mapped[UUID] = mapped_column(GUID)
+    parent_id: Mapped[UUID] = mapped_column(GUID)
     name: Mapped[str]
-    data_type: Mapped[FieldDataType] = mapped_column(Enum(FieldDataType, native_enum=False))
+    data_type: Mapped[FieldDataType] = mapped_column(
+        Enum(FieldDataType, native_enum=False)
+    )
     validation: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     active: Mapped[bool] = mapped_column(default=True, server_default="1")

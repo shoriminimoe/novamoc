@@ -44,10 +44,16 @@ async def test_append_assigns_monotonic_seq(session: AsyncSession) -> None:
     assert b.seq > a.seq
 
     rows = (
-        await session.execute(
-            select(schema_models.SchemaChangeLog).order_by(schema_models.SchemaChangeLog.seq)
+        (
+            await session.execute(
+                select(schema_models.SchemaChangeLog).order_by(
+                    schema_models.SchemaChangeLog.seq
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [r.command for r in rows] == [
         SchemaCommand.ACTIVATE_ASSET_TYPE,
         SchemaCommand.ACTIVATE_ASSET_TYPE,

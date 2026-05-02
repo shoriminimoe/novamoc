@@ -27,10 +27,12 @@ from novamoc.domain.schema import _payloads
 
 
 async def create(
-    services: ServiceBundle, req: _payloads.CreateMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.CreateMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     parent = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.payload.maintenance_record_type_id,
+        tenant_id=req.tenant_id,
+        id=req.payload.parent_id,
     )
     if parent is None:
         raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
@@ -39,7 +41,7 @@ async def create(
             data={
                 "tenant_id": req.tenant_id,
                 "id": req.entity_id,
-                "maintenance_record_type_id": req.payload.maintenance_record_type_id,
+                "parent_id": req.payload.parent_id,
                 "name": req.payload.name,
                 "data_type": req.payload.data_type,
                 "validation": req.payload.validation,
@@ -48,21 +50,27 @@ async def create(
             auto_commit=False,
         )
     except IntegrityError as exc:
-        raise ConflictError(code=ErrorCode.NAME_RESERVED, name=req.payload.name) from exc
+        raise ConflictError(
+            code=ErrorCode.NAME_RESERVED, name=req.payload.name
+        ) from exc
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
         command=SchemaCommand.CREATE_MAINTENANCE_RECORD_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CREATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.CREATED, row.committed_at
+    )
 
 
 async def activate(
-    services: ServiceBundle, req: _payloads.ActivateMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.ActivateMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -85,10 +93,12 @@ async def activate(
 
 
 async def update(
-    services: ServiceBundle, req: _payloads.UpdateMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.UpdateMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -97,7 +107,9 @@ async def update(
         raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
     try:
         await services.maintenance_record_type_field.update(
-            data=payload, item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+            data=payload,
+            item_id=(req.tenant_id, req.entity_id),
+            auto_commit=False,
         )
     except IntegrityError as exc:
         raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
@@ -107,14 +119,18 @@ async def update(
         entity_id=req.entity_id,
         payload=payload,
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.UPDATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.UPDATED, row.committed_at
+    )
 
 
 async def deactivate(
-    services: ServiceBundle, req: _payloads.DeactivateMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.DeactivateMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -137,12 +153,14 @@ async def deactivate(
 
 
 async def clear(
-    services: ServiceBundle, req: _payloads.ClearMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.ClearMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     # TODO(#7): Wipe field values from the data-projection store once EAV
     # projection tables land.
     obj = await services.maintenance_record_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -152,19 +170,24 @@ async def clear(
         entity_id=req.entity_id,
         payload={},
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CLEARED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.CLEARED, row.committed_at
+    )
 
 
 async def delete(
-    services: ServiceBundle, req: _payloads.DeleteMaintenanceRecordTypeField,
+    services: ServiceBundle,
+    req: _payloads.DeleteMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.maintenance_record_type_field.delete(
-        item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+        item_id=(req.tenant_id, req.entity_id),
+        auto_commit=False,
     )
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
@@ -172,4 +195,6 @@ async def delete(
         entity_id=req.entity_id,
         payload={},
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.DELETED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.DELETED, row.committed_at
+    )

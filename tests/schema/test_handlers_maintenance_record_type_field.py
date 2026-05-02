@@ -18,7 +18,10 @@ _T = "t1"
 
 
 async def _make_parent(
-    session: AsyncSession, services: ServiceBundle, *, active: bool = True,
+    session: AsyncSession,
+    services: ServiceBundle,
+    *,
+    active: bool = True,
 ):
     eid = uuid4()
     await services.maintenance_record_type.create(
@@ -30,14 +33,18 @@ async def _make_parent(
 
 
 async def _make_field(
-    session: AsyncSession, services: ServiceBundle, *, parent, active: bool = True,
+    session: AsyncSession,
+    services: ServiceBundle,
+    *,
+    parent,
+    active: bool = True,
 ):
     fid = uuid4()
     await services.maintenance_record_type_field.create(
         data={
             "tenant_id": _T,
             "id": fid,
-            "maintenance_record_type_id": parent,
+            "parent_id": parent,
             "name": "mileage",
             "data_type": "number",
             "validation": None,
@@ -51,6 +58,7 @@ async def _make_field(
 
 # --- create ---
 
+
 async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     parent = await _make_parent(session, services)
     fid = uuid4()
@@ -60,7 +68,7 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
             tenant_id=_T,
             entity_id=fid,
             payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
-                maintenance_record_type_id=parent,
+                parent_id=parent,
                 name="mileage",
                 data_type=FieldDataType.NUMBER,
             ),
@@ -79,7 +87,7 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
                 tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
-                    maintenance_record_type_id=uuid4(),
+                    parent_id=uuid4(),
                     name="mileage",
                     data_type=FieldDataType.NUMBER,
                 ),
@@ -90,12 +98,17 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
 
 # --- activate ---
 
-async def test_activate_when_deactivated(session: AsyncSession, services: ServiceBundle) -> None:
+
+async def test_activate_when_deactivated(
+    session: AsyncSession, services: ServiceBundle
+) -> None:
     parent = await _make_parent(session, services)
     fid = await _make_field(session, services, parent=parent, active=False)
     out = await dispatch(
         services,
-        _payloads.ActivateMaintenanceRecordTypeField(tenant_id=_T, entity_id=fid, payload=_payloads._Empty()),
+        _payloads.ActivateMaintenanceRecordTypeField(
+            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+        ),
     )
     assert out.outcome is Outcome.ACTIVATED
 
@@ -105,21 +118,29 @@ async def test_activate_missing_raises_not_found(services: ServiceBundle) -> Non
         await dispatch(
             services,
             _payloads.ActivateMaintenanceRecordTypeField(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty(),
+                tenant_id=_T,
+                entity_id=uuid4(),
+                payload=_payloads._Empty(),
             ),
         )
 
 
 # --- update / deactivate / clear / delete ---
 
-async def test_update_changes_data_type(session: AsyncSession, services: ServiceBundle) -> None:
+
+async def test_update_changes_data_type(
+    session: AsyncSession, services: ServiceBundle
+) -> None:
     parent = await _make_parent(session, services)
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
         _payloads.UpdateMaintenanceRecordTypeField(
-            tenant_id=_T, entity_id=fid,
-            payload=_payloads._MaintenanceRecordTypeFieldUpdatePayload(data_type=FieldDataType.TEXT),
+            tenant_id=_T,
+            entity_id=fid,
+            payload=_payloads._MaintenanceRecordTypeFieldUpdatePayload(
+                data_type=FieldDataType.TEXT
+            ),
         ),
     )
     await session.flush()
@@ -131,19 +152,24 @@ async def test_deactivate(session: AsyncSession, services: ServiceBundle) -> Non
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.DeactivateMaintenanceRecordTypeField(tenant_id=_T, entity_id=fid, payload=_payloads._Empty()),
+        _payloads.DeactivateMaintenanceRecordTypeField(
+            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+        ),
     )
     assert out.outcome is Outcome.DEACTIVATED
 
 
 async def test_clear_field_appends_log_row(
-    session: AsyncSession, services: ServiceBundle,
+    session: AsyncSession,
+    services: ServiceBundle,
 ) -> None:
     parent = await _make_parent(session, services)
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.ClearMaintenanceRecordTypeField(tenant_id=_T, entity_id=fid, payload=_payloads._Empty()),
+        _payloads.ClearMaintenanceRecordTypeField(
+            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+        ),
     )
     await session.flush()
     assert out.outcome is Outcome.CLEARED
@@ -156,8 +182,15 @@ async def test_delete_field(session: AsyncSession, services: ServiceBundle) -> N
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.DeleteMaintenanceRecordTypeField(tenant_id=_T, entity_id=fid, payload=_payloads._Empty()),
+        _payloads.DeleteMaintenanceRecordTypeField(
+            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+        ),
     )
     await session.flush()
     assert out.outcome is Outcome.DELETED
-    assert await services.maintenance_record_type_field.get_one_or_none(tenant_id=_T, id=fid) is None
+    assert (
+        await services.maintenance_record_type_field.get_one_or_none(
+            tenant_id=_T, id=fid
+        )
+        is None
+    )

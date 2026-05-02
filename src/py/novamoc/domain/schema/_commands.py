@@ -38,7 +38,9 @@ class SchemaCommand(StrEnum):
 
     CREATE_MAINTENANCE_RECORD_TYPE_FIELD = "create_maintenance_record_type_field"
     ACTIVATE_MAINTENANCE_RECORD_TYPE_FIELD = "activate_maintenance_record_type_field"
-    DEACTIVATE_MAINTENANCE_RECORD_TYPE_FIELD = "deactivate_maintenance_record_type_field"
+    DEACTIVATE_MAINTENANCE_RECORD_TYPE_FIELD = (
+        "deactivate_maintenance_record_type_field"
+    )
     UPDATE_MAINTENANCE_RECORD_TYPE_FIELD = "update_maintenance_record_type_field"
     CLEAR_MAINTENANCE_RECORD_TYPE_FIELD = "clear_maintenance_record_type_field"
     DELETE_MAINTENANCE_RECORD_TYPE_FIELD = "delete_maintenance_record_type_field"
