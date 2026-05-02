@@ -1,0 +1,93 @@
+"""Test fixtures.
+
+Real in-memory SQLite per test session. No mocks — db-layer tests must hit
+a real engine to catch migration-style drift early.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+
+import pytest
+from advanced_alchemy.base import metadata_registry
+from advanced_alchemy.extensions.litestar import (
+    AsyncSessionConfig,
+    SQLAlchemyAsyncConfig,
+    SQLAlchemyPlugin,
+)
+from litestar import Litestar
+from litestar.openapi.config import OpenAPIConfig
+from litestar.testing import AsyncTestClient
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
+# Importing the models registers their tables on the shared metadata registry.
+import novamoc.db.models  # noqa: F401
+from novamoc.domain.schema._bundle import ServiceBundle
+from novamoc.domain.schema.controllers import SchemaController
+from novamoc.domain.schema.services import (
+    AssetTypeFieldService,
+    AssetTypeService,
+    MaintenanceRecordTypeFieldService,
+    MaintenanceRecordTypeService,
+    SchemaChangeLogService,
+)
+
+
+@pytest.fixture
+async def engine() -> AsyncIterator[AsyncEngine]:
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with eng.begin() as conn:
+        for key in metadata_registry:
+            await conn.run_sync(metadata_registry[key].create_all)
+    try:
+        yield eng
+    finally:
+        await eng.dispose()
+
+
+@pytest.fixture
+async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as s:
+        try:
+            yield s
+        finally:
+            await s.rollback()
+
+
+@pytest.fixture
+def services(session) -> ServiceBundle:
+    return ServiceBundle(
+        asset_type=AssetTypeService(session=session),
+        asset_type_field=AssetTypeFieldService(session=session),
+        maintenance_record_type=MaintenanceRecordTypeService(session=session),
+        maintenance_record_type_field=MaintenanceRecordTypeFieldService(session=session),
+        change_log=SchemaChangeLogService(session=session),
+    )
+
+
+@pytest.fixture
+async def app() -> Litestar:
+    """A Litestar app with an in-memory shared-cache SQLite for e2e tests.
+
+    ``cache=shared`` lets multiple connections within the same process
+    reach the same in-memory db, which the plugin needs because it opens
+    its own engine.
+    """
+    alchemy_config = SQLAlchemyAsyncConfig(
+        connection_string="sqlite+aiosqlite:///file::memory:?cache=shared&uri=true",
+        before_send_handler="autocommit",
+        session_config=AsyncSessionConfig(expire_on_commit=False),
+        create_all=True,
+    )
+    return Litestar(
+        route_handlers=[SchemaController],
+        plugins=[SQLAlchemyPlugin(config=alchemy_config)],
+        openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
+    )
+
+
+@pytest.fixture
+async def client(app: Litestar):
+    async with AsyncTestClient(app) as c:
+        yield c
