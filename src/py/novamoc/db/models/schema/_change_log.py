@@ -25,11 +25,11 @@ class SchemaChangeLog(DefaultBase):
     """
 
     __tablename__ = "schema_change_log"
-    __table_args__ = (
-        Index("idx_schema_change_log_tenant_seq", "tenant_id", "seq"),
-    )
+    __table_args__ = (Index("idx_schema_change_log_tenant_seq", "tenant_id", "seq"),)
 
-    seq: Mapped[int] = mapped_column(BigIntIdentity, primary_key=True, autoincrement=True)
+    seq: Mapped[int] = mapped_column(
+        BigIntIdentity, primary_key=True, autoincrement=True
+    )
     tenant_id: Mapped[str]
     command: Mapped[str]
     entity_id: Mapped[UUID] = mapped_column(GUID)

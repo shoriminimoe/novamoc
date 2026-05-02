@@ -29,9 +29,12 @@ from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 from novamoc.domain.schema import _payloads
 
 
-async def create(services: ServiceBundle, req: _payloads.CreateAssetTypeField) -> SchemaCommitOutcome:
+async def create(
+    services: ServiceBundle, req: _payloads.CreateAssetTypeField
+) -> SchemaCommitOutcome:
     parent = await services.asset_type.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.payload.parent_id,
+        tenant_id=req.tenant_id,
+        id=req.payload.parent_id,
     )
     if parent is None:
         raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
@@ -49,19 +52,26 @@ async def create(services: ServiceBundle, req: _payloads.CreateAssetTypeField) -
             auto_commit=False,
         )
     except IntegrityError as exc:
-        raise ConflictError(code=ErrorCode.NAME_RESERVED, name=req.payload.name) from exc
+        raise ConflictError(
+            code=ErrorCode.NAME_RESERVED, name=req.payload.name
+        ) from exc
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
         command=SchemaCommand.CREATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CREATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.CREATED, row.committed_at
+    )
 
 
-async def activate(services: ServiceBundle, req: _payloads.ActivateAssetTypeField) -> SchemaCommitOutcome:
+async def activate(
+    services: ServiceBundle, req: _payloads.ActivateAssetTypeField
+) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -83,9 +93,12 @@ async def activate(services: ServiceBundle, req: _payloads.ActivateAssetTypeFiel
     return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
 
 
-async def update(services: ServiceBundle, req: _payloads.UpdateAssetTypeField) -> SchemaCommitOutcome:
+async def update(
+    services: ServiceBundle, req: _payloads.UpdateAssetTypeField
+) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -97,7 +110,9 @@ async def update(services: ServiceBundle, req: _payloads.UpdateAssetTypeField) -
         raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
     try:
         await services.asset_type_field.update(
-            data=payload, item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+            data=payload,
+            item_id=(req.tenant_id, req.entity_id),
+            auto_commit=False,
         )
     except IntegrityError as exc:
         # See note in update_asset_type — IntegrityError → NAME_RESERVED.
@@ -108,12 +123,17 @@ async def update(services: ServiceBundle, req: _payloads.UpdateAssetTypeField) -
         entity_id=req.entity_id,
         payload=payload,
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.UPDATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.UPDATED, row.committed_at
+    )
 
 
-async def deactivate(services: ServiceBundle, req: _payloads.DeactivateAssetTypeField) -> SchemaCommitOutcome:
+async def deactivate(
+    services: ServiceBundle, req: _payloads.DeactivateAssetTypeField
+) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -135,11 +155,14 @@ async def deactivate(services: ServiceBundle, req: _payloads.DeactivateAssetType
     return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
 
 
-async def clear(services: ServiceBundle, req: _payloads.ClearAssetTypeField) -> SchemaCommitOutcome:
+async def clear(
+    services: ServiceBundle, req: _payloads.ClearAssetTypeField
+) -> SchemaCommitOutcome:
     # TODO(#7): Wipe field values from the data-projection store once EAV projection
     # tables land. For now only append the change-log row.
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
@@ -149,17 +172,23 @@ async def clear(services: ServiceBundle, req: _payloads.ClearAssetTypeField) -> 
         entity_id=req.entity_id,
         payload={},
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CLEARED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.CLEARED, row.committed_at
+    )
 
 
-async def delete(services: ServiceBundle, req: _payloads.DeleteAssetTypeField) -> SchemaCommitOutcome:
+async def delete(
+    services: ServiceBundle, req: _payloads.DeleteAssetTypeField
+) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.entity_id,
+        tenant_id=req.tenant_id,
+        id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.asset_type_field.delete(
-        item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+        item_id=(req.tenant_id, req.entity_id),
+        auto_commit=False,
     )
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
@@ -167,4 +196,6 @@ async def delete(services: ServiceBundle, req: _payloads.DeleteAssetTypeField) -
         entity_id=req.entity_id,
         payload={},
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.DELETED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.DELETED, row.committed_at
+    )

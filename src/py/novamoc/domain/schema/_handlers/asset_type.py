@@ -27,7 +27,9 @@ from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 from novamoc.domain.schema import _payloads
 
 
-async def create(services: ServiceBundle, req: _payloads.CreateAssetType) -> SchemaCommitOutcome:
+async def create(
+    services: ServiceBundle, req: _payloads.CreateAssetType
+) -> SchemaCommitOutcome:
     try:
         await services.asset_type.create(
             data={
@@ -40,18 +42,26 @@ async def create(services: ServiceBundle, req: _payloads.CreateAssetType) -> Sch
         )
     except IntegrityError as exc:
         # PK collision on (tenant_id, id) or UNIQUE on (tenant_id, name).
-        raise ConflictError(code=ErrorCode.NAME_RESERVED, name=req.payload.name) from exc
+        raise ConflictError(
+            code=ErrorCode.NAME_RESERVED, name=req.payload.name
+        ) from exc
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
         command=SchemaCommand.CREATE_ASSET_TYPE,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CREATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.CREATED, row.committed_at
+    )
 
 
-async def activate(services: ServiceBundle, req: _payloads.ActivateAssetType) -> SchemaCommitOutcome:
-    obj = await services.asset_type.get_one_or_none(tenant_id=req.tenant_id, id=req.entity_id)
+async def activate(
+    services: ServiceBundle, req: _payloads.ActivateAssetType
+) -> SchemaCommitOutcome:
+    obj = await services.asset_type.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id
+    )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -72,8 +82,12 @@ async def activate(services: ServiceBundle, req: _payloads.ActivateAssetType) ->
     return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
 
 
-async def update(services: ServiceBundle, req: _payloads.UpdateAssetType) -> SchemaCommitOutcome:
-    obj = await services.asset_type.get_one_or_none(tenant_id=req.tenant_id, id=req.entity_id)
+async def update(
+    services: ServiceBundle, req: _payloads.UpdateAssetType
+) -> SchemaCommitOutcome:
+    obj = await services.asset_type.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id
+    )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     # ``omit_defaults=True`` on the payload struct drops UNSET fields here;
@@ -84,7 +98,9 @@ async def update(services: ServiceBundle, req: _payloads.UpdateAssetType) -> Sch
         raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
     try:
         await services.asset_type.update(
-            data=payload, item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+            data=payload,
+            item_id=(req.tenant_id, req.entity_id),
+            auto_commit=False,
         )
     except IntegrityError as exc:
         # Note: this maps every IntegrityError to NAME_RESERVED. The current
@@ -99,11 +115,17 @@ async def update(services: ServiceBundle, req: _payloads.UpdateAssetType) -> Sch
         entity_id=req.entity_id,
         payload=payload,
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.UPDATED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.UPDATED, row.committed_at
+    )
 
 
-async def deactivate(services: ServiceBundle, req: _payloads.DeactivateAssetType) -> SchemaCommitOutcome:
-    obj = await services.asset_type.get_one_or_none(tenant_id=req.tenant_id, id=req.entity_id)
+async def deactivate(
+    services: ServiceBundle, req: _payloads.DeactivateAssetType
+) -> SchemaCommitOutcome:
+    obj = await services.asset_type.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id
+    )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -124,12 +146,17 @@ async def deactivate(services: ServiceBundle, req: _payloads.DeactivateAssetType
     return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
 
 
-async def delete(services: ServiceBundle, req: _payloads.DeleteAssetType) -> SchemaCommitOutcome:
-    obj = await services.asset_type.get_one_or_none(tenant_id=req.tenant_id, id=req.entity_id)
+async def delete(
+    services: ServiceBundle, req: _payloads.DeleteAssetType
+) -> SchemaCommitOutcome:
+    obj = await services.asset_type.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id
+    )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.asset_type.delete(
-        item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+        item_id=(req.tenant_id, req.entity_id),
+        auto_commit=False,
     )
     row = await services.change_log.append(
         tenant_id=req.tenant_id,
@@ -137,4 +164,6 @@ async def delete(services: ServiceBundle, req: _payloads.DeleteAssetType) -> Sch
         entity_id=req.entity_id,
         payload={},
     )
-    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.DELETED, row.committed_at)
+    return SchemaCommitOutcome(
+        row.seq, req.entity_id, Outcome.DELETED, row.committed_at
+    )

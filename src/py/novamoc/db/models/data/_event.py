@@ -33,7 +33,9 @@ class EventLog(DefaultBase):
         Index("idx_event_log_tenant_seq", "tenant_id", "seq"),
     )
 
-    seq: Mapped[int] = mapped_column(BigIntIdentity, primary_key=True, autoincrement=True)
+    seq: Mapped[int] = mapped_column(
+        BigIntIdentity, primary_key=True, autoincrement=True
+    )
     tenant_id: Mapped[str]
     hlc: Mapped[str]
     schema_version: Mapped[int] = mapped_column(BigInteger)
@@ -42,4 +44,6 @@ class EventLog(DefaultBase):
     field_id: Mapped[str | None]
     op: Mapped[EventOp] = mapped_column(Enum(EventOp, native_enum=False))
     value_json: Mapped[Any | None] = mapped_column(JsonB)
-    received_at: Mapped[datetime] = mapped_column(DateTimeUTC, server_default=func.now())
+    received_at: Mapped[datetime] = mapped_column(
+        DateTimeUTC, server_default=func.now()
+    )

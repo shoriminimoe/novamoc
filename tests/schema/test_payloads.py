@@ -27,13 +27,16 @@ def _decode(body: dict) -> _payloads.SchemaRequest:
 
 # --- AssetType ---
 
+
 def test_create_asset_type() -> None:
-    obj = _decode({
-        "type": "create_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"name": "Truck"},
-    })
+    obj = _decode(
+        {
+            "type": "create_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"name": "Truck"},
+        }
+    )
     assert isinstance(obj, _payloads.CreateAssetType)
     assert isinstance(obj.payload, _payloads._AssetTypeCreatePayload)
     assert obj.payload.name == "Truck"
@@ -42,112 +45,133 @@ def test_create_asset_type() -> None:
 
 def test_create_asset_type_requires_name() -> None:
     with pytest.raises(msgspec.ValidationError):
-        _decode({
-            "type": "create_asset_type",
-            "tenant_id": _TENANT,
-            "entity_id": _ENTITY,
-            "payload": {},  # name missing → 400 invalid_payload_shape
-        })
+        _decode(
+            {
+                "type": "create_asset_type",
+                "tenant_id": _TENANT,
+                "entity_id": _ENTITY,
+                "payload": {},  # name missing → 400 invalid_payload_shape
+            }
+        )
 
 
 def test_activate_asset_type_takes_empty_payload() -> None:
-    obj = _decode({
-        "type": "activate_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    obj = _decode(
+        {
+            "type": "activate_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(obj, _payloads.ActivateAssetType)
     assert isinstance(obj.payload, _payloads._Empty)
 
 
 def test_activate_asset_type_allows_omitted_payload() -> None:
     """No-payload commands accept the ``payload`` key being absent on the wire."""
-    obj = _decode({
-        "type": "activate_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-    })
+    obj = _decode(
+        {
+            "type": "activate_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+        }
+    )
     assert isinstance(obj, _payloads.ActivateAssetType)
     assert obj.payload is msgspec.UNSET
 
 
 def test_activate_asset_type_rejects_payload_fields() -> None:
     with pytest.raises(msgspec.ValidationError):
-        _decode({
-            "type": "activate_asset_type",
-            "tenant_id": _TENANT,
-            "entity_id": _ENTITY,
-            "payload": {"name": "Truck"},
-        })
+        _decode(
+            {
+                "type": "activate_asset_type",
+                "tenant_id": _TENANT,
+                "entity_id": _ENTITY,
+                "payload": {"name": "Truck"},
+            }
+        )
 
 
 def test_update_asset_type_partial() -> None:
-    obj = _decode({
-        "type": "update_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"name": "Lorry"},
-    })
+    obj = _decode(
+        {
+            "type": "update_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"name": "Lorry"},
+        }
+    )
     assert isinstance(obj, _payloads.UpdateAssetType)
     assert isinstance(obj.payload, _payloads._AssetTypeUpdatePayload)
     assert obj.payload.name == "Lorry"
 
 
 def test_deactivate_and_delete_require_empty_payload() -> None:
-    deact = _decode({
-        "type": "deactivate_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    deact = _decode(
+        {
+            "type": "deactivate_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(deact, _payloads.DeactivateAssetType)
     assert isinstance(deact.payload, _payloads._Empty)
 
-    delete = _decode({
-        "type": "delete_asset_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    delete = _decode(
+        {
+            "type": "delete_asset_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(delete, _payloads.DeleteAssetType)
     assert isinstance(delete.payload, _payloads._Empty)
 
 
 def test_empty_payload_struct_rejects_unknown_fields() -> None:
     with pytest.raises(msgspec.ValidationError):
-        _decode({
-            "type": "deactivate_asset_type",
-            "tenant_id": _TENANT,
-            "entity_id": _ENTITY,
-            "payload": {"name": "x"},
-        })
+        _decode(
+            {
+                "type": "deactivate_asset_type",
+                "tenant_id": _TENANT,
+                "entity_id": _ENTITY,
+                "payload": {"name": "x"},
+            }
+        )
 
 
 def test_unknown_command_rejected() -> None:
     with pytest.raises(msgspec.ValidationError):
-        _decode({
-            "type": "do_a_barrel_roll",
-            "tenant_id": _TENANT,
-            "entity_id": _ENTITY,
-            "payload": {},
-        })
+        _decode(
+            {
+                "type": "do_a_barrel_roll",
+                "tenant_id": _TENANT,
+                "entity_id": _ENTITY,
+                "payload": {},
+            }
+        )
 
 
 # --- AssetTypeField ---
 
+
 def test_create_asset_type_field() -> None:
-    obj = _decode({
-        "type": "create_asset_type_field",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {
-            "parent_id": _PARENT,
-            "name": "vin",
-            "data_type": "text",
-            "validation": {"max_length": 17},
-        },
-    })
+    obj = _decode(
+        {
+            "type": "create_asset_type_field",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {
+                "parent_id": _PARENT,
+                "name": "vin",
+                "data_type": "text",
+                "validation": {"max_length": 17},
+            },
+        }
+    )
     assert isinstance(obj, _payloads.CreateAssetTypeField)
     assert isinstance(obj.payload, _payloads._AssetTypeFieldCreatePayload)
     assert obj.payload.parent_id == UUID(_PARENT)
@@ -158,21 +182,25 @@ def test_create_asset_type_field() -> None:
 
 def test_create_asset_type_field_requires_data_type() -> None:
     with pytest.raises(msgspec.ValidationError):
-        _decode({
-            "type": "create_asset_type_field",
-            "tenant_id": _TENANT,
-            "entity_id": _ENTITY,
-            "payload": {"parent_id": _PARENT, "name": "vin"},  # data_type missing
-        })
+        _decode(
+            {
+                "type": "create_asset_type_field",
+                "tenant_id": _TENANT,
+                "entity_id": _ENTITY,
+                "payload": {"parent_id": _PARENT, "name": "vin"},  # data_type missing
+            }
+        )
 
 
 def test_update_asset_type_field_partial() -> None:
-    obj = _decode({
-        "type": "update_asset_type_field",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"name": "vin_number"},
-    })
+    obj = _decode(
+        {
+            "type": "update_asset_type_field",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"name": "vin_number"},
+        }
+    )
     assert isinstance(obj, _payloads.UpdateAssetTypeField)
     assert obj.payload.name == "vin_number"
     assert obj.payload.data_type is msgspec.UNSET
@@ -181,12 +209,14 @@ def test_update_asset_type_field_partial() -> None:
 
 def test_update_asset_type_field_distinguishes_unset_from_explicit_null() -> None:
     """Sending ``{"validation": null}`` must clear the column to NULL."""
-    obj = _decode({
-        "type": "update_asset_type_field",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"validation": None},
-    })
+    obj = _decode(
+        {
+            "type": "update_asset_type_field",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"validation": None},
+        }
+    )
     assert isinstance(obj, _payloads.UpdateAssetTypeField)
     assert obj.payload.validation is None
     assert obj.payload.name is msgspec.UNSET
@@ -204,36 +234,43 @@ def test_update_asset_type_field_distinguishes_unset_from_explicit_null() -> Non
     ],
 )
 def test_asset_type_field_empty_payload_commands(command: str, cls: type) -> None:
-    obj = _decode({
-        "type": command,
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    obj = _decode(
+        {
+            "type": command,
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(obj, cls)
 
 
 # --- MaintenanceRecordType ---
 
+
 def test_create_maintenance_record_type() -> None:
-    obj = _decode({
-        "type": "create_maintenance_record_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"name": "Oil Change"},
-    })
+    obj = _decode(
+        {
+            "type": "create_maintenance_record_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"name": "Oil Change"},
+        }
+    )
     assert isinstance(obj, _payloads.CreateMaintenanceRecordType)
     assert isinstance(obj.payload, _payloads._MaintenanceRecordTypeCreatePayload)
     assert obj.payload.name == "Oil Change"
 
 
 def test_update_maintenance_record_type_partial() -> None:
-    obj = _decode({
-        "type": "update_maintenance_record_type",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"name": "Annual Inspection"},
-    })
+    obj = _decode(
+        {
+            "type": "update_maintenance_record_type",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"name": "Annual Inspection"},
+        }
+    )
     assert isinstance(obj, _payloads.UpdateMaintenanceRecordType)
     assert obj.payload.name == "Annual Inspection"
 
@@ -242,33 +279,41 @@ def test_update_maintenance_record_type_partial() -> None:
     ("command", "cls"),
     [
         ("activate_maintenance_record_type", _payloads.ActivateMaintenanceRecordType),
-        ("deactivate_maintenance_record_type", _payloads.DeactivateMaintenanceRecordType),
+        (
+            "deactivate_maintenance_record_type",
+            _payloads.DeactivateMaintenanceRecordType,
+        ),
         ("delete_maintenance_record_type", _payloads.DeleteMaintenanceRecordType),
     ],
 )
 def test_maintenance_record_type_empty_payload(command: str, cls: type) -> None:
-    obj = _decode({
-        "type": command,
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    obj = _decode(
+        {
+            "type": command,
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(obj, cls)
 
 
 # --- MaintenanceRecordTypeField ---
 
+
 def test_create_maintenance_record_type_field() -> None:
-    obj = _decode({
-        "type": "create_maintenance_record_type_field",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {
-            "parent_id": _PARENT,
-            "name": "mileage_at_service",
-            "data_type": "integer",
-        },
-    })
+    obj = _decode(
+        {
+            "type": "create_maintenance_record_type_field",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {
+                "parent_id": _PARENT,
+                "name": "mileage_at_service",
+                "data_type": "integer",
+            },
+        }
+    )
     assert isinstance(obj, _payloads.CreateMaintenanceRecordTypeField)
     assert isinstance(obj.payload, _payloads._MaintenanceRecordTypeFieldCreatePayload)
     assert obj.payload.parent_id == UUID(_PARENT)
@@ -277,12 +322,14 @@ def test_create_maintenance_record_type_field() -> None:
 
 
 def test_update_maintenance_record_type_field_partial() -> None:
-    obj = _decode({
-        "type": "update_maintenance_record_type_field",
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {"data_type": "number"},
-    })
+    obj = _decode(
+        {
+            "type": "update_maintenance_record_type_field",
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {"data_type": "number"},
+        }
+    )
     assert isinstance(obj, _payloads.UpdateMaintenanceRecordTypeField)
     assert obj.payload.data_type == "number"
 
@@ -290,23 +337,38 @@ def test_update_maintenance_record_type_field_partial() -> None:
 @pytest.mark.parametrize(
     ("command", "cls"),
     [
-        ("activate_maintenance_record_type_field", _payloads.ActivateMaintenanceRecordTypeField),
-        ("deactivate_maintenance_record_type_field", _payloads.DeactivateMaintenanceRecordTypeField),
-        ("clear_maintenance_record_type_field", _payloads.ClearMaintenanceRecordTypeField),
-        ("delete_maintenance_record_type_field", _payloads.DeleteMaintenanceRecordTypeField),
+        (
+            "activate_maintenance_record_type_field",
+            _payloads.ActivateMaintenanceRecordTypeField,
+        ),
+        (
+            "deactivate_maintenance_record_type_field",
+            _payloads.DeactivateMaintenanceRecordTypeField,
+        ),
+        (
+            "clear_maintenance_record_type_field",
+            _payloads.ClearMaintenanceRecordTypeField,
+        ),
+        (
+            "delete_maintenance_record_type_field",
+            _payloads.DeleteMaintenanceRecordTypeField,
+        ),
     ],
 )
 def test_maintenance_record_type_field_empty_payload(command: str, cls: type) -> None:
-    obj = _decode({
-        "type": command,
-        "tenant_id": _TENANT,
-        "entity_id": _ENTITY,
-        "payload": {},
-    })
+    obj = _decode(
+        {
+            "type": command,
+            "tenant_id": _TENANT,
+            "entity_id": _ENTITY,
+            "payload": {},
+        }
+    )
     assert isinstance(obj, cls)
 
 
 # --- Response envelopes ---
+
 
 def test_schema_response_has_expected_fields() -> None:
     resp = _payloads.SchemaResponse(
@@ -325,6 +387,8 @@ def test_schema_response_has_expected_fields() -> None:
 
 
 def test_schema_error_response_minimal_envelope() -> None:
-    resp = _payloads.SchemaErrorResponse(error="conflict", code="name_reserved", message="…")
+    resp = _payloads.SchemaErrorResponse(
+        error="conflict", code="name_reserved", message="…"
+    )
     encoded = msgspec.json.decode(msgspec.json.encode(resp))
     assert encoded == {"error": "conflict", "code": "name_reserved", "message": "…"}

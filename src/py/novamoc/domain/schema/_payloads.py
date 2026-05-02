@@ -63,13 +63,16 @@ class _Empty(msgspec.Struct, forbid_unknown_fields=True):
 
 # --- AssetType payload shapes ---
 
+
 class _AssetTypeCreatePayload(msgspec.Struct, forbid_unknown_fields=True):
     """Payload for ``create_asset_type``. ``name`` is required."""
 
     name: str
 
 
-class _AssetTypeUpdatePayload(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
+class _AssetTypeUpdatePayload(
+    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True
+):
     """Payload for ``update_asset_type`` — only changed properties.
 
     Empty wire ``{}`` is rejected by the handler as ``payload_no_changes``.
@@ -81,6 +84,7 @@ class _AssetTypeUpdatePayload(msgspec.Struct, forbid_unknown_fields=True, omit_d
 
 
 # --- AssetType command structs ---
+
 
 class CreateAssetType(_SchemaCommand):
     tenant_id: str
@@ -114,8 +118,11 @@ class DeleteAssetType(_SchemaCommand):
 
 # --- AssetTypeField payload shapes ---
 
+
 class _AssetTypeFieldCreatePayload(
-    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True,
+    msgspec.Struct,
+    forbid_unknown_fields=True,
+    omit_defaults=True,
 ):
     """Payload for ``create_asset_type_field``.
 
@@ -129,7 +136,9 @@ class _AssetTypeFieldCreatePayload(
     validation: dict[str, Any] | None = None
 
 
-class _AssetTypeFieldUpdatePayload(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
+class _AssetTypeFieldUpdatePayload(
+    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True
+):
     """Payload for ``update_asset_type_field`` — only changed properties.
 
     Note: ``parent_id`` is intentionally omitted — re-parenting a
@@ -147,6 +156,7 @@ class _AssetTypeFieldUpdatePayload(msgspec.Struct, forbid_unknown_fields=True, o
 
 
 # --- AssetTypeField command structs ---
+
 
 class CreateAssetTypeField(_SchemaCommand):
     tenant_id: str
@@ -186,8 +196,10 @@ class DeleteAssetTypeField(_SchemaCommand):
 
 # --- MaintenanceRecordType payload shapes ---
 
+
 class _MaintenanceRecordTypeCreatePayload(
-    msgspec.Struct, forbid_unknown_fields=True,
+    msgspec.Struct,
+    forbid_unknown_fields=True,
 ):
     """Payload for ``create_maintenance_record_type``. ``name`` is required."""
 
@@ -195,7 +207,9 @@ class _MaintenanceRecordTypeCreatePayload(
 
 
 class _MaintenanceRecordTypeUpdatePayload(
-    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True,
+    msgspec.Struct,
+    forbid_unknown_fields=True,
+    omit_defaults=True,
 ):
     """Payload for ``update_maintenance_record_type`` — only changed properties."""
 
@@ -203,6 +217,7 @@ class _MaintenanceRecordTypeUpdatePayload(
 
 
 # --- MaintenanceRecordType command structs ---
+
 
 class CreateMaintenanceRecordType(_SchemaCommand):
     tenant_id: str
@@ -236,8 +251,11 @@ class DeleteMaintenanceRecordType(_SchemaCommand):
 
 # --- MaintenanceRecordTypeField payload shapes ---
 
+
 class _MaintenanceRecordTypeFieldCreatePayload(
-    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True,
+    msgspec.Struct,
+    forbid_unknown_fields=True,
+    omit_defaults=True,
 ):
     """Payload for ``create_maintenance_record_type_field``.
 
@@ -252,7 +270,9 @@ class _MaintenanceRecordTypeFieldCreatePayload(
 
 
 class _MaintenanceRecordTypeFieldUpdatePayload(
-    msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True,
+    msgspec.Struct,
+    forbid_unknown_fields=True,
+    omit_defaults=True,
 ):
     """Payload for ``update_maintenance_record_type_field`` — only changed properties.
 
@@ -305,19 +325,33 @@ class DeleteMaintenanceRecordTypeField(_SchemaCommand):
 # --- The discriminated union ---
 
 SchemaRequest = (
-    CreateAssetType | ActivateAssetType | UpdateAssetType | DeactivateAssetType | DeleteAssetType
-    | CreateAssetTypeField | ActivateAssetTypeField | UpdateAssetTypeField
-    | DeactivateAssetTypeField | ClearAssetTypeField | DeleteAssetTypeField
-    | CreateMaintenanceRecordType | ActivateMaintenanceRecordType
-    | UpdateMaintenanceRecordType | DeactivateMaintenanceRecordType
+    CreateAssetType
+    | ActivateAssetType
+    | UpdateAssetType
+    | DeactivateAssetType
+    | DeleteAssetType
+    | CreateAssetTypeField
+    | ActivateAssetTypeField
+    | UpdateAssetTypeField
+    | DeactivateAssetTypeField
+    | ClearAssetTypeField
+    | DeleteAssetTypeField
+    | CreateMaintenanceRecordType
+    | ActivateMaintenanceRecordType
+    | UpdateMaintenanceRecordType
+    | DeactivateMaintenanceRecordType
     | DeleteMaintenanceRecordType
-    | CreateMaintenanceRecordTypeField | ActivateMaintenanceRecordTypeField
-    | UpdateMaintenanceRecordTypeField | DeactivateMaintenanceRecordTypeField
-    | ClearMaintenanceRecordTypeField | DeleteMaintenanceRecordTypeField
+    | CreateMaintenanceRecordTypeField
+    | ActivateMaintenanceRecordTypeField
+    | UpdateMaintenanceRecordTypeField
+    | DeactivateMaintenanceRecordTypeField
+    | ClearMaintenanceRecordTypeField
+    | DeleteMaintenanceRecordTypeField
 )
 
 
 # --- Response envelopes ---
+
 
 class SchemaResponse(msgspec.Struct):
     schema_version: int

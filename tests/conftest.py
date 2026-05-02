@@ -18,7 +18,12 @@ from advanced_alchemy.extensions.litestar import (
 from litestar import Litestar
 from litestar.openapi.config import OpenAPIConfig
 from litestar.testing import AsyncTestClient
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
@@ -61,7 +66,9 @@ def services(session) -> ServiceBundle:
         asset_type=AssetTypeService(session=session),
         asset_type_field=AssetTypeFieldService(session=session),
         maintenance_record_type=MaintenanceRecordTypeService(session=session),
-        maintenance_record_type_field=MaintenanceRecordTypeFieldService(session=session),
+        maintenance_record_type_field=MaintenanceRecordTypeFieldService(
+            session=session
+        ),
         change_log=SchemaChangeLogService(session=session),
     )
 

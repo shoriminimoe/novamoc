@@ -40,7 +40,9 @@ async def test_type_service_round_trip(service_cls, session: AsyncSession) -> No
     ],
 )
 async def test_field_service_round_trip(
-    type_svc_cls, field_svc_cls, session: AsyncSession,
+    type_svc_cls,
+    field_svc_cls,
+    session: AsyncSession,
 ) -> None:
     type_svc = type_svc_cls(session=session)
     field_svc = field_svc_cls(session=session)

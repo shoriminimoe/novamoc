@@ -39,13 +39,17 @@ class AssetTypeField(TenantScopedAuditBase):
             ondelete="CASCADE",
         ),
         UniqueConstraint(
-            "tenant_id", "parent_id", "name",
+            "tenant_id",
+            "parent_id",
+            "name",
             name="uq_asset_type_fields_tenant_type_name",
         ),
     )
 
     parent_id: Mapped[UUID] = mapped_column(GUID)
     name: Mapped[str]
-    data_type: Mapped[FieldDataType] = mapped_column(Enum(FieldDataType, native_enum=False))
+    data_type: Mapped[FieldDataType] = mapped_column(
+        Enum(FieldDataType, native_enum=False)
+    )
     validation: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     active: Mapped[bool] = mapped_column(default=True, server_default="1")

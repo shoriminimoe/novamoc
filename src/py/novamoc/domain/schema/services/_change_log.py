@@ -9,7 +9,9 @@ import novamoc.db.models as m
 from novamoc.domain.schema._commands import SchemaCommand
 
 
-class SchemaChangeLogService(service.SQLAlchemyAsyncRepositoryService[m.schema.SchemaChangeLog]):
+class SchemaChangeLogService(
+    service.SQLAlchemyAsyncRepositoryService[m.schema.SchemaChangeLog]
+):
     """Append-only log of accepted schema commands.
 
     The repository pattern fits poorly here — the table is write-only from

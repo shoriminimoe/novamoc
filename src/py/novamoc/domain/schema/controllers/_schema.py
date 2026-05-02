@@ -38,7 +38,8 @@ from novamoc.domain.schema._errors import ErrorCode, SchemaCommandError
 
 
 def schema_command_error_handler(
-    _request: Request[Any, Any, Any] | None, exc: SchemaCommandError,
+    _request: Request[Any, Any, Any] | None,
+    exc: SchemaCommandError,
 ) -> Response[dict[str, Any]]:
     body: dict[str, Any] = {
         "error": exc.error,
@@ -50,7 +51,8 @@ def schema_command_error_handler(
 
 
 def msgspec_validation_error_handler(
-    _request: Request[Any, Any, Any] | None, exc: msgspec.ValidationError,
+    _request: Request[Any, Any, Any] | None,
+    exc: msgspec.ValidationError,
 ) -> Response[dict[str, Any]]:
     return Response(
         content={
@@ -63,7 +65,8 @@ def msgspec_validation_error_handler(
 
 
 def litestar_validation_error_handler(
-    _request: Request[Any, Any, Any] | None, exc: ValidationException,
+    _request: Request[Any, Any, Any] | None,
+    exc: ValidationException,
 ) -> Response[dict[str, Any]]:
     """Map Litestar's ``ValidationException`` (which wraps msgspec decode errors)
     to the same ``invalid_payload_shape`` envelope used for raw msgspec errors.
@@ -83,18 +86,24 @@ class SchemaController(Controller):
     tags = ["schema"]
 
     dependencies = (
-        providers.create_service_dependencies(_services.AssetTypeService, "asset_type_service")
-        | providers.create_service_dependencies(
-            _services.AssetTypeFieldService, "asset_type_field_service",
+        providers.create_service_dependencies(
+            _services.AssetTypeService, "asset_type_service"
         )
         | providers.create_service_dependencies(
-            _services.MaintenanceRecordTypeService, "maintenance_record_type_service",
+            _services.AssetTypeFieldService,
+            "asset_type_field_service",
         )
         | providers.create_service_dependencies(
-            _services.MaintenanceRecordTypeFieldService, "maintenance_record_type_field_service",
+            _services.MaintenanceRecordTypeService,
+            "maintenance_record_type_service",
         )
         | providers.create_service_dependencies(
-            _services.SchemaChangeLogService, "schema_change_log_service",
+            _services.MaintenanceRecordTypeFieldService,
+            "maintenance_record_type_field_service",
+        )
+        | providers.create_service_dependencies(
+            _services.SchemaChangeLogService,
+            "schema_change_log_service",
         )
     )
 
@@ -107,8 +116,12 @@ class SchemaController(Controller):
     @post(
         "/",
         responses={
-            400: ResponseSpec(_payloads.SchemaErrorResponse, description="Invalid request"),
-            404: ResponseSpec(_payloads.SchemaErrorResponse, description="Entity not found"),
+            400: ResponseSpec(
+                _payloads.SchemaErrorResponse, description="Invalid request"
+            ),
+            404: ResponseSpec(
+                _payloads.SchemaErrorResponse, description="Entity not found"
+            ),
             409: ResponseSpec(_payloads.SchemaErrorResponse, description="Conflict"),
         },
     )
