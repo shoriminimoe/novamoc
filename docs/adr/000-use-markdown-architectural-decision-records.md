@@ -14,7 +14,7 @@ We need a lightweight, version-controlled, text-based format that lives alongsid
 
 We use Architecture Decision Records (ADRs) in [MADR](https://adr.github.io/madr/) format, stored as Markdown files in `docs/adr/` and numbered sequentially from 000.
 
-ADRs record decisions, not designs. Design content — pipelines, code samples, evolving spec — belongs in the developer docs, not in ADRs.
+ADRs record decisions, not designs. Design content — pipelines, code samples, evolving spec — belongs in the developer docs, not in ADRs. Any code, types, or examples that do appear in an ADR are illustrative pseudo-code, not an implementation contract.
 
 Each ADR has four sections:
 
