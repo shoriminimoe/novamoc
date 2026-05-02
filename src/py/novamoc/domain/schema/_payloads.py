@@ -119,11 +119,11 @@ class _AssetTypeFieldCreatePayload(
 ):
     """Payload for ``create_asset_type_field``.
 
-    ``asset_type_id``, ``name``, and ``data_type`` are required;
+    ``parent_id``, ``name``, and ``data_type`` are required;
     ``validation`` is optional.
     """
 
-    asset_type_id: UUID
+    parent_id: UUID
     name: str
     data_type: FieldDataType
     validation: dict[str, Any] | None = None
@@ -132,7 +132,7 @@ class _AssetTypeFieldCreatePayload(
 class _AssetTypeFieldUpdatePayload(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     """Payload for ``update_asset_type_field`` — only changed properties.
 
-    Note: ``asset_type_id`` is intentionally omitted — re-parenting a
+    Note: ``parent_id`` is intentionally omitted — re-parenting a
     field is not an update operation.
 
     Nullable fields (``validation``) use ``UNSET`` as the default so that

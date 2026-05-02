@@ -35,7 +35,7 @@ async def test_type_service_round_trip(service_cls, session: AsyncSession) -> No
 @pytest.mark.parametrize(
     ("type_svc_cls", "field_svc_cls", "parent_fk"),
     [
-        (AssetTypeService, AssetTypeFieldService, "asset_type_id"),
+        (AssetTypeService, AssetTypeFieldService, "parent_id"),
         (MaintenanceRecordTypeService, MaintenanceRecordTypeFieldService, "maintenance_record_type_id"),
     ],
 )

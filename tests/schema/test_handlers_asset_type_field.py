@@ -44,7 +44,7 @@ async def _make_field(
         data={
             "tenant_id": _T,
             "id": fid,
-            "asset_type_id": parent,
+            "parent_id": parent,
             "name": "vin",
             "data_type": "text",
             "validation": None,
@@ -67,14 +67,14 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
             tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldCreatePayload(
-                asset_type_id=parent, name="vin", data_type=FieldDataType.TEXT,
+                parent_id=parent, name="vin", data_type=FieldDataType.TEXT,
             ),
         ),
     )
     await session.flush()
     assert out.outcome is Outcome.CREATED
     row = await services.asset_type_field.get_one_or_none(tenant_id=_T, id=fid)
-    assert row is not None and row.name == "vin" and row.asset_type_id == parent and row.active is True
+    assert row is not None and row.name == "vin" and row.parent_id == parent and row.active is True
 
     log = (await session.execute(select(schema_models.SchemaChangeLog))).scalars().all()
     assert log[-1].command == SchemaCommand.CREATE_ASSET_TYPE_FIELD
@@ -88,7 +88,7 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
                 tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._AssetTypeFieldCreatePayload(
-                    asset_type_id=uuid4(), name="vin", data_type=FieldDataType.TEXT,
+                    parent_id=uuid4(), name="vin", data_type=FieldDataType.TEXT,
                 ),
             ),
         )
@@ -106,7 +106,7 @@ async def test_create_with_deactivated_parent_is_allowed(
             tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldCreatePayload(
-                asset_type_id=parent, name="vin", data_type=FieldDataType.TEXT,
+                parent_id=parent, name="vin", data_type=FieldDataType.TEXT,
             ),
         ),
     )
@@ -122,7 +122,7 @@ async def test_create_name_collision(session: AsyncSession, services: ServiceBun
             _payloads.CreateAssetTypeField(
                 tenant_id=_T, entity_id=uuid4(),
                 payload=_payloads._AssetTypeFieldCreatePayload(
-                    asset_type_id=parent, name="vin", data_type=FieldDataType.TEXT,
+                    parent_id=parent, name="vin", data_type=FieldDataType.TEXT,
                 ),
             ),
         )
@@ -204,7 +204,7 @@ async def test_update_field_explicit_null_clears_validation(
     fid = uuid4()
     await services.asset_type_field.create(
         data={
-            "tenant_id": _T, "id": fid, "asset_type_id": parent,
+            "tenant_id": _T, "id": fid, "parent_id": parent,
             "name": "vin", "data_type": "text",
             "validation": {"max_length": 17}, "active": True,
         },

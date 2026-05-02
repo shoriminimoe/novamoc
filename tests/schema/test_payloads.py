@@ -142,7 +142,7 @@ def test_create_asset_type_field() -> None:
         "tenant_id": _TENANT,
         "entity_id": _ENTITY,
         "payload": {
-            "asset_type_id": _PARENT,
+            "parent_id": _PARENT,
             "name": "vin",
             "data_type": "text",
             "validation": {"max_length": 17},
@@ -150,7 +150,7 @@ def test_create_asset_type_field() -> None:
     })
     assert isinstance(obj, _payloads.CreateAssetTypeField)
     assert isinstance(obj.payload, _payloads._AssetTypeFieldCreatePayload)
-    assert obj.payload.asset_type_id == UUID(_PARENT)
+    assert obj.payload.parent_id == UUID(_PARENT)
     assert obj.payload.name == "vin"
     assert obj.payload.data_type == "text"
     assert obj.payload.validation == {"max_length": 17}
@@ -162,7 +162,7 @@ def test_create_asset_type_field_requires_data_type() -> None:
             "type": "create_asset_type_field",
             "tenant_id": _TENANT,
             "entity_id": _ENTITY,
-            "payload": {"asset_type_id": _PARENT, "name": "vin"},  # data_type missing
+            "payload": {"parent_id": _PARENT, "name": "vin"},  # data_type missing
         })
 
 

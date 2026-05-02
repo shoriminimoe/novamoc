@@ -1,7 +1,7 @@
 """AssetTypeField command handlers.
 
 Per ADR-008 ``create`` and ``activate`` are separate verbs: ``create``
-takes a full payload (asset_type_id, name, data_type, optional
+takes a full payload (parent_id, name, data_type, optional
 validation) and inserts a new row; ``activate`` takes ``{}`` and only
 flips ``active = true`` on an existing row. ``create`` validates that
 the parent asset_type exists; a deactivated parent is allowed.
@@ -31,7 +31,7 @@ from novamoc.domain.schema import _payloads
 
 async def create(services: ServiceBundle, req: _payloads.CreateAssetTypeField) -> SchemaCommitOutcome:
     parent = await services.asset_type.get_one_or_none(
-        tenant_id=req.tenant_id, id=req.payload.asset_type_id,
+        tenant_id=req.tenant_id, id=req.payload.parent_id,
     )
     if parent is None:
         raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
@@ -40,7 +40,7 @@ async def create(services: ServiceBundle, req: _payloads.CreateAssetTypeField) -
             data={
                 "tenant_id": req.tenant_id,
                 "id": req.entity_id,
-                "asset_type_id": req.payload.asset_type_id,
+                "parent_id": req.payload.parent_id,
                 "name": req.payload.name,
                 "data_type": req.payload.data_type,
                 "validation": req.payload.validation,
