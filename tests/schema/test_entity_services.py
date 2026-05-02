@@ -33,14 +33,14 @@ async def test_type_service_round_trip(service_cls, session: AsyncSession) -> No
 
 
 @pytest.mark.parametrize(
-    ("type_svc_cls", "field_svc_cls", "parent_fk"),
+    ("type_svc_cls", "field_svc_cls"),
     [
-        (AssetTypeService, AssetTypeFieldService, "parent_id"),
-        (MaintenanceRecordTypeService, MaintenanceRecordTypeFieldService, "parent_id"),
+        (AssetTypeService, AssetTypeFieldService),
+        (MaintenanceRecordTypeService, MaintenanceRecordTypeFieldService),
     ],
 )
 async def test_field_service_round_trip(
-    type_svc_cls, field_svc_cls, parent_fk: str, session: AsyncSession,
+    type_svc_cls, field_svc_cls, session: AsyncSession,
 ) -> None:
     type_svc = type_svc_cls(session=session)
     field_svc = field_svc_cls(session=session)
@@ -55,7 +55,7 @@ async def test_field_service_round_trip(
         data={
             "tenant_id": "t1",
             "id": field_id,
-            parent_fk: type_id,
+            "parent_id": type_id,
             "name": "f",
             "data_type": "text",
             "validation": None,
@@ -67,4 +67,4 @@ async def test_field_service_round_trip(
     assert obj.id == field_id
     fetched = await field_svc.get_one_or_none(tenant_id="t1", id=field_id)
     assert fetched is not None
-    assert getattr(fetched, parent_fk) == type_id
+    assert fetched.parent_id == type_id
