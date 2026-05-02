@@ -14,7 +14,7 @@ We need a lightweight, version-controlled, text-based format that lives alongsid
 
 We use Architecture Decision Records (ADRs) in [MADR](https://adr.github.io/madr/) format, stored as Markdown files in `docs/adr/` and numbered sequentially from 000.
 
-ADRs record decisions, not designs. Design content — pipelines, code samples, evolving spec — belongs in the developer docs, not in ADRs. Any code, types, or examples that do appear in an ADR are illustrative pseudo-code, not an implementation contract.
+An ADR records a decision and the reasoning behind it. It may include design discussion to the extent the decision or its rationale needs, but it is not an exhaustive design document — exhaustive design content belongs in the developer docs. Any code, types, or examples that appear in an ADR are illustrative pseudo-code, not an implementation contract.
 
 Each ADR has four sections:
 
@@ -25,7 +25,7 @@ Each ADR has four sections:
 
 ADRs are not edited after acceptance except to change status or correct factual errors; new decisions get new ADRs. ADRs cite each other by number rather than recapping upstream facts.
 
-The rationale: code shows the present shape but cannot answer "what would have to change for us to undo this?" without preserved reasoning, and an ADR is the artifact that makes that question answerable. MADR is the lightest format that still captures the pieces that matter — context, decision, rationale, consequences — and keeping ADRs in-tree means each one ships with the change it justifies, gets PR review, and can't drift from a separate wiki the way out-of-tree docs do. Constraining ADRs to *decisions, not designs* keeps them small enough that recording one at the moment of decision stays cheap; design content has its own iterative, sometimes-throwaway lifecycle that doesn't fit immutability-after-accept and belongs in the developer docs instead.
+The rationale: code shows the present shape but cannot answer "what would have to change for us to undo this?" without preserved reasoning, and an ADR is the artifact that makes that question answerable. MADR is the lightest format that still captures the pieces that matter — context, decision, rationale, consequences — and keeping ADRs in-tree means each one ships with the change it justifies, gets PR review, and can't drift from a separate wiki the way out-of-tree docs do. Keeping ADRs focused — a decision plus its reasoning, with as much design detail as that reasoning needs and no more — keeps them cheap enough to write at the moment of decision; exhaustive design content has its own iterative, sometimes-throwaway lifecycle that doesn't fit immutability-after-accept and belongs in the developer docs instead.
 
 ## Consequences
 
