@@ -1,0 +1,170 @@
+"""AssetTypeField command handlers.
+
+Per ADR-008 ``create`` and ``activate`` are separate verbs: ``create``
+takes a full payload (asset_type_id, name, data_type, optional
+validation) and inserts a new row; ``activate`` takes ``{}`` and only
+flips ``active = true`` on an existing row. ``create`` validates that
+the parent asset_type exists; a deactivated parent is allowed.
+
+TODO(#7): The ``clear`` handler appends a change-log row but does
+**not** wipe field values from the data-projection store. That wipe is
+gated on the data-projection spec and will be implemented once the EAV
+projection tables land.
+"""
+
+from __future__ import annotations
+
+import msgspec
+from advanced_alchemy.exceptions import IntegrityError
+
+from novamoc.domain.schema._commands import SchemaCommand
+from novamoc.domain.schema._errors import (
+    ConflictError,
+    EntityNotFoundError,
+    ErrorCode,
+    PayloadShapeError,
+)
+from novamoc.domain.schema._bundle import ServiceBundle
+from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
+from novamoc.domain.schema import _payloads
+
+
+async def create(services: ServiceBundle, req: _payloads.CreateAssetTypeField) -> SchemaCommitOutcome:
+    parent = await services.asset_type.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.payload.asset_type_id,
+    )
+    if parent is None:
+        raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
+    try:
+        await services.asset_type_field.create(
+            data={
+                "tenant_id": req.tenant_id,
+                "id": req.entity_id,
+                "asset_type_id": req.payload.asset_type_id,
+                "name": req.payload.name,
+                "data_type": req.payload.data_type,
+                "validation": req.payload.validation,
+                "active": True,
+            },
+            auto_commit=False,
+        )
+    except IntegrityError as exc:
+        raise ConflictError(code=ErrorCode.NAME_RESERVED, name=req.payload.name) from exc
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.CREATE_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload=msgspec.to_builtins(req.payload),
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CREATED, row.committed_at)
+
+
+async def activate(services: ServiceBundle, req: _payloads.ActivateAssetTypeField) -> SchemaCommitOutcome:
+    obj = await services.asset_type_field.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id,
+    )
+    if obj is None:
+        raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    if obj.active:
+        outcome = Outcome.NOOP
+    else:
+        await services.asset_type_field.update(
+            data={"active": True},
+            item_id=(req.tenant_id, req.entity_id),
+            auto_commit=False,
+        )
+        outcome = Outcome.ACTIVATED
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.ACTIVATE_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload={},
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
+
+
+async def update(services: ServiceBundle, req: _payloads.UpdateAssetTypeField) -> SchemaCommitOutcome:
+    obj = await services.asset_type_field.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id,
+    )
+    if obj is None:
+        raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    # ``omit_defaults=True`` on the payload struct drops UNSET fields here;
+    # an explicit ``null`` on the wire stays as ``None`` so the handler can
+    # write NULL to a nullable column.
+    payload = msgspec.to_builtins(req.payload)
+    if not payload:
+        raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
+    try:
+        await services.asset_type_field.update(
+            data=payload, item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+        )
+    except IntegrityError as exc:
+        # See note in update_asset_type — IntegrityError → NAME_RESERVED.
+        raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.UPDATE_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload=payload,
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.UPDATED, row.committed_at)
+
+
+async def deactivate(services: ServiceBundle, req: _payloads.DeactivateAssetTypeField) -> SchemaCommitOutcome:
+    obj = await services.asset_type_field.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id,
+    )
+    if obj is None:
+        raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    if obj.active:
+        await services.asset_type_field.update(
+            data={"active": False},
+            item_id=(req.tenant_id, req.entity_id),
+            auto_commit=False,
+        )
+        outcome = Outcome.DEACTIVATED
+    else:
+        outcome = Outcome.NOOP
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.DEACTIVATE_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload={},
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, outcome, row.committed_at)
+
+
+async def clear(services: ServiceBundle, req: _payloads.ClearAssetTypeField) -> SchemaCommitOutcome:
+    # TODO(#7): Wipe field values from the data-projection store once EAV projection
+    # tables land. For now only append the change-log row.
+    obj = await services.asset_type_field.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id,
+    )
+    if obj is None:
+        raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.CLEAR_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload={},
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.CLEARED, row.committed_at)
+
+
+async def delete(services: ServiceBundle, req: _payloads.DeleteAssetTypeField) -> SchemaCommitOutcome:
+    obj = await services.asset_type_field.get_one_or_none(
+        tenant_id=req.tenant_id, id=req.entity_id,
+    )
+    if obj is None:
+        raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    await services.asset_type_field.delete(
+        item_id=(req.tenant_id, req.entity_id), auto_commit=False,
+    )
+    row = await services.change_log.append(
+        tenant_id=req.tenant_id,
+        command=SchemaCommand.DELETE_ASSET_TYPE_FIELD,
+        entity_id=req.entity_id,
+        payload={},
+    )
+    return SchemaCommitOutcome(row.seq, req.entity_id, Outcome.DELETED, row.committed_at)

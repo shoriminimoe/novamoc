@@ -14,6 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
+from novamoc.domain.schema._bundle import ServiceBundle
+from novamoc.domain.schema.services import (
+    AssetTypeFieldService,
+    AssetTypeService,
+    MaintenanceRecordTypeFieldService,
+    MaintenanceRecordTypeService,
+    SchemaChangeLogService,
+)
 
 
 @pytest.fixture
@@ -36,3 +44,14 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
             yield s
         finally:
             await s.rollback()
+
+
+@pytest.fixture
+def services(session) -> ServiceBundle:
+    return ServiceBundle(
+        asset_type=AssetTypeService(session=session),
+        asset_type_field=AssetTypeFieldService(session=session),
+        maintenance_record_type=MaintenanceRecordTypeService(session=session),
+        maintenance_record_type_field=MaintenanceRecordTypeFieldService(session=session),
+        change_log=SchemaChangeLogService(session=session),
+    )
