@@ -358,9 +358,3 @@ class SchemaResponse(msgspec.Struct):
     entity_id: UUID
     outcome: str  # value of an Outcome enum member
     committed_at: datetime
-
-
-class SchemaErrorResponse(msgspec.Struct, omit_defaults=True):
-    error: str  # "invalid_request" | "conflict" | "not_found"
-    code: str
-    message: str
