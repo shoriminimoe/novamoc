@@ -14,6 +14,7 @@ import pytest
 from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
     AsyncSessionConfig,
+    EngineConfig,
     SQLAlchemyAsyncConfig,
     SQLAlchemyPlugin,
 )
@@ -31,6 +32,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import StaticPool
 
 from novamoc.api._problem_details import (
     litestar_validation_error_to_problem_details,
@@ -115,17 +117,21 @@ def seed(
 
 @pytest.fixture
 async def app() -> Litestar:
-    """A Litestar app with an in-memory shared-cache SQLite for e2e tests.
+    """A Litestar app with an in-memory SQLite for e2e tests.
 
-    ``cache=shared`` lets multiple connections within the same process
-    reach the same in-memory db, which the plugin needs because it opens
-    its own engine.
+    ``StaticPool`` forces the engine to keep one connection, so all
+    queries (the plugin's request-scoped session, the autocommit
+    handler, etc.) reach the same in-memory database. Each function-
+    scoped fixture instance gets its own engine, so its database lives
+    only for the duration of the test and dies when the engine is
+    disposed at fixture teardown.
     """
     alchemy_config = SQLAlchemyAsyncConfig(
-        connection_string="sqlite+aiosqlite:///file::memory:?cache=shared&uri=true",
+        connection_string="sqlite+aiosqlite:///:memory:",
         before_send_handler="autocommit",
         session_config=AsyncSessionConfig(expire_on_commit=False),
         create_all=True,
+        engine_config=EngineConfig(poolclass=StaticPool),
     )
     problem_details_config = ProblemDetailsConfig(
         enable_for_all_http_exceptions=True,
