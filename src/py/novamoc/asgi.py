@@ -26,9 +26,9 @@ def create_app() -> Litestar:
     from novamoc.api._problem_details import (
         litestar_validation_error_to_problem_details,
         msgspec_validation_error_to_problem_details,
-        schema_command_error_to_problem_details,
+        schema_error_to_problem_details,
     )
-    from novamoc.domain.schema._errors import SchemaCommandError
+    from novamoc.domain.schema._errors import SchemaError
     from novamoc.domain.schema.controllers import SchemaController
 
     session_config = AsyncSessionConfig(expire_on_commit=False)
@@ -42,7 +42,7 @@ def create_app() -> Litestar:
     problem_details_config = ProblemDetailsConfig(
         enable_for_all_http_exceptions=True,
         exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
-            SchemaCommandError: schema_command_error_to_problem_details,
+            SchemaError: schema_error_to_problem_details,
             msgspec.ValidationError: msgspec_validation_error_to_problem_details,
             ValidationException: litestar_validation_error_to_problem_details,
         },
