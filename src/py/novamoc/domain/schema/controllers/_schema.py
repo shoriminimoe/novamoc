@@ -134,6 +134,18 @@ class SchemaController(Controller):
         maintenance_record_type_field_service: _services.MaintenanceRecordTypeFieldService,
         schema_change_log_service: _services.SchemaChangeLogService,
     ) -> Response[SchemaSnapshotResponse | None]:
+        # Snapshot consistency: every read in this handler runs on the same
+        # request-scoped db_session injected by Litestar — one transaction,
+        # one SQLite WAL snapshot. So `current_version` and the four
+        # `list_for_tenant` reads see the same point-in-time, and the body
+        # we return is internally consistent with the ETag we stamp on it.
+        # If a concurrent POST commits during our request, we may be one
+        # version behind by the time the response sends, but the next
+        # request will see the new version (schema_version is monotonic) and
+        # the If-None-Match comparison will correctly miss. Don't reorder
+        # version vs projection reads expecting it to matter — under the
+        # snapshot it doesn't, and `current_version` must run *before* the
+        # If-None-Match check to enable the 304 short-circuit.
         if tenant_id not in KNOWN_TENANT_IDS:
             raise TenantNotFoundError(
                 code=ErrorCode.TENANT_NOT_FOUND, tenant_id=tenant_id
