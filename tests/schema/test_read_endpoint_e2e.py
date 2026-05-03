@@ -196,3 +196,85 @@ async def test_if_none_match_unknown_tenant_still_returns_404(client) -> None:
     resp = await client.get("/schema/who-dis", headers={"If-None-Match": '"0"'})
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_get_schema_orders_types_and_fields_deterministically(client) -> None:
+    # Seed two asset types in reverse-id order; the response must order them
+    # ascending by id (load-bearing for the strong ETag — see the
+    # list_for_tenant docstrings on the projection services).
+    type_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    type_c = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    field_a1 = "11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    field_a2 = "22222222-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    create_c = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type",
+            "tenant_id": _T,
+            "entity_id": type_c,
+            "payload": {"name": "Type-C"},
+        },
+    )
+    assert create_c.status_code in (200, 201), create_c.text
+
+    create_a = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type",
+            "tenant_id": _T,
+            "entity_id": type_a,
+            "payload": {"name": "Type-A"},
+        },
+    )
+    assert create_a.status_code in (200, 201), create_a.text
+
+    # Two fields on type_a, created in reverse-id order.
+    create_a2 = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type_field",
+            "tenant_id": _T,
+            "entity_id": field_a2,
+            "payload": {
+                "parent_id": type_a,
+                "name": "Field-A2",
+                "data_type": "text",
+            },
+        },
+    )
+    assert create_a2.status_code in (200, 201), create_a2.text
+
+    create_a1 = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type_field",
+            "tenant_id": _T,
+            "entity_id": field_a1,
+            "payload": {
+                "parent_id": type_a,
+                "name": "Field-A1",
+                "data_type": "text",
+            },
+        },
+    )
+    assert create_a1.status_code in (200, 201), create_a1.text
+
+    resp = await client.get(f"/schema/{_T}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # Types ascend by id: aaaa... before cccc...
+    type_ids = [t["id"] for t in body["asset_types"]]
+    assert type_ids == [type_a, type_c]
+
+    # Fields under type_a ascend by id: 1111... before 2222...
+    field_ids = [f["id"] for f in body["asset_types"][0]["fields"]]
+    assert field_ids == [field_a1, field_a2]
+
+    # Two consecutive GETs return byte-identical bodies and the same ETag —
+    # the strong-ETag invariant.
+    second = await client.get(f"/schema/{_T}")
+    assert second.status_code == 200
+    assert second.content == resp.content
+    assert second.headers["etag"] == resp.headers["etag"]
