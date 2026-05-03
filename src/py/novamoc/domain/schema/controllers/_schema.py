@@ -23,6 +23,7 @@ from uuid import UUID
 
 from advanced_alchemy.extensions.litestar import providers
 from litestar import Controller, Request, Response, get, post
+from litestar.datastructures import ETag
 from litestar.openapi.datastructures import ResponseSpec
 
 from novamoc.api._problem_details import ProblemDetails
@@ -38,6 +39,23 @@ from novamoc.domain.schema._read_payloads import (
     MaintenanceRecordTypeView,
     SchemaSnapshotResponse,
 )
+
+
+def _matches_current_etag(if_none_match: str | None, current: ETag) -> bool:
+    """Return True if the request's ``If-None-Match`` matches ``current``.
+
+    Strong comparison only (RFC 7232 §2.3.2): we issue strong ETags, so an
+    inbound ``W/"<value>"`` is not a cache hit even if the value matches.
+    The ``*`` wildcard always matches per RFC 7232 §3.2 (the precondition
+    fails when a current representation exists, which is always true for
+    a successful read of an existing tenant).
+    """
+    if if_none_match is None:
+        return False
+    if if_none_match == "*":
+        return True
+    parsed = ETag.from_header(if_none_match)
+    return parsed.value == current.value and not parsed.weak
 
 
 class SchemaController(Controller):
@@ -112,6 +130,7 @@ class SchemaController(Controller):
 
     @get(
         "/{tenant_id:str}",
+        etag=ETag(documentation_only=True),
         responses={
             200: ResponseSpec(
                 SchemaSnapshotResponse,
@@ -158,10 +177,14 @@ class SchemaController(Controller):
         schema_version = await schema_change_log_service.current_version(
             tenant_id=tenant_id
         )
-        etag = f'"{schema_version}"'
+        current_etag = ETag(value=str(schema_version))
 
-        if request.headers.get("if-none-match") == etag:
-            return Response(content=None, status_code=304, headers={"etag": etag})
+        if _matches_current_etag(request.headers.get("if-none-match"), current_etag):
+            not_modified: Response[SchemaSnapshotResponse | None] = Response(
+                content=None, status_code=304
+            )
+            not_modified.set_etag(current_etag)
+            return not_modified
 
         asset_types = await asset_type_service.list_for_tenant(tenant_id=tenant_id)
         asset_type_fields = await asset_type_field_service.list_for_tenant(
@@ -221,7 +244,8 @@ class SchemaController(Controller):
                 for t in record_types
             ),
         )
-        return Response(
-            content=snapshot,
-            headers={"etag": etag},
+        snapshot_response: Response[SchemaSnapshotResponse | None] = Response(
+            content=snapshot
         )
+        snapshot_response.set_etag(current_etag)
+        return snapshot_response

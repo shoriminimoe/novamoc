@@ -198,6 +198,25 @@ async def test_if_none_match_unknown_tenant_still_returns_404(client) -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
 
 
+async def test_if_none_match_wildcard_returns_304(client) -> None:
+    # RFC 7232 §3.2: If-None-Match: * matches when the server has any
+    # current representation of the resource. For our endpoint, that's
+    # always — even an empty tenant has a (zero-version, empty arrays)
+    # representation. So `*` always wins.
+    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": "*"})
+    assert resp.status_code == 304
+    assert resp.headers["etag"] == '"0"'
+    assert resp.content == b""
+
+
+async def test_if_none_match_weak_etag_does_not_match_strong(client) -> None:
+    # RFC 7232 §2.3.2 strong comparison: a weak inbound ETag never matches
+    # the strong ETag we issue. Server returns 200 with the full body.
+    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": 'W/"0"'})
+    assert resp.status_code == 200
+    assert resp.headers["etag"] == '"0"'
+
+
 async def test_get_schema_orders_types_and_fields_deterministically(client) -> None:
     # Seed two asset types in reverse-id order; the response must order them
     # ascending by id (load-bearing for the strong ETag — see the
