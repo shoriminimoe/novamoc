@@ -2,7 +2,7 @@
 
 The `ProblemDetails` msgspec struct is published as the OpenAPI response
 body for every error path. The converters below turn typed exceptions
-(`SchemaCommandError`, msgspec/Litestar validation errors, eventually
+(`SchemaError`, msgspec/Litestar validation errors, eventually
 others) into Litestar's `ProblemDetailsException`, which the
 `ProblemDetailsPlugin` renders as `application/problem+json`.
 
@@ -27,7 +27,7 @@ from litestar.plugins.problem_details import ProblemDetailsException
 
 from novamoc.domain.schema._errors import (
     ErrorCode,
-    SchemaCommandError,
+    SchemaError,
 )
 
 # TODO(#13): replace with the published docs URL once it exists. The
@@ -41,6 +41,7 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.NAME_RESERVED: "Name reserved",
     ErrorCode.PARENT_TYPE_NOT_FOUND: "Parent type not found",
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
+    ErrorCode.TENANT_NOT_FOUND: "Tenant not found",
 }
 
 
@@ -50,6 +51,7 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.NAME_RESERVED: 409,
     ErrorCode.PARENT_TYPE_NOT_FOUND: 409,
     ErrorCode.ENTITY_NOT_FOUND: 404,
+    ErrorCode.TENANT_NOT_FOUND: 404,
 }
 
 
@@ -83,10 +85,10 @@ def make_instance() -> str:
     return f"urn:uuid:{uuid.uuid4()}"
 
 
-def schema_command_error_to_problem_details(
-    exc: SchemaCommandError,
+def schema_error_to_problem_details(
+    exc: SchemaError,
 ) -> ProblemDetailsException:
-    """Convert a `SchemaCommandError` to a `ProblemDetailsException`.
+    """Convert a `SchemaError` to a `ProblemDetailsException`.
 
     The plugin's response renderer flattens `extra` into top-level keys
     when it is a Mapping (RFC 9457 §3.2 extension members).

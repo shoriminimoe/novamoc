@@ -6,7 +6,7 @@ OpenAPI schema. Dispatch is by the runtime variant class via
 :func:`dispatch`.
 
 Error rendering is the app-level ``ProblemDetailsPlugin`` registered in
-``novamoc.asgi.create_app``: ``SchemaCommandError``,
+``novamoc.asgi.create_app``: ``SchemaError``,
 ``msgspec.ValidationError``, and Litestar's ``ValidationException`` all
 render as ``application/problem+json`` per ADR-016. The controller does
 not register exception handlers itself.
