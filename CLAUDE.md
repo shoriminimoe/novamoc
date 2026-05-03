@@ -23,7 +23,7 @@ The schema-change log is **command-grain** (one row per accepted `POST /schema`)
   - `domain/schema/` — `POST /schema` endpoint stack (commands, payloads, dispatch, handlers, services, controller). See "Schema endpoint" below.
 - `src/js/web/` — Svelte 5 + Vite + Tailwind SPA (currently scaffolding only).
 - `tests/` — pytest suite (currently schema endpoint only).
-- `docs/adr/` — accepted/proposed architecture decisions (ADR-000 through ADR-015).
+- `docs/adr/` — accepted/proposed architecture decisions (ADR-000 through ADR-016).
 - `docs/superpowers/{specs,plans}/` — design specs and execution plans for in-progress features.
 - `justfile` — top-level dev tasks.
 
@@ -61,9 +61,9 @@ Pipeline:
 2. **Dispatch** — `_dispatch.py` holds a single explicit `_HANDLERS: dict[type, Handler]` table. Adding a verb means writing the handler in `_handlers/<entity_kind>.py` and adding **one row** to that table; the universe of accepted commands is one rg-able place.
 3. **Handlers** — `_handlers/{asset_type,asset_type_field,maintenance_record_type,maintenance_record_type_field}.py` expose verb-named module-level functions (`create`, `activate`, `update`, `deactivate`, `clear`, `delete`). Each handler validates against current projection state, mutates with `auto_commit=False`, then appends one `schema_change_log` row. The Litestar `before_send_handler="autocommit"` commits the whole transaction at response time — handlers must not commit themselves.
 4. **Services** — `domain/schema/services/` thin advanced-alchemy `SQLAlchemyAsyncRepositoryService` wrappers, plus `SchemaChangeLogService.append`. Aggregated by `_bundle.py::ServiceBundle` (a frozen dataclass) so handlers take one parameter instead of five. **Import `ServiceBundle` from `_bundle`, not from `_dispatch` or `_handlers`** — both of those import `_bundle`, so importing them creates cycles.
-5. **Controller** — `controllers/_schema.py::SchemaController` mounts at `/schema`, wires service DI via `advanced_alchemy.extensions.litestar.providers.create_service_dependencies`, and registers three exception handlers that all render the `{error, code, message, ...extras}` envelope: `SchemaCommandError` (domain), `msgspec.ValidationError` (raw decode), `litestar.exceptions.ValidationException` (Litestar's wrapper around msgspec decode). The OpenAPI doc moves to `/openapi` because the route owns `/schema`.
+5. **Controller** — `controllers/_schema.py::SchemaController` mounts at `/schema` and wires service DI via `advanced_alchemy.extensions.litestar.providers.create_service_dependencies`. Error rendering is the app-level `ProblemDetailsPlugin` registered in `asgi.create_app`: `SchemaCommandError`, `msgspec.ValidationError`, and Litestar's `ValidationException` all render as `application/problem+json` per ADR-016. The OpenAPI doc moves to `/openapi` because the route owns `/schema`.
 
-Errors are raised as typed `SchemaCommandError` subclasses (`PayloadShapeError`, `ConflictError`, `EntityNotFoundError`) carrying an `ErrorCode` enum value (`name_reserved`, `parent_type_not_found`, `entity_not_found`, `payload_no_changes`, `invalid_payload_shape`). `status_code` and the top-level `error` label are pinned by the subclass; `code` is what clients branch on.
+Errors are raised as typed `SchemaCommandError` subclasses (`PayloadShapeError`, `ConflictError`, `EntityNotFoundError`) carrying an `ErrorCode` enum value (`name_reserved`, `parent_type_not_found`, `entity_not_found`, `payload_no_changes`, `invalid_payload_shape`). `status_code` is pinned by the subclass; the leaf segment of `type_uri` (= the code value) is what clients branch on. Per-error extras (`name`, `field`, ...) ride as top-level extension members per ADR-016.
 
 `UNSET` vs `None` in update payloads is meaningful: msgspec `omit_defaults=True` drops `UNSET` fields when serializing to builtins, so absent-from-wire becomes "untouched" and explicit `null` becomes "write NULL." Don't conflate them.
 
@@ -112,5 +112,6 @@ Prefer the specialized tooling below over generic Bash/Read/Edit when the task f
 - ADR-006 / ADR-007 — HLC ordering and per-field LWW fold (the same fold runs on server and clients).
 - ADR-013 — HTTP and WebSocket transports both carry the same event protocol.
 - ADR-014 — multi-tenancy via `tenant_id` columns in shared tables, pre-auth tenant comes from request body.
+- ADR-016 — RFC 9457 problem-details: the API-wide error envelope (`application/problem+json`).
 
 ADRs cite each other by number rather than recapping upstream facts; follow the same convention when adding new ones.
