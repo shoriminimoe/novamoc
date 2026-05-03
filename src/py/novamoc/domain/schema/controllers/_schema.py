@@ -113,6 +113,10 @@ class SchemaController(Controller):
     @get(
         "/{tenant_id:str}",
         responses={
+            200: ResponseSpec(
+                SchemaSnapshotResponse,
+                description="Per-tenant schema snapshot",
+            ),
             304: ResponseSpec(
                 None,
                 description="Not Modified — If-None-Match matched current schema_version",
