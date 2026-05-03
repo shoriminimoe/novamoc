@@ -58,3 +58,29 @@ async def test_append_assigns_monotonic_seq(session: AsyncSession) -> None:
         SchemaCommand.ACTIVATE_ASSET_TYPE,
         SchemaCommand.ACTIVATE_ASSET_TYPE,
     ]
+
+
+async def test_append_assigns_dense_per_tenant_seq(session: AsyncSession) -> None:
+    """Each tenant gets its own ``1, 2, 3, ...`` sequence regardless of
+    interleaving with other tenants (issue #17). Without this, a tenant's
+    observable ``schema_version`` would skip values whenever a sibling
+    tenant committed in between, leaking implementation noise into the
+    protocol that ADR-009's catch-up flow consumes."""
+    svc = SchemaChangeLogService(session=session)
+
+    interleaved: list[tuple[str, int]] = []
+    # interleave A,B,A,B,A,B,A
+    for tenant in ("tA", "tB", "tA", "tB", "tA", "tB", "tA"):
+        row = await svc.append(
+            tenant_id=tenant,
+            command=SchemaCommand.CREATE_ASSET_TYPE,
+            entity_id=uuid4(),
+            payload={},
+        )
+        interleaved.append((tenant, row.seq))
+    await session.flush()
+
+    a_seqs = [seq for tenant, seq in interleaved if tenant == "tA"]
+    b_seqs = [seq for tenant, seq in interleaved if tenant == "tB"]
+    assert a_seqs == [1, 2, 3, 4]
+    assert b_seqs == [1, 2, 3]

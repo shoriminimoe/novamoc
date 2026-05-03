@@ -173,7 +173,7 @@ The new route adds 200, 304, and 404 specs to `SchemaController`. The 200 respon
 
 - `POST /schema`'s controller method, dispatch table, handlers, request payloads, response payload, and services are untouched. The read endpoint shares only the controller mount, the model classes, and the problem-details rendering.
 - `schema_change_log` is read for `MAX(seq)` only. Streaming the change log itself (for the ADR-009 upgrade-diff narrative) is a separate endpoint with a separate response shape, outside this spec's scope.
-- No new database migrations. No new tables, columns, or indexes. The existing `idx_schema_change_log_tenant_seq` already supports the `MAX(seq)` lookup efficiently.
+- No new database migrations. No new tables, columns, or indexes. The `schema_change_log` composite PK `(tenant_id, seq)` already supports the `MAX(seq) WHERE tenant_id = ?` lookup efficiently via the implicit PK index.
 
 ## Recorded tech debt
 
