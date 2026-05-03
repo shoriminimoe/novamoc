@@ -33,9 +33,15 @@ class SchemaChangeLogService(
         entity_id: UUID,
         payload: dict[str, Any],
     ) -> m.schema.SchemaChangeLog:
+        # Per-tenant dense seq (issue #17). SQLite has no per-partition
+        # identity; the read-then-insert is race-free because SQLite
+        # serialises writers (BEGIN IMMEDIATE) and the surrounding
+        # request runs in one transaction.
+        next_seq = await self.current_version(tenant_id=tenant_id) + 1
         return await self.create(
             data={
                 "tenant_id": tenant_id,
+                "seq": next_seq,
                 "command": str(command.value),
                 "entity_id": entity_id,
                 "payload": payload,

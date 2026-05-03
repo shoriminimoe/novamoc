@@ -5,18 +5,22 @@ from typing import Any
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from advanced_alchemy.types import BigIntIdentity, DateTimeUTC, GUID, JsonB
-from sqlalchemy import Index, func
+from advanced_alchemy.types import DateTimeUTC, GUID, JsonB
+from sqlalchemy import BigInteger, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 
 class SchemaChangeLog(DefaultBase):
     """Append-only audit log of accepted schema commands (ADR-008).
 
-    Command-grain — one row per accepted ``POST /schema``. Not folded into
-    the schema projection; the projection is mutated transactionally
-    alongside the append. ``seq`` is the per-tenant ``schema_version``
-    (highest seq for the tenant).
+    Command-grain — one row per accepted ``POST /schema``. Not folded
+    into the schema projection; the projection is mutated transactionally
+    alongside the append. The composite PK ``(tenant_id, seq)`` means
+    each tenant has its own dense ``1, 2, 3, ...`` sequence — that
+    per-tenant ``seq`` is the user/API-visible ``schema_version`` that
+    ADR-009's catch-up flow walks. The next ``seq`` is computed at
+    insert time (see ``SchemaChangeLogService.append``); SQLite has no
+    per-partition identity.
 
     ``command`` is a plain ``TEXT`` column (not a DB enum). The valid
     vocabulary is :class:`novamoc.domain.schema._commands.SchemaCommand`;
@@ -25,12 +29,9 @@ class SchemaChangeLog(DefaultBase):
     """
 
     __tablename__ = "schema_change_log"
-    __table_args__ = (Index("idx_schema_change_log_tenant_seq", "tenant_id", "seq"),)
 
-    seq: Mapped[int] = mapped_column(
-        BigIntIdentity, primary_key=True, autoincrement=True
-    )
-    tenant_id: Mapped[str]
+    tenant_id: Mapped[str] = mapped_column(primary_key=True)
+    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     command: Mapped[str]
     entity_id: Mapped[UUID] = mapped_column(GUID)
     payload: Mapped[dict[str, Any]] = mapped_column(JsonB)
