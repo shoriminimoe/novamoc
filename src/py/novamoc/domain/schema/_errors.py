@@ -1,9 +1,10 @@
 """Typed exceptions raised by schema-command handlers.
 
-A single Litestar exception handler renders any ``SchemaCommandError`` as
-the JSON envelope documented in the spec; ``msgspec.ValidationError`` is
-mapped separately at the controller layer to the same shape with
-``code=invalid_payload_shape``.
+Each exception carries an ``ErrorCode`` (the stable failure-mode
+identifier), an optional human-readable message, and a free-form
+mapping of extras for per-failure context (e.g., the conflicting
+name on a name-collision). Subclasses categorize failures; handlers
+raise the most specific one that fits.
 """
 
 from __future__ import annotations
@@ -13,13 +14,10 @@ from typing import Any
 
 
 class ErrorCode(StrEnum):
-    # 400 — invalid_request (request shape)
     PAYLOAD_NO_CHANGES = "payload_no_changes"
     INVALID_PAYLOAD_SHAPE = "invalid_payload_shape"
-    # 409 — conflict (request well-shaped, conflicts with current projection state)
     NAME_RESERVED = "name_reserved"
     PARENT_TYPE_NOT_FOUND = "parent_type_not_found"
-    # 404 — not_found
     ENTITY_NOT_FOUND = "entity_not_found"
 
 
@@ -33,15 +31,7 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
 
 
 class SchemaCommandError(Exception):
-    """Base class for schema-command failures.
-
-    Subclasses pin ``status_code`` and the ``error`` label that appear in
-    the response envelope. The ``code`` discriminates failure modes within
-    a category and is what clients branch on.
-    """
-
-    status_code: int = 400
-    error: str = "invalid_request"
+    """Base class for schema-command failures."""
 
     def __init__(
         self,
@@ -57,15 +47,14 @@ class SchemaCommandError(Exception):
 
 
 class PayloadShapeError(SchemaCommandError):
-    status_code = 400
-    error = "invalid_request"
+    """Request payload was well-formed but did not match the command's
+    expectations (missing required fields, empty update, ...)."""
 
 
 class ConflictError(SchemaCommandError):
-    status_code = 409
-    error = "conflict"
+    """Request conflicted with the current projection state (name
+    already taken, parent type missing, ...)."""
 
 
 class EntityNotFoundError(SchemaCommandError):
-    status_code = 404
-    error = "not_found"
+    """Command targeted an entity that does not exist."""
