@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from advanced_alchemy.extensions.litestar import repository, service
+from sqlalchemy import func, select
 
 import novamoc.db.models as m
 from novamoc.domain.schema._commands import SchemaCommand
@@ -41,3 +42,11 @@ class SchemaChangeLogService(
             },
             auto_commit=False,
         )
+
+    async def current_version(self, *, tenant_id: str) -> int:
+        """Return ``MAX(seq)`` for the tenant, or ``0`` if none."""
+        stmt = select(func.coalesce(func.max(m.schema.SchemaChangeLog.seq), 0)).where(
+            m.schema.SchemaChangeLog.tenant_id == tenant_id
+        )
+        result = await self.repository.session.execute(stmt)
+        return int(result.scalar_one())
