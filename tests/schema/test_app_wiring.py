@@ -19,6 +19,7 @@ async def test_app_starts_and_post_schema_route_exists() -> None:
         )
         # The route exists; an unknown command becomes 400 invalid_payload_shape via msgspec decode.
         assert resp.status_code == 400, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
         body = resp.json()
-        assert body["error"] == "invalid_request"
-        assert body["code"] == "invalid_payload_shape"
+        assert body["type"] == "urn:novamoc:problems:invalid_payload_shape"
+        assert body["status"] == 400

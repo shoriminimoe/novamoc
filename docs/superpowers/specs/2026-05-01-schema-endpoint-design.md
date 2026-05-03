@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved. Revised 2026-05-02 to record the msgspec untagged-union constraint (see *Decoder/dispatch* below).
+Approved. Revised 2026-05-02 to record the msgspec untagged-union constraint, and again on 2026-05-02 to adopt the API-wide error envelope from ADR-016.
 
 ## Scope
 
@@ -320,47 +320,7 @@ The existing TODO comment on `AssetTypeService.activate` should be moved to the 
 
 ### Errors
 
-```python
-# _errors.py
-from enum import StrEnum
-
-class ErrorCode(StrEnum):
-    # 400 — invalid_request (request shape)
-    PAYLOAD_NO_CHANGES = "payload_no_changes"
-    INVALID_PAYLOAD_SHAPE = "invalid_payload_shape"
-    # 409 — conflict (request was well-shaped but conflicts with current projection state)
-    DEFINITION_REQUIRED = "definition_required"
-    NAME_RESERVED = "name_reserved"
-    NAME_IS_DEACTIVATED = "name_is_deactivated"
-    USE_UPDATE = "use_update"
-    PARENT_TYPE_NOT_FOUND = "parent_type_not_found"
-    # 404 — not_found
-    ENTITY_NOT_FOUND = "entity_not_found"
-
-class SchemaCommandError(Exception):
-    status_code: int = 400
-    error: str = "invalid_request"
-    code: ErrorCode
-
-    def __init__(self, code: ErrorCode, *, message: str | None = None, **extras):
-        self.code = code
-        self.message = message or _DEFAULT_MESSAGES[code]
-        self.extras = extras
-
-class PayloadShapeError(SchemaCommandError):
-    status_code = 400
-    error = "invalid_request"
-
-class ConflictError(SchemaCommandError):
-    status_code = 409
-    error = "conflict"
-
-class EntityNotFoundError(SchemaCommandError):
-    status_code = 404
-    error = "not_found"
-```
-
-A single Litestar exception handler maps `SchemaCommandError` to the JSON envelope below. msgspec's own `ValidationError` is mapped separately to a 400 with `code=ErrorCode.INVALID_PAYLOAD_SHAPE`.
+Typed exceptions: `SchemaCommandError` with `PayloadShapeError`, `ConflictError`, `EntityNotFoundError` subclasses, and an `ErrorCode` enum for stable identifiers. Rendering is the app-level layer described in ADR-016; the controller registers no exception handlers itself. Each `ErrorCode` has a fixed `title` and a stable `type` URI of the form `urn:novamoc:problems:<code>`.
 
 ### Response envelopes
 
@@ -376,16 +336,19 @@ Success (200):
 
 `outcome` is one of `created | activated | noop | updated | deactivated | cleared | deleted`.
 
-Failure:
+Failure (409, `application/problem+json` per ADR-016):
 ```json
 {
-  "error": "conflict",
-  "code": "name_is_deactivated",
-  "message": "Name is held by a deactivated entity; activate it with an empty-payload activate, then update."
+  "type": "urn:novamoc:problems:name_reserved",
+  "title": "Name reserved",
+  "status": 409,
+  "detail": "Name is already in use by another entity.",
+  "instance": "urn:uuid:01958f3b-3b9f-7d3a-89aa-000000000001",
+  "name": "Truck"
 }
 ```
 
-`error` is one of `invalid_request | conflict | not_found`. `code` is the stable enum value from `ErrorCode`. Per-error-code extras (e.g., the conflicting `name` for `name_reserved`) are added as additional top-level fields when present; consumers ignore unknown fields.
+Per-error extras (e.g., the conflicting `name` for `name_reserved`) ride as top-level keys; consumers ignore unknown fields.
 
 ## Data flow & transactional contract
 
@@ -431,7 +394,7 @@ Because `SchemaRequest` is a tagged union of msgspec structs, Litestar publishes
 
 - A `oneOf` with 22 variants, one per command (4 entity kinds × verbs: `create_*`, `activate_*`, `update_*`, `deactivate_*`, plus `clear_*_field` and `delete_*` where applicable), with `type` as the discriminator (snake_case via the base-class tag callable).
 - Each variant's `payload` field is a single struct: `_Empty` for verbs that take no payload (`activate_*`, `deactivate_*`, `clear_*_field`, `delete_*`), `_*CreatePayload` for `create_*`, `_*UpdatePayload` for `update_*`.
-- The `SchemaResponse` and the `SchemaErrorResponse` both render as plain object schemas; the latter is attached as the `4xx` response body across the controller.
+- The `SchemaResponse` renders as a plain object schema. Error responses reference `ProblemDetails` from `novamoc.api._problem_details` per ADR-016.
 
 The published schema is the source of truth for client SDK generation and the front-end's schema-editor wire layer.
 

@@ -384,11 +384,3 @@ def test_schema_response_has_expected_fields() -> None:
         "outcome": "created",
         "committed_at": "2026-05-01T12:00:00Z",
     }
-
-
-def test_schema_error_response_minimal_envelope() -> None:
-    resp = _payloads.SchemaErrorResponse(
-        error="conflict", code="name_reserved", message="…"
-    )
-    encoded = msgspec.json.decode(msgspec.json.encode(resp))
-    assert encoded == {"error": "conflict", "code": "name_reserved", "message": "…"}

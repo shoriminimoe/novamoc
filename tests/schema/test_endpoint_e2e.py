@@ -41,9 +41,11 @@ async def test_post_schema_returns_409_on_duplicate_name(client) -> None:
     body["entity_id"] = str(uuid4())
     second = await client.post("/schema", json=body)
     assert second.status_code == 409
+    assert second.headers["content-type"].startswith("application/problem+json")
     err = second.json()
-    assert err["error"] == "conflict"
-    assert err["code"] == "name_reserved"
+    assert err["status"] == 409
+    assert err["type"] == "urn:novamoc:problems:name_reserved"
+    assert err["title"] == "Name reserved"
 
 
 async def test_post_schema_returns_404_for_update_missing(client) -> None:
@@ -57,7 +59,10 @@ async def test_post_schema_returns_404_for_update_missing(client) -> None:
         },
     )
     assert resp.status_code == 404
-    assert resp.json()["code"] == "entity_not_found"
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    body = resp.json()
+    assert body["status"] == 404
+    assert body["type"] == "urn:novamoc:problems:entity_not_found"
 
 
 async def test_post_schema_returns_400_on_unknown_command(client) -> None:
@@ -71,7 +76,8 @@ async def test_post_schema_returns_400_on_unknown_command(client) -> None:
         },
     )
     assert resp.status_code == 400
-    assert resp.json()["code"] == "invalid_payload_shape"
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert resp.json()["type"] == "urn:novamoc:problems:invalid_payload_shape"
 
 
 async def test_post_schema_returns_400_on_payload_with_unknown_field(client) -> None:
@@ -85,9 +91,10 @@ async def test_post_schema_returns_400_on_payload_with_unknown_field(client) -> 
         },
     )
     assert resp.status_code == 400
+    assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
-    assert body["error"] == "invalid_request"
-    assert body["code"] == "invalid_payload_shape"
+    assert body["status"] == 400
+    assert body["type"] == "urn:novamoc:problems:invalid_payload_shape"
 
 
 async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
@@ -130,3 +137,27 @@ async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
     )
     assert deact.status_code in (200, 201)
     assert deact.json()["schema_version"] == sv_after_create + 1
+
+
+async def test_post_schema_problem_includes_instance_and_extras(client) -> None:
+    """RFC 9457 §3.2 extension members are rendered as top-level keys, and
+    each occurrence carries an opaque `instance` URI for log correlation."""
+
+    name = f"WithExtras-{uuid4()}"
+    body = {
+        "type": "create_asset_type",
+        "tenant_id": _T,
+        "entity_id": str(uuid4()),
+        "payload": {"name": name},
+    }
+    first = await client.post("/schema", json=body)
+    assert first.status_code in (200, 201)
+    body["entity_id"] = str(uuid4())
+    second = await client.post("/schema", json=body)
+    assert second.status_code == 409
+    assert second.headers["content-type"].startswith("application/problem+json")
+    err = second.json()
+    # Extension member surfaced from `extras={"name": "..."}`.
+    assert err["name"] == name
+    # Per-occurrence instance.
+    assert err["instance"].startswith("urn:uuid:")

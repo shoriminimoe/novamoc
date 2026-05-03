@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import msgspec
 import pytest
 from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
@@ -16,7 +17,12 @@ from advanced_alchemy.extensions.litestar import (
     SQLAlchemyPlugin,
 )
 from litestar import Litestar
+from litestar.exceptions import ValidationException
 from litestar.openapi.config import OpenAPIConfig
+from litestar.plugins.problem_details import (
+    ProblemDetailsConfig,
+    ProblemDetailsPlugin,
+)
 from litestar.testing import AsyncTestClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -24,6 +30,13 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
+from novamoc.api._problem_details import (
+    litestar_validation_error_to_problem_details,
+    msgspec_validation_error_to_problem_details,
+    schema_command_error_to_problem_details,
+)
+from novamoc.domain.schema._errors import SchemaCommandError
 
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
@@ -87,9 +100,20 @@ async def app() -> Litestar:
         session_config=AsyncSessionConfig(expire_on_commit=False),
         create_all=True,
     )
+    problem_details_config = ProblemDetailsConfig(
+        enable_for_all_http_exceptions=True,
+        exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
+            SchemaCommandError: schema_command_error_to_problem_details,
+            msgspec.ValidationError: msgspec_validation_error_to_problem_details,
+            ValidationException: litestar_validation_error_to_problem_details,
+        },
+    )
     return Litestar(
         route_handlers=[SchemaController],
-        plugins=[SQLAlchemyPlugin(config=alchemy_config)],
+        plugins=[
+            SQLAlchemyPlugin(config=alchemy_config),
+            ProblemDetailsPlugin(config=problem_details_config),
+        ],
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
     )
 
