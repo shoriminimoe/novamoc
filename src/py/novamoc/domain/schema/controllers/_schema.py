@@ -86,7 +86,7 @@ class SchemaController(Controller):
             ),
         },
     )
-    async def post(
+    async def apply_command(
         self,
         data: _payloads.SchemaRequest,
         asset_type_service: _services.AssetTypeService,
@@ -128,7 +128,7 @@ class SchemaController(Controller):
             ),
         },
     )
-    async def get(
+    async def read_snapshot(
         self,
         request: Request,
         tenant_id: str,
