@@ -11,7 +11,7 @@ informed: []
 
 ## Context and Problem Statement
 
-The schema endpoint (ADR-013) currently returns errors as an ad-hoc JSON envelope (`{error, code, message, ...extras}`) — three top-level fields with overlapping concerns and untyped extension keys. As more endpoints come online they will all need an error contract; we'd rather not propagate the ad-hoc shape across the API. Should we adopt a standard error envelope, and if so which one?
+The schema endpoint (ADR-008) currently returns errors as an ad-hoc JSON envelope (`{error, code, message, ...extras}`) — three top-level fields with overlapping concerns and untyped extension keys. As more endpoints come online they will all need an error contract; we'd rather not propagate the ad-hoc shape across the API. Should we adopt a standard error envelope, and if so which one?
 
 ## Decision Drivers
 
