@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-novaMOC's architecture involves a number of consequential decisions — storage engine, sync protocol, schema modeling, conflict resolution, transport — each of which constrains or enables the others. Without a written record of those decisions and their reasoning, future contributors (including our future selves) lose the ability to distinguish deliberate choices from accidental drift, or to revisit a decision knowing what depended on it.
+novaMOC's architecture is shaped by a number of consequential decisions, each of which constrains or enables the others. Without a written record of those decisions and their reasoning, future contributors (including our future selves) lose the ability to distinguish deliberate choices from accidental drift, or to revisit a decision knowing what depended on it.
 
 We need a lightweight, version-controlled, text-based format that lives alongside the code, diffs and reviews like any other change, and captures the *why* of each decision rather than just the outcome.
 
