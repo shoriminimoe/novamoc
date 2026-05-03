@@ -105,6 +105,7 @@ Prefer the specialized tooling below over generic Bash/Read/Edit when the task f
 
 ## ADR pointers (read these when touching the relevant subsystem)
 
+- ADR-000 — the ADR practice. To start a new ADR, copy `docs/adr/_template.md`; that template carries the section structure, required-vs-optional rules, status lifecycle, and writing guidance. ADRs 001–015 use the older four-section shape and are grandfathered.
 - ADR-001 overall architecture — three components, two transports, two data classes.
 - ADR-002 / ADR-011 / ADR-012 — event-sourced data + append-only EAV log + JSON-projected entity tables.
 - ADR-005 / ADR-008 — schema-as-data, server-authoritative; the meta-schema tables and the command verbs.
