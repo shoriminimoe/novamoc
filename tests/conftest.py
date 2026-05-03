@@ -6,7 +6,8 @@ a real engine to catch migration-style drift early.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from uuid import UUID
 
 import msgspec
 import pytest
@@ -50,6 +51,9 @@ from novamoc.domain.schema.services import (
     SchemaChangeLogService,
 )
 
+from tests.data.loader import load_scenario
+from tests.data.scenarios import Scenario
+
 
 @pytest.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
@@ -84,6 +88,29 @@ def services(session) -> ServiceBundle:
         ),
         change_log=SchemaChangeLogService(session=session),
     )
+
+
+@pytest.fixture
+def seed(
+    session: AsyncSession,
+    services: ServiceBundle,
+) -> Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]]:
+    """Return an async ``seed(scenario)`` callable that loads a scenario.
+
+    Wraps ``tests.data.loader.load_scenario`` with the per-test ``session``
+    and ``services`` fixtures so test bodies stay focused on assertions:
+
+        from tests.data.scenarios import ACTIVE_TRUCK
+
+        async def test_x(seed, services):
+            ids = await seed(ACTIVE_TRUCK)
+            truck_id = ids["asset_type"]["Truck"]
+    """
+
+    async def _seed(scenario: Scenario) -> Mapping[str, Mapping[str, UUID]]:
+        return await load_scenario(scenario, session=session, services=services)
+
+    return _seed
 
 
 @pytest.fixture

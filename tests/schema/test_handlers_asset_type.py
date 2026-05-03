@@ -16,6 +16,7 @@ from novamoc.domain.schema._errors import (
 )
 from novamoc.domain.schema._outcomes import Outcome
 from novamoc.domain.schema import _payloads
+from tests.data.scenarios import ACTIVE_TRUCK, DEACTIVATED_TRUCK
 
 
 _T = "t1"
@@ -65,10 +66,8 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     assert [r.command for r in log] == [SchemaCommand.CREATE_ASSET_TYPE]
 
 
-async def test_create_name_collision(
-    session: AsyncSession, services: ServiceBundle
-) -> None:
-    await _make_active_truck(session, services)
+async def test_create_name_collision(seed, services: ServiceBundle) -> None:
+    await seed(ACTIVE_TRUCK)
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
@@ -101,9 +100,10 @@ async def test_create_id_collision(
 
 
 async def test_activate_when_deactivated(
-    session: AsyncSession, services: ServiceBundle
+    session: AsyncSession, seed, services: ServiceBundle
 ) -> None:
-    eid = await _make_deactivated_truck(session, services)
+    ids = await seed(DEACTIVATED_TRUCK)
+    eid = ids["asset_type"]["Truck"]
     out = await dispatch(
         services,
         _payloads.ActivateAssetType(

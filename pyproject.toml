@@ -32,6 +32,10 @@ dev = [
 
 [tool.ty.environment]
 root = ["./src/py"]
+# Project root added so ty can resolve cross-file imports inside tests/
+# (e.g. ``from tests.data.loader import load_scenario``). extra-paths only
+# affects module resolution, not which files ty type-checks.
+extra-paths = ["./"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
