@@ -1,32 +1,37 @@
+---
+status: accepted
+date: 2026-05-03
+category: meta
+decision-makers: [Sam Caldwell]
+consulted: []
+informed: []
+---
+
 # ADR-000: Use Markdown Architectural Decision Records
 
-## Status
+## Context and Problem Statement
 
-Accepted
+novaMOC's architecture is shaped by a number of consequential decisions, each of which constrains or enables the others. Without a written record of those decisions and the reasoning behind them, future contributors lose the ability to distinguish deliberate choices from accidental drift, or to revisit a decision knowing what depended on it. We need a lightweight, version-controlled, text-based format that lives alongside the code, diffs and reviews like any other change, and captures the *why* of each decision rather than just the outcome.
 
-## Context
+## Considered Options
 
-novaMOC's architecture is shaped by a number of consequential decisions, each of which constrains or enables the others. Without a written record of those decisions and their reasoning, future contributors (including our future selves) lose the ability to distinguish deliberate choices from accidental drift, or to revisit a decision knowing what depended on it.
+* MADR (Markdown Any Decision Records)
+* Nygard's original ADR template
+* Y-Statements
+* No formal decision records
 
-We need a lightweight, version-controlled, text-based format that lives alongside the code, diffs and reviews like any other change, and captures the *why* of each decision rather than just the outcome.
+## Decision Outcome
 
-## Decision
+Chosen option: **MADR**, because it is the most active and well-documented of the lightweight markdown ADR formats, gives explicit structure for problem / drivers / options / outcome / consequences (the pieces that make a decision revisitable), and is broadly familiar to industry readers without inventing project-specific terminology. It is heavier than Nygard's three-section format and Y-Statements, but the extra structure is exactly what makes ADRs serve as durable records rather than terse footnotes.
 
-We use Architecture Decision Records (ADRs) in [MADR](https://adr.github.io/madr/) format, stored as Markdown files in `docs/adr/` and numbered sequentially from 000.
+ADRs live in `docs/adr/`, following the conventions in `docs/adr/_template.md` — that template carries the canonical section structure, required-vs-optional rules, status lifecycle, and writing guidance. To create a new ADR, copy the template, rename it `NNN-short-slug.md` (3-digit, lowercase-with-dashes), and fill it in.
 
-An ADR records a decision and the reasoning behind it. It may include design discussion to the extent the decision or its rationale needs, but it is not an exhaustive design document — exhaustive design content belongs in the developer docs. Any code, types, or examples that appear in an ADR should be considered illustrative pseudo-code, not an implementation contract.
+### Consequences
 
-Each ADR has four sections:
+* Good, because architectural decisions become reviewable in pull requests like any other change, with reasoning preserved alongside the decision rather than reconstructed from code later.
+* Good, because MADR's section structure forces authors to surface alternatives and consequences, not just outcomes.
+* Bad, because the format requires discipline — decisions made in chat, meetings, or code reviews don't exist as ADRs unless someone writes them up.
 
-- **Status** — Proposed | Accepted | Deprecated | Superseded (cite the replacement when superseded).
-- **Context** — brief problem statement; only the background needed to make the decision intelligible.
-- **Decision** — one sentence stating the choice, followed by the rationale. The rationale is required and is one of the most important parts of the document — it is what makes a decision revisitable. Clarity beats brevity, though it shouldn't be verbose for its own sake.
-- **Consequences** — two or three of the most important tradeoffs. Not exhaustive.
+## More Information
 
-ADRs are not edited after acceptance except to change status or correct factual errors; new decisions get new ADRs. ADRs cite each other by number rather than recapping upstream facts.
-
-The rationale: code shows the present shape but cannot answer "what would have to change for us to undo this?" without preserved reasoning, and an ADR is the artifact that makes that question answerable. MADR is the lightest format that still captures the pieces that matter — context, decision, rationale, consequences — and keeping ADRs in-tree means each one ships with the change it justifies, gets PR review, and can't drift from a separate wiki the way out-of-tree docs do. Keeping ADRs focused — a decision plus its reasoning, with as much design detail as that reasoning needs and no more — keeps them cheap enough to write at the moment of decision; exhaustive design content has its own iterative, sometimes-throwaway lifecycle that doesn't fit immutability-after-accept and belongs in the developer docs instead.
-
-## Consequences
-
-Architectural decisions become reviewable in pull requests like any other change, and the reasoning is preserved alongside the decision rather than reconstructed from code later. The tight format — brief context, one-line decision plus rationale, 2–3 key tradeoffs — keeps the cost of recording a decision low enough that the practice stays sustainable. The cost is discipline: decisions made in chat, meetings, or code reviews don't exist as ADRs unless someone writes them up afterward, and we accept that.
+ADRs 001–015 predate this revision and use a looser four-section shape (Status / Context / Decision / Consequences). They remain valid records and are not rewritten.
