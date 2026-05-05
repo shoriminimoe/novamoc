@@ -1,8 +1,9 @@
 from collections.abc import Sequence
 
-import novamoc.db.models as m
 from advanced_alchemy.extensions.litestar import repository, service
 from advanced_alchemy.filters import OrderBy
+
+import novamoc.db.models as m
 
 
 class AssetTypeService(service.SQLAlchemyAsyncRepositoryService[m.schema.AssetType]):

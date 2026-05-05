@@ -20,6 +20,7 @@ from advanced_alchemy.extensions.litestar import (
 )
 from litestar import Litestar
 from litestar.exceptions import ValidationException
+from litestar.middleware.base import DefineMiddleware
 from litestar.openapi.config import OpenAPIConfig
 from litestar.plugins.problem_details import (
     ProblemDetailsConfig,
@@ -34,24 +35,21 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
+# Importing the models registers their tables on the shared metadata registry.
+import novamoc.db.models  # noqa: F401
 from novamoc.api._problem_details import (
     litestar_validation_error_to_problem_details,
     msgspec_validation_error_to_problem_details,
     schema_error_to_problem_details,
     tenant_resolution_error_to_problem_details,
 )
-from litestar.middleware.base import DefineMiddleware
-
 from novamoc.domain.accounts import (
     AuthenticationMiddleware,
     TenantResolutionError,
 )
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
-from novamoc.domain.schema._errors import SchemaError
-
-# Importing the models registers their tables on the shared metadata registry.
-import novamoc.db.models  # noqa: F401
 from novamoc.domain.schema._bundle import ServiceBundle
+from novamoc.domain.schema._errors import SchemaError
 from novamoc.domain.schema.controllers import SchemaController
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
@@ -60,7 +58,6 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeService,
     SchemaChangeLogService,
 )
-
 from tests.data.loader import load_scenario
 from tests.data.scenarios import Scenario
 

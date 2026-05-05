@@ -29,7 +29,8 @@ from litestar.datastructures import ETag
 from litestar.openapi.datastructures import ResponseSpec
 
 from novamoc.api._problem_details import ProblemDetails
-from novamoc.domain.schema import _payloads, services as _services
+from novamoc.domain.schema import _payloads
+from novamoc.domain.schema import services as _services
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._read_payloads import (

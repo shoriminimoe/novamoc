@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.schema._commands import SchemaCommand
+from novamoc.domain.schema import _payloads
 from novamoc.domain.schema._bundle import ServiceBundle
+from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._errors import (
     ConflictError,
@@ -16,8 +17,6 @@ from novamoc.domain.schema._errors import (
     PayloadShapeError,
 )
 from novamoc.domain.schema._outcomes import Outcome
-from novamoc.domain.schema import _payloads
-
 
 _T = "t1"
 _AUTH = RequestAuth(tenant_id=_T)
