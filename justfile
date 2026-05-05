@@ -6,15 +6,19 @@ default:
 check: lint format typecheck test
 
 # Lint everything
+[parallel]
 lint: lint-py
 
 # Format everything
+[parallel]
 format: format-py
 
 # Typecheck everything
+[parallel]
 typecheck: typecheck-py
 
 # Test everything
+[parallel]
 test: test-py
 
 # Run the backend server
