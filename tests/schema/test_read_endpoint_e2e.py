@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-_T = "t1"  # matches KNOWN_TENANT_IDS and the existing fixture tenant
-
 
 async def test_get_schema_empty_tenant_returns_zero_version_and_empty_lists(
     client,
 ) -> None:
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body == {
@@ -23,7 +21,6 @@ async def test_get_schema_returns_seeded_asset_type_with_field(
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": "11111111-1111-1111-1111-111111111111",
             "payload": {"name": "Truck-read-1"},
         },
@@ -34,7 +31,6 @@ async def test_get_schema_returns_seeded_asset_type_with_field(
         "/schema",
         json={
             "type": "create_asset_type_field",
-            "tenant_id": _T,
             "entity_id": "22222222-2222-2222-2222-222222222222",
             "payload": {
                 "parent_id": "11111111-1111-1111-1111-111111111111",
@@ -45,7 +41,7 @@ async def test_get_schema_returns_seeded_asset_type_with_field(
     )
     assert field_resp.status_code in (200, 201), field_resp.text
 
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -75,7 +71,6 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": asset_type_id,
             "payload": {"name": "Truck-tombstone"},
         },
@@ -86,7 +81,6 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
         "/schema",
         json={
             "type": "create_asset_type_field",
-            "tenant_id": _T,
             "entity_id": field_id,
             "payload": {
                 "parent_id": asset_type_id,
@@ -101,7 +95,6 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
         "/schema",
         json={
             "type": "deactivate_asset_type_field",
-            "tenant_id": _T,
             "entity_id": field_id,
             "payload": {},
         },
@@ -112,14 +105,13 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
         "/schema",
         json={
             "type": "deactivate_asset_type",
-            "tenant_id": _T,
             "entity_id": asset_type_id,
             "payload": {},
         },
     )
     assert deactivate_t.status_code in (200, 201), deactivate_t.text
 
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -130,19 +122,18 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
     assert fields_by_id[field_id]["active"] is False
 
 
-async def test_get_schema_unknown_tenant_returns_404_problem_details(client) -> None:
-    resp = await client.get("/schema/who-dis")
-    assert resp.status_code == 404
+async def test_get_schema_without_authorization_returns_401(client) -> None:
+    """Read endpoint goes through the same middleware as POST /schema."""
+    resp = await client.get("/schema", headers={"Authorization": ""})
+    assert resp.status_code == 401, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
-    assert body["status"] == 404
-    assert body["type"] == "urn:novamoc:problems:tenant_not_found"
-    assert body["title"] == "Tenant not found"
-    assert body["tenant_id"] == "who-dis"
+    assert body["status"] == 401
+    assert body["type"] == "urn:novamoc:problems:tenant_not_resolved"
 
 
 async def test_get_schema_emits_etag_zero_for_empty_tenant(client) -> None:
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     assert resp.headers["etag"] == '"0"'
 
@@ -152,7 +143,6 @@ async def test_get_schema_emits_etag_matching_schema_version(client) -> None:
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": "55555555-5555-5555-5555-555555555555",
             "payload": {"name": "Truck-etag"},
         },
@@ -160,14 +150,14 @@ async def test_get_schema_emits_etag_matching_schema_version(client) -> None:
     assert create.status_code in (200, 201), create.text
     seq = create.json()["schema_version"]
 
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     assert resp.headers["etag"] == f'"{seq}"'
     assert resp.json()["schema_version"] == seq
 
 
 async def test_if_none_match_matches_returns_304_with_etag_no_body(client) -> None:
-    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": '"0"'})
+    resp = await client.get("/schema", headers={"If-None-Match": '"0"'})
     assert resp.status_code == 304
     assert resp.headers["etag"] == '"0"'
     assert resp.content == b""
@@ -178,7 +168,6 @@ async def test_if_none_match_stale_returns_full_body_with_new_etag(client) -> No
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": "66666666-6666-6666-6666-666666666666",
             "payload": {"name": "Truck-304-stale"},
         },
@@ -186,16 +175,10 @@ async def test_if_none_match_stale_returns_full_body_with_new_etag(client) -> No
     assert create.status_code in (200, 201), create.text
     seq = create.json()["schema_version"]
 
-    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": '"0"'})
+    resp = await client.get("/schema", headers={"If-None-Match": '"0"'})
     assert resp.status_code == 200
     assert resp.headers["etag"] == f'"{seq}"'
     assert resp.json()["schema_version"] == seq
-
-
-async def test_if_none_match_unknown_tenant_still_returns_404(client) -> None:
-    resp = await client.get("/schema/who-dis", headers={"If-None-Match": '"0"'})
-    assert resp.status_code == 404
-    assert resp.headers["content-type"].startswith("application/problem+json")
 
 
 async def test_if_none_match_wildcard_returns_304(client) -> None:
@@ -203,7 +186,7 @@ async def test_if_none_match_wildcard_returns_304(client) -> None:
     # current representation of the resource. For our endpoint, that's
     # always — even an empty tenant has a (zero-version, empty arrays)
     # representation. So `*` always wins.
-    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": "*"})
+    resp = await client.get("/schema", headers={"If-None-Match": "*"})
     assert resp.status_code == 304
     assert resp.headers["etag"] == '"0"'
     assert resp.content == b""
@@ -212,7 +195,7 @@ async def test_if_none_match_wildcard_returns_304(client) -> None:
 async def test_if_none_match_weak_etag_does_not_match_strong(client) -> None:
     # RFC 7232 §2.3.2 strong comparison: a weak inbound ETag never matches
     # the strong ETag we issue. Server returns 200 with the full body.
-    resp = await client.get(f"/schema/{_T}", headers={"If-None-Match": 'W/"0"'})
+    resp = await client.get("/schema", headers={"If-None-Match": 'W/"0"'})
     assert resp.status_code == 200
     assert resp.headers["etag"] == '"0"'
 
@@ -230,7 +213,6 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": type_c,
             "payload": {"name": "Type-C"},
         },
@@ -241,7 +223,6 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": type_a,
             "payload": {"name": "Type-A"},
         },
@@ -253,7 +234,6 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
         "/schema",
         json={
             "type": "create_asset_type_field",
-            "tenant_id": _T,
             "entity_id": field_a2,
             "payload": {
                 "parent_id": type_a,
@@ -268,7 +248,6 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
         "/schema",
         json={
             "type": "create_asset_type_field",
-            "tenant_id": _T,
             "entity_id": field_a1,
             "payload": {
                 "parent_id": type_a,
@@ -279,7 +258,7 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
     )
     assert create_a1.status_code in (200, 201), create_a1.text
 
-    resp = await client.get(f"/schema/{_T}")
+    resp = await client.get("/schema")
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -293,7 +272,7 @@ async def test_get_schema_orders_types_and_fields_deterministically(client) -> N
 
     # Two consecutive GETs return byte-identical bodies and the same ETag —
     # the strong-ETag invariant.
-    second = await client.get(f"/schema/{_T}")
+    second = await client.get("/schema")
     assert second.status_code == 200
     assert second.content == resp.content
     assert second.headers["etag"] == resp.headers["etag"]

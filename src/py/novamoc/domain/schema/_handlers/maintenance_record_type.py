@@ -17,6 +17,7 @@ from novamoc.domain.schema._errors import (
     ErrorCode,
     PayloadShapeError,
 )
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 from novamoc.domain.schema import _payloads
@@ -24,12 +25,13 @@ from novamoc.domain.schema import _payloads
 
 async def create(
     services: ServiceBundle,
+    auth: RequestAuth,
     req: _payloads.CreateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
     try:
         await services.maintenance_record_type.create(
             data={
-                "tenant_id": req.tenant_id,
+                "tenant_id": auth.tenant_id,
                 "id": req.entity_id,
                 "name": req.payload.name,
                 "active": True,
@@ -41,7 +43,7 @@ async def create(
             code=ErrorCode.NAME_RESERVED, name=req.payload.name
         ) from exc
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.CREATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
@@ -53,10 +55,11 @@ async def create(
 
 async def activate(
     services: ServiceBundle,
+    auth: RequestAuth,
     req: _payloads.ActivateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -66,12 +69,12 @@ async def activate(
     else:
         await services.maintenance_record_type.update(
             data={"active": True},
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
         outcome = Outcome.ACTIVATED
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.ACTIVATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},
@@ -81,10 +84,11 @@ async def activate(
 
 async def update(
     services: ServiceBundle,
+    auth: RequestAuth,
     req: _payloads.UpdateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -95,13 +99,13 @@ async def update(
     try:
         await services.maintenance_record_type.update(
             data=payload,
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
     except IntegrityError as exc:
         raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.UPDATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload=payload,
@@ -113,10 +117,11 @@ async def update(
 
 async def deactivate(
     services: ServiceBundle,
+    auth: RequestAuth,
     req: _payloads.DeactivateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -124,14 +129,14 @@ async def deactivate(
     if obj.active:
         await services.maintenance_record_type.update(
             data={"active": False},
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
         outcome = Outcome.DEACTIVATED
     else:
         outcome = Outcome.NOOP
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.DEACTIVATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},
@@ -141,20 +146,21 @@ async def deactivate(
 
 async def delete(
     services: ServiceBundle,
+    auth: RequestAuth,
     req: _payloads.DeleteMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
     obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.maintenance_record_type.delete(
-        item_id=(req.tenant_id, req.entity_id),
+        item_id=(auth.tenant_id, req.entity_id),
         auto_commit=False,
     )
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.DELETE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},

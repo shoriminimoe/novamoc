@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
@@ -20,6 +21,7 @@ from tests.data.scenarios import ACTIVE_TRUCK, DEACTIVATED_TRUCK
 
 
 _T = "t1"
+_AUTH = RequestAuth(tenant_id=_T)
 
 
 async def _make_active_truck(session: AsyncSession, services: ServiceBundle):
@@ -49,8 +51,8 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     eid = uuid4()
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.CreateAssetType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._AssetTypeCreatePayload(name="Truck"),
         ),
@@ -71,8 +73,8 @@ async def test_create_name_collision(seed, services: ServiceBundle) -> None:
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateAssetType(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._AssetTypeCreatePayload(name="Truck"),
             ),
@@ -87,8 +89,8 @@ async def test_create_id_collision(
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateAssetType(
-                tenant_id=_T,
                 entity_id=eid,
                 payload=_payloads._AssetTypeCreatePayload(name="Lorry"),
             ),
@@ -106,9 +108,8 @@ async def test_activate_when_deactivated(
     eid = ids["asset_type"]["Truck"]
     out = await dispatch(
         services,
-        _payloads.ActivateAssetType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.ActivateAssetType(entity_id=eid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.ACTIVATED
@@ -123,9 +124,8 @@ async def test_activate_when_already_active_is_noop(
     eid = await _make_active_truck(session, services)
     out = await dispatch(
         services,
-        _payloads.ActivateAssetType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.ActivateAssetType(entity_id=eid, payload=_payloads._Empty()),
     )
     assert out.outcome is Outcome.NOOP
 
@@ -134,9 +134,8 @@ async def test_activate_missing_raises_not_found(services: ServiceBundle) -> Non
     with pytest.raises(EntityNotFoundError) as exc_info:
         await dispatch(
             services,
-            _payloads.ActivateAssetType(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty()
-            ),
+            _AUTH,
+            _payloads.ActivateAssetType(entity_id=uuid4(), payload=_payloads._Empty()),
         )
     assert exc_info.value.code is ErrorCode.ENTITY_NOT_FOUND
 
@@ -150,8 +149,8 @@ async def test_update_changes_name(
     eid = await _make_active_truck(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateAssetType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._AssetTypeUpdatePayload(name="Lorry"),
         ),
@@ -168,8 +167,8 @@ async def test_update_when_deactivated_is_allowed(
     eid = await _make_deactivated_truck(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateAssetType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._AssetTypeUpdatePayload(name="Lorry"),
         ),
@@ -184,8 +183,8 @@ async def test_update_missing_raises_not_found(services: ServiceBundle) -> None:
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.UpdateAssetType(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._AssetTypeUpdatePayload(name="X"),
             ),
@@ -199,8 +198,9 @@ async def test_update_no_changes_rejects(
     with pytest.raises(PayloadShapeError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.UpdateAssetType(
-                tenant_id=_T, entity_id=eid, payload=_payloads._AssetTypeUpdatePayload()
+                entity_id=eid, payload=_payloads._AssetTypeUpdatePayload()
             ),
         )
     assert exc_info.value.code is ErrorCode.PAYLOAD_NO_CHANGES
@@ -215,9 +215,8 @@ async def test_deactivate_active(
     eid = await _make_active_truck(session, services)
     out = await dispatch(
         services,
-        _payloads.DeactivateAssetType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.DeactivateAssetType(entity_id=eid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.DEACTIVATED
@@ -231,9 +230,8 @@ async def test_deactivate_deactivated_is_noop(
     eid = await _make_deactivated_truck(session, services)
     out = await dispatch(
         services,
-        _payloads.DeactivateAssetType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.DeactivateAssetType(entity_id=eid, payload=_payloads._Empty()),
     )
     assert out.outcome is Outcome.NOOP
 
@@ -242,8 +240,9 @@ async def test_deactivate_missing_raises_not_found(services: ServiceBundle) -> N
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.DeactivateAssetType(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty()
+                entity_id=uuid4(), payload=_payloads._Empty()
             ),
         )
 
@@ -257,9 +256,8 @@ async def test_delete_removes_row(
     eid = await _make_active_truck(session, services)
     out = await dispatch(
         services,
-        _payloads.DeleteAssetType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.DeleteAssetType(entity_id=eid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.DELETED
@@ -270,7 +268,6 @@ async def test_delete_missing_raises_not_found(services: ServiceBundle) -> None:
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
-            _payloads.DeleteAssetType(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty()
-            ),
+            _AUTH,
+            _payloads.DeleteAssetType(entity_id=uuid4(), payload=_payloads._Empty()),
         )

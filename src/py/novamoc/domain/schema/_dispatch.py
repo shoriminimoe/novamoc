@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema import _payloads
 from novamoc.domain.schema._bundle import Handler, ServiceBundle
 from novamoc.domain.schema._handlers import (
@@ -50,5 +51,7 @@ _HANDLERS: dict[type, Handler] = {
 }
 
 
-async def dispatch(services: ServiceBundle, request: Any) -> SchemaCommitOutcome:
-    return await _HANDLERS[type(request)](services, request)
+async def dispatch(
+    services: ServiceBundle, auth: RequestAuth, request: Any
+) -> SchemaCommitOutcome:
+    return await _HANDLERS[type(request)](services, auth, request)

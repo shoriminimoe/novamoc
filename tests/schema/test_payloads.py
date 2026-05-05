@@ -16,7 +16,6 @@ import pytest
 from novamoc.domain.schema import _payloads
 
 
-_TENANT = "01J7K0F0V8MQQQX0Z2A0Z2A0Z2"
 _ENTITY = "01958f3b-3b9f-7d3a-89aa-000000000001"
 _PARENT = "01958f3b-3b9f-7d3a-89aa-000000000aaa"
 
@@ -32,7 +31,6 @@ def test_create_asset_type() -> None:
     obj = _decode(
         {
             "type": "create_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"name": "Truck"},
         }
@@ -48,7 +46,6 @@ def test_create_asset_type_requires_name() -> None:
         _decode(
             {
                 "type": "create_asset_type",
-                "tenant_id": _TENANT,
                 "entity_id": _ENTITY,
                 "payload": {},  # name missing → 400 invalid_payload_shape
             }
@@ -59,7 +56,6 @@ def test_activate_asset_type_takes_empty_payload() -> None:
     obj = _decode(
         {
             "type": "activate_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }
@@ -73,7 +69,6 @@ def test_activate_asset_type_allows_omitted_payload() -> None:
     obj = _decode(
         {
             "type": "activate_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
         }
     )
@@ -86,7 +81,6 @@ def test_activate_asset_type_rejects_payload_fields() -> None:
         _decode(
             {
                 "type": "activate_asset_type",
-                "tenant_id": _TENANT,
                 "entity_id": _ENTITY,
                 "payload": {"name": "Truck"},
             }
@@ -97,7 +91,6 @@ def test_update_asset_type_partial() -> None:
     obj = _decode(
         {
             "type": "update_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"name": "Lorry"},
         }
@@ -111,7 +104,6 @@ def test_deactivate_and_delete_require_empty_payload() -> None:
     deact = _decode(
         {
             "type": "deactivate_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }
@@ -122,7 +114,6 @@ def test_deactivate_and_delete_require_empty_payload() -> None:
     delete = _decode(
         {
             "type": "delete_asset_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }
@@ -136,7 +127,6 @@ def test_empty_payload_struct_rejects_unknown_fields() -> None:
         _decode(
             {
                 "type": "deactivate_asset_type",
-                "tenant_id": _TENANT,
                 "entity_id": _ENTITY,
                 "payload": {"name": "x"},
             }
@@ -148,7 +138,6 @@ def test_unknown_command_rejected() -> None:
         _decode(
             {
                 "type": "do_a_barrel_roll",
-                "tenant_id": _TENANT,
                 "entity_id": _ENTITY,
                 "payload": {},
             }
@@ -162,7 +151,6 @@ def test_create_asset_type_field() -> None:
     obj = _decode(
         {
             "type": "create_asset_type_field",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {
                 "parent_id": _PARENT,
@@ -185,7 +173,6 @@ def test_create_asset_type_field_requires_data_type() -> None:
         _decode(
             {
                 "type": "create_asset_type_field",
-                "tenant_id": _TENANT,
                 "entity_id": _ENTITY,
                 "payload": {"parent_id": _PARENT, "name": "vin"},  # data_type missing
             }
@@ -196,7 +183,6 @@ def test_update_asset_type_field_partial() -> None:
     obj = _decode(
         {
             "type": "update_asset_type_field",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"name": "vin_number"},
         }
@@ -212,7 +198,6 @@ def test_update_asset_type_field_distinguishes_unset_from_explicit_null() -> Non
     obj = _decode(
         {
             "type": "update_asset_type_field",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"validation": None},
         }
@@ -237,7 +222,6 @@ def test_asset_type_field_empty_payload_commands(command: str, cls: type) -> Non
     obj = _decode(
         {
             "type": command,
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }
@@ -252,7 +236,6 @@ def test_create_maintenance_record_type() -> None:
     obj = _decode(
         {
             "type": "create_maintenance_record_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"name": "Oil Change"},
         }
@@ -266,7 +249,6 @@ def test_update_maintenance_record_type_partial() -> None:
     obj = _decode(
         {
             "type": "update_maintenance_record_type",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"name": "Annual Inspection"},
         }
@@ -290,7 +272,6 @@ def test_maintenance_record_type_empty_payload(command: str, cls: type) -> None:
     obj = _decode(
         {
             "type": command,
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }
@@ -305,7 +286,6 @@ def test_create_maintenance_record_type_field() -> None:
     obj = _decode(
         {
             "type": "create_maintenance_record_type_field",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {
                 "parent_id": _PARENT,
@@ -325,7 +305,6 @@ def test_update_maintenance_record_type_field_partial() -> None:
     obj = _decode(
         {
             "type": "update_maintenance_record_type_field",
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {"data_type": "number"},
         }
@@ -359,7 +338,6 @@ def test_maintenance_record_type_field_empty_payload(command: str, cls: type) ->
     obj = _decode(
         {
             "type": command,
-            "tenant_id": _TENANT,
             "entity_id": _ENTITY,
             "payload": {},
         }

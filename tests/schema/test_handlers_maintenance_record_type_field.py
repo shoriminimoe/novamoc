@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.db.models.schema import FieldDataType
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
@@ -15,6 +16,7 @@ from novamoc.domain.schema import _payloads
 
 
 _T = "t1"
+_AUTH = RequestAuth(tenant_id=_T)
 
 
 async def _make_parent(
@@ -64,8 +66,8 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     fid = uuid4()
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.CreateMaintenanceRecordTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
                 parent_id=parent,
@@ -83,8 +85,8 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateMaintenanceRecordTypeField(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._MaintenanceRecordTypeFieldCreatePayload(
                     parent_id=uuid4(),
@@ -106,8 +108,9 @@ async def test_activate_when_deactivated(
     fid = await _make_field(session, services, parent=parent, active=False)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.ActivateMaintenanceRecordTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+            entity_id=fid, payload=_payloads._Empty()
         ),
     )
     assert out.outcome is Outcome.ACTIVATED
@@ -117,8 +120,8 @@ async def test_activate_missing_raises_not_found(services: ServiceBundle) -> Non
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.ActivateMaintenanceRecordTypeField(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._Empty(),
             ),
@@ -135,8 +138,8 @@ async def test_update_changes_data_type(
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateMaintenanceRecordTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._MaintenanceRecordTypeFieldUpdatePayload(
                 data_type=FieldDataType.TEXT
@@ -152,8 +155,9 @@ async def test_deactivate(session: AsyncSession, services: ServiceBundle) -> Non
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.DeactivateMaintenanceRecordTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+            entity_id=fid, payload=_payloads._Empty()
         ),
     )
     assert out.outcome is Outcome.DEACTIVATED
@@ -167,8 +171,9 @@ async def test_clear_field_appends_log_row(
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.ClearMaintenanceRecordTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+            entity_id=fid, payload=_payloads._Empty()
         ),
     )
     await session.flush()
@@ -182,8 +187,9 @@ async def test_delete_field(session: AsyncSession, services: ServiceBundle) -> N
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.DeleteMaintenanceRecordTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
+            entity_id=fid, payload=_payloads._Empty()
         ),
     )
     await session.flush()

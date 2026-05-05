@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.db.models.schema import FieldDataType
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
@@ -20,6 +21,7 @@ from novamoc.domain.schema import _payloads
 
 
 _T = "t1"
+_AUTH = RequestAuth(tenant_id=_T)
 
 
 async def _make_parent(
@@ -66,8 +68,8 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     fid = uuid4()
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.CreateAssetTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldCreatePayload(
                 parent_id=parent,
@@ -94,8 +96,8 @@ async def test_create_with_missing_parent_rejects(services: ServiceBundle) -> No
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateAssetTypeField(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._AssetTypeFieldCreatePayload(
                     parent_id=uuid4(),
@@ -115,8 +117,8 @@ async def test_create_with_deactivated_parent_is_allowed(
     fid = uuid4()
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.CreateAssetTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldCreatePayload(
                 parent_id=parent,
@@ -136,8 +138,8 @@ async def test_create_name_collision(
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateAssetTypeField(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._AssetTypeFieldCreatePayload(
                     parent_id=parent,
@@ -159,9 +161,8 @@ async def test_activate_when_deactivated(
     fid = await _make_field(session, services, parent=parent, active=False)
     out = await dispatch(
         services,
-        _payloads.ActivateAssetTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.ActivateAssetTypeField(entity_id=fid, payload=_payloads._Empty()),
     )
     assert out.outcome is Outcome.ACTIVATED
 
@@ -174,9 +175,8 @@ async def test_activate_when_already_active_is_noop(
     fid = await _make_field(session, services, parent=parent, active=True)
     out = await dispatch(
         services,
-        _payloads.ActivateAssetTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.ActivateAssetTypeField(entity_id=fid, payload=_payloads._Empty()),
     )
     assert out.outcome is Outcome.NOOP
 
@@ -185,8 +185,9 @@ async def test_activate_missing_raises_not_found(services: ServiceBundle) -> Non
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.ActivateAssetTypeField(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty()
+                entity_id=uuid4(), payload=_payloads._Empty()
             ),
         )
 
@@ -202,8 +203,8 @@ async def test_update_field_changes_data_type(
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateAssetTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldUpdatePayload(
                 data_type=FieldDataType.NUMBER
@@ -225,8 +226,8 @@ async def test_update_field_no_changes_rejects(
     with pytest.raises(PayloadShapeError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.UpdateAssetTypeField(
-                tenant_id=_T,
                 entity_id=fid,
                 payload=_payloads._AssetTypeFieldUpdatePayload(),
             ),
@@ -257,8 +258,8 @@ async def test_update_field_explicit_null_clears_validation(
     # Update name only — validation must remain populated (UNSET is filtered out).
     await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateAssetTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldUpdatePayload(name="vin_number"),
         ),
@@ -270,8 +271,8 @@ async def test_update_field_explicit_null_clears_validation(
     # Now explicitly clear validation via null.
     await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateAssetTypeField(
-            tenant_id=_T,
             entity_id=fid,
             payload=_payloads._AssetTypeFieldUpdatePayload(validation=None),
         ),
@@ -286,9 +287,8 @@ async def test_deactivate_field(session: AsyncSession, services: ServiceBundle) 
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.DeactivateAssetTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.DeactivateAssetTypeField(entity_id=fid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.DEACTIVATED
@@ -302,9 +302,8 @@ async def test_clear_field_appends_log_row(
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.ClearAssetTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.ClearAssetTypeField(entity_id=fid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.CLEARED
@@ -317,9 +316,8 @@ async def test_delete_field(session: AsyncSession, services: ServiceBundle) -> N
     fid = await _make_field(session, services, parent=parent)
     out = await dispatch(
         services,
-        _payloads.DeleteAssetTypeField(
-            tenant_id=_T, entity_id=fid, payload=_payloads._Empty()
-        ),
+        _AUTH,
+        _payloads.DeleteAssetTypeField(entity_id=fid, payload=_payloads._Empty()),
     )
     await session.flush()
     assert out.outcome is Outcome.DELETED
@@ -332,22 +330,13 @@ async def test_field_commands_against_missing_field_raise_not_found(
     eid = uuid4()
     for cmd in (
         _payloads.UpdateAssetTypeField(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._AssetTypeFieldUpdatePayload(name="x"),
         ),
-        _payloads.ActivateAssetTypeField(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
-        _payloads.DeactivateAssetTypeField(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
-        _payloads.ClearAssetTypeField(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
-        _payloads.DeleteAssetTypeField(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
-        ),
+        _payloads.ActivateAssetTypeField(entity_id=eid, payload=_payloads._Empty()),
+        _payloads.DeactivateAssetTypeField(entity_id=eid, payload=_payloads._Empty()),
+        _payloads.ClearAssetTypeField(entity_id=eid, payload=_payloads._Empty()),
+        _payloads.DeleteAssetTypeField(entity_id=eid, payload=_payloads._Empty()),
     ):
         with pytest.raises(EntityNotFoundError):
-            await dispatch(services, cmd)
+            await dispatch(services, _AUTH, cmd)
