@@ -42,7 +42,6 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.NAME_RESERVED: "Name reserved",
     ErrorCode.PARENT_TYPE_NOT_FOUND: "Parent type not found",
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
-    ErrorCode.TENANT_NOT_FOUND: "Tenant not found",
 }
 
 
@@ -52,7 +51,6 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.NAME_RESERVED: 409,
     ErrorCode.PARENT_TYPE_NOT_FOUND: 409,
     ErrorCode.ENTITY_NOT_FOUND: 404,
-    ErrorCode.TENANT_NOT_FOUND: 404,
 }
 
 

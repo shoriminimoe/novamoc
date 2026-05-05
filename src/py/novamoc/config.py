@@ -1,15 +1,9 @@
 """Application-level configuration constants.
 
-Today this is a thin module — most config is wired in :mod:`novamoc.asgi`
-via the SQLAlchemy plugin. Constants here are values that need to be
-referenced from multiple places and would otherwise live as string
-literals scattered across the code.
+Today this module is empty. Pre-auth dev configuration that previously
+lived here (the ``KNOWN_TENANT_IDS`` stub) was retired by ADR-017 — the
+tenant identity now comes from the request envelope (Bearer token →
+``RequestAuth``) resolved by ``AuthenticationMiddleware``.
 """
 
 from __future__ import annotations
-
-# Single hardcoded tenant for the pre-auth dev environment. Aligned with
-# the existing test fixtures under ``tests/data/fixtures/`` which seed
-# ``tenant_id: "t1"``. Replaced by a real tenant registry once auth and
-# tenant management land — see issue #19.
-KNOWN_TENANT_IDS: frozenset[str] = frozenset({"t1"})

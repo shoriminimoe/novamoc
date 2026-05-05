@@ -1,4 +1,4 @@
-"""Wire-format response structs for ``GET /schema/{tenant_id}``.
+"""Wire-format response structs for ``GET /schema``.
 
 Kept separate from :mod:`novamoc.domain.schema._payloads` (which holds
 the command-side discriminated union) so the two concerns don't pile

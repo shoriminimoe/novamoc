@@ -16,6 +16,7 @@ def create_app() -> Litestar:
     )
     from litestar import Litestar
     from litestar.exceptions import ValidationException
+    from litestar.middleware.base import DefineMiddleware
     from litestar.openapi.config import OpenAPIConfig
     from litestar.plugins.problem_details import (
         ProblemDetailsConfig,
@@ -27,6 +28,11 @@ def create_app() -> Litestar:
         litestar_validation_error_to_problem_details,
         msgspec_validation_error_to_problem_details,
         schema_error_to_problem_details,
+        tenant_resolution_error_to_problem_details,
+    )
+    from novamoc.domain.accounts import (
+        AuthenticationMiddleware,
+        TenantResolutionError,
     )
     from novamoc.domain.schema._errors import SchemaError
     from novamoc.domain.schema.controllers import SchemaController
@@ -43,6 +49,7 @@ def create_app() -> Litestar:
         enable_for_all_http_exceptions=True,
         exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
             SchemaError: schema_error_to_problem_details,
+            TenantResolutionError: tenant_resolution_error_to_problem_details,
             msgspec.ValidationError: msgspec_validation_error_to_problem_details,
             ValidationException: litestar_validation_error_to_problem_details,
         },
@@ -50,6 +57,9 @@ def create_app() -> Litestar:
 
     return Litestar(
         route_handlers=[SchemaController],
+        middleware=[
+            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
+        ],
         plugins=[
             GranianPlugin(),
             SQLAlchemyPlugin(config=alchemy_config),

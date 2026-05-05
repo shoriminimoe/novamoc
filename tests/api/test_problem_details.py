@@ -87,18 +87,6 @@ def test_litestar_validation_exception_renders_400_invalid_payload_shape() -> No
     assert pd_exc.detail == "malformed body"
 
 
-def test_schema_error_tenant_not_found_renders_404_with_extras() -> None:
-    from novamoc.domain.schema._errors import TenantNotFoundError
-
-    exc = TenantNotFoundError(code=ErrorCode.TENANT_NOT_FOUND, tenant_id="who-dis")
-    pd_exc = schema_error_to_problem_details(exc)
-
-    assert pd_exc.status_code == 404
-    assert pd_exc.type_ == "urn:novamoc:problems:tenant_not_found"
-    assert pd_exc.title == "Tenant not found"
-    assert pd_exc.extra == {"tenant_id": "who-dis"}
-
-
 def test_tenant_resolution_error_renders_401() -> None:
     from novamoc.api._problem_details import (
         tenant_resolution_error_to_problem_details,

@@ -24,16 +24,17 @@ from novamoc.domain.schema._errors import (
     ErrorCode,
     PayloadShapeError,
 )
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 from novamoc.domain.schema import _payloads
 
 
 async def create(
-    services: ServiceBundle, req: _payloads.CreateAssetTypeField
+    services: ServiceBundle, auth: RequestAuth, req: _payloads.CreateAssetTypeField
 ) -> SchemaCommitOutcome:
     parent = await services.asset_type.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.payload.parent_id,
     )
     if parent is None:
@@ -41,7 +42,7 @@ async def create(
     try:
         await services.asset_type_field.create(
             data={
-                "tenant_id": req.tenant_id,
+                "tenant_id": auth.tenant_id,
                 "id": req.entity_id,
                 "parent_id": req.payload.parent_id,
                 "name": req.payload.name,
@@ -56,7 +57,7 @@ async def create(
             code=ErrorCode.NAME_RESERVED, name=req.payload.name
         ) from exc
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.CREATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
@@ -67,10 +68,12 @@ async def create(
 
 
 async def activate(
-    services: ServiceBundle, req: _payloads.ActivateAssetTypeField
+    services: ServiceBundle,
+    auth: RequestAuth,
+    req: _payloads.ActivateAssetTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -80,12 +83,12 @@ async def activate(
     else:
         await services.asset_type_field.update(
             data={"active": True},
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
         outcome = Outcome.ACTIVATED
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.ACTIVATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -94,10 +97,10 @@ async def activate(
 
 
 async def update(
-    services: ServiceBundle, req: _payloads.UpdateAssetTypeField
+    services: ServiceBundle, auth: RequestAuth, req: _payloads.UpdateAssetTypeField
 ) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -111,14 +114,14 @@ async def update(
     try:
         await services.asset_type_field.update(
             data=payload,
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
     except IntegrityError as exc:
         # See note in update_asset_type — IntegrityError → NAME_RESERVED.
         raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.UPDATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=payload,
@@ -129,10 +132,12 @@ async def update(
 
 
 async def deactivate(
-    services: ServiceBundle, req: _payloads.DeactivateAssetTypeField
+    services: ServiceBundle,
+    auth: RequestAuth,
+    req: _payloads.DeactivateAssetTypeField,
 ) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
@@ -140,14 +145,14 @@ async def deactivate(
     if obj.active:
         await services.asset_type_field.update(
             data={"active": False},
-            item_id=(req.tenant_id, req.entity_id),
+            item_id=(auth.tenant_id, req.entity_id),
             auto_commit=False,
         )
         outcome = Outcome.DEACTIVATED
     else:
         outcome = Outcome.NOOP
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.DEACTIVATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -156,18 +161,18 @@ async def deactivate(
 
 
 async def clear(
-    services: ServiceBundle, req: _payloads.ClearAssetTypeField
+    services: ServiceBundle, auth: RequestAuth, req: _payloads.ClearAssetTypeField
 ) -> SchemaCommitOutcome:
     # TODO(#7): Wipe field values from the data-projection store once EAV projection
     # tables land. For now only append the change-log row.
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.CLEAR_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -178,20 +183,20 @@ async def clear(
 
 
 async def delete(
-    services: ServiceBundle, req: _payloads.DeleteAssetTypeField
+    services: ServiceBundle, auth: RequestAuth, req: _payloads.DeleteAssetTypeField
 ) -> SchemaCommitOutcome:
     obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         id=req.entity_id,
     )
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.asset_type_field.delete(
-        item_id=(req.tenant_id, req.entity_id),
+        item_id=(auth.tenant_id, req.entity_id),
         auto_commit=False,
     )
     row = await services.change_log.append(
-        tenant_id=req.tenant_id,
+        tenant_id=auth.tenant_id,
         command=SchemaCommand.DELETE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},

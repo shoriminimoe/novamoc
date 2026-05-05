@@ -43,12 +43,18 @@ def _snake_tag(cls_name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", cls_name).lower()
 
 
-class _SchemaCommand(msgspec.Struct, tag=_snake_tag):
+class _SchemaCommand(msgspec.Struct, tag=_snake_tag, forbid_unknown_fields=True):
     """Base class for the discriminated union of schema commands.
 
     Subclasses inherit msgspec's default ``type`` tag field plus a
     snake-case tag value derived from the class name. Adding a new
     command variant is just a new subclass — no per-class ``tag=`` line.
+
+    ``forbid_unknown_fields=True`` rejects clients still constructed
+    against the legacy shape (e.g. sending a body-side ``tenant_id``)
+    rather than silently ignoring the field. The wire-format tenant id
+    is the bearer-token resolved by ``TenantMiddleware`` (ADR-017); body
+    fields no longer carry it.
     """
 
 
@@ -87,31 +93,26 @@ class _AssetTypeUpdatePayload(
 
 
 class CreateAssetType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _AssetTypeCreatePayload
 
 
 class ActivateAssetType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class UpdateAssetType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _AssetTypeUpdatePayload
 
 
 class DeactivateAssetType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class DeleteAssetType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
@@ -159,37 +160,31 @@ class _AssetTypeFieldUpdatePayload(
 
 
 class CreateAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _AssetTypeFieldCreatePayload
 
 
 class ActivateAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class UpdateAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _AssetTypeFieldUpdatePayload
 
 
 class DeactivateAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class ClearAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class DeleteAssetTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
@@ -220,31 +215,26 @@ class _MaintenanceRecordTypeUpdatePayload(
 
 
 class CreateMaintenanceRecordType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _MaintenanceRecordTypeCreatePayload
 
 
 class ActivateMaintenanceRecordType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class UpdateMaintenanceRecordType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _MaintenanceRecordTypeUpdatePayload
 
 
 class DeactivateMaintenanceRecordType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class DeleteMaintenanceRecordType(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
@@ -287,37 +277,31 @@ class _MaintenanceRecordTypeFieldUpdatePayload(
 
 
 class CreateMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _MaintenanceRecordTypeFieldCreatePayload
 
 
 class ActivateMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class UpdateMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _MaintenanceRecordTypeFieldUpdatePayload
 
 
 class DeactivateMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class ClearMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 
 
 class DeleteMaintenanceRecordTypeField(_SchemaCommand):
-    tenant_id: str
     entity_id: UUID
     payload: _Empty | UnsetType = UNSET
 

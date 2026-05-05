@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
@@ -19,6 +20,7 @@ from novamoc.domain.schema import _payloads
 
 
 _T = "t1"
+_AUTH = RequestAuth(tenant_id=_T)
 
 
 async def _make_active(session: AsyncSession, services: ServiceBundle):
@@ -48,8 +50,8 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     eid = uuid4()
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.CreateMaintenanceRecordType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._MaintenanceRecordTypeCreatePayload(name="Service"),
         ),
@@ -67,8 +69,8 @@ async def test_create_name_collision(
     with pytest.raises(ConflictError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.CreateMaintenanceRecordType(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._MaintenanceRecordTypeCreatePayload(name="Service"),
             ),
@@ -85,8 +87,9 @@ async def test_activate_when_deactivated(
     eid = await _make_deactivated(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.ActivateMaintenanceRecordType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
+            entity_id=eid, payload=_payloads._Empty()
         ),
     )
     assert out.outcome is Outcome.ACTIVATED
@@ -99,8 +102,9 @@ async def test_activate_when_already_active_is_noop(
     eid = await _make_active(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.ActivateMaintenanceRecordType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
+            entity_id=eid, payload=_payloads._Empty()
         ),
     )
     assert out.outcome is Outcome.NOOP
@@ -110,8 +114,9 @@ async def test_activate_missing_raises_not_found(services: ServiceBundle) -> Non
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.ActivateMaintenanceRecordType(
-                tenant_id=_T, entity_id=uuid4(), payload=_payloads._Empty()
+                entity_id=uuid4(), payload=_payloads._Empty()
             ),
         )
 
@@ -125,8 +130,8 @@ async def test_update_changes_name(
     eid = await _make_active(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateMaintenanceRecordType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._MaintenanceRecordTypeUpdatePayload(name="Oil Change"),
         ),
@@ -141,8 +146,8 @@ async def test_update_when_deactivated_is_allowed(
     eid = await _make_deactivated(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.UpdateMaintenanceRecordType(
-            tenant_id=_T,
             entity_id=eid,
             payload=_payloads._MaintenanceRecordTypeUpdatePayload(name="Oil Change"),
         ),
@@ -157,8 +162,8 @@ async def test_update_missing_raises_not_found(services: ServiceBundle) -> None:
     with pytest.raises(EntityNotFoundError):
         await dispatch(
             services,
+            _AUTH,
             _payloads.UpdateMaintenanceRecordType(
-                tenant_id=_T,
                 entity_id=uuid4(),
                 payload=_payloads._MaintenanceRecordTypeUpdatePayload(name="X"),
             ),
@@ -173,8 +178,8 @@ async def test_update_no_changes_rejects(
     with pytest.raises(PayloadShapeError) as exc_info:
         await dispatch(
             services,
+            _AUTH,
             _payloads.UpdateMaintenanceRecordType(
-                tenant_id=_T,
                 entity_id=eid,
                 payload=_payloads._MaintenanceRecordTypeUpdatePayload(),
             ),
@@ -191,8 +196,9 @@ async def test_deactivate_active(
     eid = await _make_active(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.DeactivateMaintenanceRecordType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
+            entity_id=eid, payload=_payloads._Empty()
         ),
     )
     assert out.outcome is Outcome.DEACTIVATED
@@ -204,8 +210,9 @@ async def test_delete_removes_row(
     eid = await _make_active(session, services)
     out = await dispatch(
         services,
+        _AUTH,
         _payloads.DeleteMaintenanceRecordType(
-            tenant_id=_T, entity_id=eid, payload=_payloads._Empty()
+            entity_id=eid, payload=_payloads._Empty()
         ),
     )
     await session.flush()

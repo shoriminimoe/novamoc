@@ -19,7 +19,6 @@ class ErrorCode(StrEnum):
     NAME_RESERVED = "name_reserved"
     PARENT_TYPE_NOT_FOUND = "parent_type_not_found"
     ENTITY_NOT_FOUND = "entity_not_found"
-    TENANT_NOT_FOUND = "tenant_not_found"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -28,7 +27,6 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.NAME_RESERVED: "Name is already in use by another entity.",
     ErrorCode.PARENT_TYPE_NOT_FOUND: "Parent type does not exist.",
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found.",
-    ErrorCode.TENANT_NOT_FOUND: "Tenant not found.",
 }
 
 
@@ -60,7 +58,3 @@ class ConflictError(SchemaError):
 
 class EntityNotFoundError(SchemaError):
     """Command targeted an entity that does not exist."""
-
-
-class TenantNotFoundError(SchemaError):
-    """Request targeted a tenant that the server does not know about."""

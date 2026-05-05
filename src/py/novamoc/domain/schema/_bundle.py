@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema._outcomes import SchemaCommitOutcome
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
@@ -31,7 +32,9 @@ class ServiceBundle:
     change_log: SchemaChangeLogService
 
 
-Handler: TypeAlias = Callable[["ServiceBundle", Any], Awaitable[SchemaCommitOutcome]]
+Handler: TypeAlias = Callable[
+    ["ServiceBundle", RequestAuth, Any], Awaitable[SchemaCommitOutcome]
+]
 
 
 __all__ = ("Handler", "ServiceBundle")

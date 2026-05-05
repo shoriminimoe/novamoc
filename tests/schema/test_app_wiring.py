@@ -1,11 +1,13 @@
 from litestar.testing import AsyncTestClient
 
 from novamoc.asgi import create_app
+from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
 
 
 async def test_app_starts_and_post_schema_route_exists() -> None:
     app = create_app()
     async with AsyncTestClient(app) as client:
+        client.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
         # POST /schema with bad body should give us a structured error,
         # not a 404 — confirms the route is registered.
         resp = await client.post(

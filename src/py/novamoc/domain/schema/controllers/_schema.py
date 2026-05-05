@@ -4,11 +4,13 @@
 (Litestar publishes a ``oneOf`` discriminated by ``type`` in the OpenAPI
 schema); dispatch is by the runtime variant class via :func:`dispatch`.
 
-``GET /schema/{tenant_id}`` returns a ``SchemaSnapshotResponse`` —
-the full per-tenant schema projection (all asset types and maintenance
-record types with their nested fields, including tombstones) plus the
-current ``schema_version``. The handler enforces the ``KNOWN_TENANT_IDS``
-registry stub and raises ``TenantNotFoundError`` for unknown tenants.
+``GET /schema`` returns a ``SchemaSnapshotResponse`` — the full
+per-tenant schema projection (all asset types and maintenance record
+types with their nested fields, including tombstones) plus the current
+``schema_version``. The tenant id comes from the DI-injected
+``RequestAuth`` (ADR-017); a missing or invalid bearer token is
+rejected upstream by ``AuthenticationMiddleware`` before the
+handler runs.
 
 Error rendering is the app-level ``ProblemDetailsPlugin`` registered in
 ``novamoc.asgi.create_app``: ``SchemaError``,
@@ -27,11 +29,9 @@ from litestar.datastructures import ETag
 from litestar.openapi.datastructures import ResponseSpec
 
 from novamoc.api._problem_details import ProblemDetails
-from novamoc.config import KNOWN_TENANT_IDS
 from novamoc.domain.schema import _payloads, services as _services
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._dispatch import dispatch
-from novamoc.domain.schema._errors import ErrorCode, TenantNotFoundError
 from novamoc.domain.schema._read_payloads import (
     AssetTypeFieldView,
     AssetTypeView,
@@ -107,6 +107,7 @@ class SchemaController(Controller):
     async def apply_command(
         self,
         data: _payloads.SchemaRequest,
+        request: Request,
         asset_type_service: _services.AssetTypeService,
         asset_type_field_service: _services.AssetTypeFieldService,
         maintenance_record_type_service: _services.MaintenanceRecordTypeService,
@@ -120,7 +121,7 @@ class SchemaController(Controller):
             maintenance_record_type_field=maintenance_record_type_field_service,
             change_log=schema_change_log_service,
         )
-        outcome = await dispatch(services, data)
+        outcome = await dispatch(services, request.auth, data)
         return _payloads.SchemaResponse(
             schema_version=outcome.schema_version,
             entity_id=outcome.entity_id,
@@ -129,7 +130,7 @@ class SchemaController(Controller):
         )
 
     @get(
-        "/{tenant_id:str}",
+        "/",
         etag=ETag(documentation_only=True),
         responses={
             200: ResponseSpec(
@@ -140,9 +141,9 @@ class SchemaController(Controller):
                 None,
                 description="Not Modified — If-None-Match matched current schema_version",
             ),
-            404: ResponseSpec(
+            401: ResponseSpec(
                 ProblemDetails,
-                description="Tenant not found",
+                description="Tenant could not be resolved from request",
                 media_type="application/problem+json",
             ),
         },
@@ -150,7 +151,6 @@ class SchemaController(Controller):
     async def read_snapshot(
         self,
         request: Request,
-        tenant_id: str,
         asset_type_service: _services.AssetTypeService,
         asset_type_field_service: _services.AssetTypeFieldService,
         maintenance_record_type_service: _services.MaintenanceRecordTypeService,
@@ -169,10 +169,7 @@ class SchemaController(Controller):
         # version vs projection reads expecting it to matter — under the
         # snapshot it doesn't, and `current_version` must run *before* the
         # If-None-Match check to enable the 304 short-circuit.
-        if tenant_id not in KNOWN_TENANT_IDS:
-            raise TenantNotFoundError(
-                code=ErrorCode.TENANT_NOT_FOUND, tenant_id=tenant_id
-            )
+        tenant_id = request.auth.tenant_id
 
         schema_version = await schema_change_log_service.current_version(
             tenant_id=tenant_id

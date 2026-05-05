@@ -3,9 +3,6 @@ from uuid import uuid4
 import pytest
 
 
-_T = "tenant-e2e"
-
-
 @pytest.fixture
 def fresh_entity_id() -> str:
     return str(uuid4())
@@ -16,7 +13,6 @@ async def test_post_schema_creates_asset_type(client, fresh_entity_id: str) -> N
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": fresh_entity_id,
             "payload": {"name": f"Truck-{fresh_entity_id[:8]}"},
         },
@@ -32,7 +28,6 @@ async def test_post_schema_returns_409_on_duplicate_name(client) -> None:
     name = f"DuplicateMe-{uuid4()}"
     body = {
         "type": "create_asset_type",
-        "tenant_id": _T,
         "entity_id": str(uuid4()),
         "payload": {"name": name},
     }
@@ -53,7 +48,6 @@ async def test_post_schema_returns_404_for_update_missing(client) -> None:
         "/schema",
         json={
             "type": "update_asset_type",
-            "tenant_id": _T,
             "entity_id": str(uuid4()),
             "payload": {"name": "X"},
         },
@@ -70,7 +64,6 @@ async def test_post_schema_returns_400_on_unknown_command(client) -> None:
         "/schema",
         json={
             "type": "do_a_barrel_roll",
-            "tenant_id": _T,
             "entity_id": str(uuid4()),
             "payload": {},
         },
@@ -85,7 +78,6 @@ async def test_post_schema_returns_400_on_payload_with_unknown_field(client) -> 
         "/schema",
         json={
             "type": "deactivate_asset_type",
-            "tenant_id": _T,
             "entity_id": str(uuid4()),
             "payload": {"name": "x"},  # forbidden field on _Empty
         },
@@ -105,7 +97,6 @@ async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": eid,
             "payload": {"name": name},
         },
@@ -118,7 +109,6 @@ async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
         "/schema",
         json={
             "type": "create_asset_type",
-            "tenant_id": _T,
             "entity_id": eid,
             "payload": {"name": name},
         },
@@ -130,13 +120,32 @@ async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
         "/schema",
         json={
             "type": "deactivate_asset_type",
-            "tenant_id": _T,
             "entity_id": eid,
             "payload": {},
         },
     )
     assert deact.status_code in (200, 201)
     assert deact.json()["schema_version"] == sv_after_create + 1
+
+
+async def test_post_schema_without_authorization_returns_401(client) -> None:
+    """Middleware rejects requests with no credential before the route runs."""
+    # The default `client` fixture attaches Authorization; we explicitly clear it.
+    resp = await client.post(
+        "/schema",
+        headers={"Authorization": ""},
+        json={
+            "type": "create_asset_type",
+            "entity_id": "00000000-0000-0000-0000-000000000999",
+            "payload": {"name": "irrelevant"},
+        },
+    )
+    assert resp.status_code == 401, resp.text
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    body = resp.json()
+    assert body["status"] == 401
+    assert body["type"] == "urn:novamoc:problems:tenant_not_resolved"
+    assert body["title"] == "Tenant not resolved"
 
 
 async def test_post_schema_problem_includes_instance_and_extras(client) -> None:
@@ -146,7 +155,6 @@ async def test_post_schema_problem_includes_instance_and_extras(client) -> None:
     name = f"WithExtras-{uuid4()}"
     body = {
         "type": "create_asset_type",
-        "tenant_id": _T,
         "entity_id": str(uuid4()),
         "payload": {"name": name},
     }

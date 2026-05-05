@@ -38,7 +38,15 @@ from novamoc.api._problem_details import (
     litestar_validation_error_to_problem_details,
     msgspec_validation_error_to_problem_details,
     schema_error_to_problem_details,
+    tenant_resolution_error_to_problem_details,
 )
+from litestar.middleware.base import DefineMiddleware
+
+from novamoc.domain.accounts import (
+    AuthenticationMiddleware,
+    TenantResolutionError,
+)
+from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
 from novamoc.domain.schema._errors import SchemaError
 
 # Importing the models registers their tables on the shared metadata registry.
@@ -137,12 +145,16 @@ async def app() -> Litestar:
         enable_for_all_http_exceptions=True,
         exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
             SchemaError: schema_error_to_problem_details,
+            TenantResolutionError: tenant_resolution_error_to_problem_details,
             msgspec.ValidationError: msgspec_validation_error_to_problem_details,
             ValidationException: litestar_validation_error_to_problem_details,
         },
     )
     return Litestar(
         route_handlers=[SchemaController],
+        middleware=[
+            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
+        ],
         plugins=[
             SQLAlchemyPlugin(config=alchemy_config),
             ProblemDetailsPlugin(config=problem_details_config),
@@ -154,4 +166,9 @@ async def app() -> Litestar:
 @pytest.fixture
 async def client(app: Litestar):
     async with AsyncTestClient(app) as c:
+        # AsyncTestClient does not accept ``headers`` at construction; we set
+        # them on the underlying httpx client so every request carries the dev
+        # bearer by default. Tests that exercise the rejection path override
+        # the header per-request.
+        c.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
         yield c
