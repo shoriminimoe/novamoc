@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from novamoc.domain.accounts._auth import RequestAuth
 from novamoc.domain.accounts._errors import TenantResolutionError
 
 if TYPE_CHECKING:
@@ -24,11 +23,13 @@ if TYPE_CHECKING:
 # the trust model for the dev period (ADR-017). Replaced by a real per-tenant
 # token registry — see issue #19.
 _TENANT_T1_DEV_TOKEN = "t1-dev-token"
+_TENANT_T1 = "t1"
+
 _BEARER_PREFIX = "Bearer "
 
 
-def resolve_tenant(headers: Headers) -> RequestAuth:
-    """Return the ``RequestAuth`` for this request, or raise.
+def resolve_tenant(headers: Headers) -> str:
+    """Return the tenant ID for this request, or raise.
 
     Raises:
         TenantResolutionError: when the ``Authorization`` header is missing,
@@ -40,4 +41,4 @@ def resolve_tenant(headers: Headers) -> RequestAuth:
     token = value[len(_BEARER_PREFIX) :]
     if token != _TENANT_T1_DEV_TOKEN:
         raise TenantResolutionError()
-    return RequestAuth(tenant_id="t1")
+    return _TENANT_T1
