@@ -33,16 +33,18 @@ The Python project is managed by **uv** with Python 3.14. Most common commands r
 
 ```sh
 uv sync                                   # install deps + dev deps from uv.lock
+just                                      # list available recipes (= just --list --unsorted)
 just serve                                # = uv run litestar --app novamoc.asgi:create_app run
-just build                                # = uv build
-just test                                # composite: every language's test suite (currently test-py only)
+just build-py                             # = uv build
+just test                                 # composite: every language's test suite (currently test-py only)
 just test-py                              # = uv run pytest
 uv run pytest tests/schema/test_endpoint_e2e.py::test_post_schema_creates_asset_type
 uv run pytest -k "name_reserved"          # filter by test name
-just lint-py                              # = uv run ruff check --fix (paths from [tool.ruff] src in pyproject.toml)
-just format-py                            # = uv run ruff format
-just typecheck-py                         # = uv run ty check (env root configured to ./src/py)
-just check                                # composite: lint-py + format-py + typecheck-py
+just lint                                 # composite: lint-py (= uv run ruff check --fix)
+just format                               # composite: format-py (= uv run ruff format)
+just typecheck                            # composite: typecheck-py (= uv run ty check, env root ./src/py)
+just check                                # composite: lint + format + typecheck + test
+just clean                                # rm -r dist
 ```
 
 Frontend (in `src/js/web/`): `npm run dev` (vite), `npm run build`, `npm run check` (svelte-check + tsc).
