@@ -34,6 +34,74 @@ dev = [
 
 [tool.ruff]
 src = ["src/py", "tests"]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    # Correctness / bugs
+    "E", "W", "F",
+    "B",       # flake8-bugbear
+    "ASYNC",   # flake8-async
+    "RUF",     # ruff-native (RUF012 mutable class default, etc.)
+    "PL",      # pylint (errors + warnings + refactor + convention)
+
+    # Modernization (Python 3.14)
+    "UP",      # pyupgrade
+    "FURB",    # refurb
+
+    # Imports
+    "I",       # isort
+    "TID",     # tidy-imports — bans relative parent imports
+    "TC",      # type-checking — moves typing-only imports under TYPE_CHECKING
+    "ICN",     # import conventions
+
+    # Cleanups / style
+    "C4",      # comprehensions
+    "SIM",     # simplify
+    "PIE",     # misc anti-patterns
+    "RET",     # return cleanup
+    "RSE",     # raise cleanup
+    "PERF",    # perflint
+    "N",       # pep8-naming
+    "PT",      # pytest style
+
+    # Domain hygiene
+    "DTZ",     # tz-aware datetimes (relevant for HLC + audit columns)
+    "PTH",     # use pathlib
+
+    # Exception / logging hygiene
+    "BLE",     # blind except
+    "LOG",     # logging best practices
+    "G",       # logging format
+    "TRY",     # tryceratops
+    "ERA",     # commented-out code
+
+    # Security & private access
+    "S",       # bandit
+    "SLF",     # private-member access
+    "A",       # builtin shadowing
+]
+ignore = [
+    # `ruff format` owns these — Ruff explicitly recommends not enabling them
+    "COM812",
+    "ISC001",
+    # `assert` is pytest's idiom; src code shouldn't rely on it but flagging
+    # every test is pure noise.
+    "S101",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Magic numbers in test bodies are how tests are written.
+"tests/**/*.py" = ["PLR2004"]
+# `id` column on SQLAlchemy models legitimately shadows the builtin via the
+# UUIDPrimaryKey mixin in advanced-alchemy.
+"src/py/novamoc/db/models/**/*.py" = ["A003"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.isort]
+known-first-party = ["novamoc", "tests"]
 
 [tool.ty.environment]
 root = ["./src/py"]

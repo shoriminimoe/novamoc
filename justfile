@@ -3,7 +3,7 @@ default:
 	just --list --unsorted
 
 # Check everything
-check: lint format typecheck test
+check: lint format typecheck test ratchet
 
 # Lint everything
 [parallel]
@@ -29,9 +29,9 @@ serve:
 build-py:
 	uv build
 
-# Lint python
+# Lint python — auto-fixes what's fixable; the ratchet gates remaining violations
 lint-py:
-	uv run ruff check --fix
+	uv run ruff check --fix --exit-zero
 
 # Format python
 format-py:
@@ -44,6 +44,14 @@ typecheck-py:
 # Test python
 test-py:
 	uv run pytest
+
+# Check ruff violation counts against the committed ratchet baseline
+ratchet:
+	uv run python scripts/ratchet.py
+
+# Update the ratchet baseline from the current ruff state (commit the change)
+ratchet-update:
+	uv run python scripts/ratchet.py --update
 
 # Clean artifacts
 clean:

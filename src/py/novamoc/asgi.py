@@ -1,4 +1,8 @@
+# Imports inside ``create_app`` are deliberately deferred to keep CLI /
+# import-time work cheap; ``create_app`` is only called when actually serving.
+# ruff: noqa: PLC0415
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
