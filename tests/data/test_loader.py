@@ -11,7 +11,6 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.domain.schema._bundle import ServiceBundle
@@ -21,7 +20,6 @@ from tests.data.scenarios import (
     ACTIVE_TRUCK_WITH_VIN_FIELD,
     DEACTIVATED_TRUCK,
 )
-
 
 _TENANT = "t1"
 

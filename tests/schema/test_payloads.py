@@ -15,7 +15,6 @@ import pytest
 
 from novamoc.domain.schema import _payloads
 
-
 _ENTITY = "01958f3b-3b9f-7d3a-89aa-000000000001"
 _PARENT = "01958f3b-3b9f-7d3a-89aa-000000000aaa"
 

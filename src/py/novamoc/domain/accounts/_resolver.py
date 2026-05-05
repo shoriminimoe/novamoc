@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 # Development-only credential. Anyone with checkout access can read it; that is
 # the trust model for the dev period (ADR-017). Replaced by a real per-tenant
 # token registry — see issue #19.
-_TENANT_T1_DEV_TOKEN = "t1-dev-token"
+_TENANT_T1_DEV_TOKEN = "t1-dev-token"  # noqa: S105 — dev-only credential, see issue #19
 _TENANT_T1 = "t1"
 
 _BEARER_PREFIX = "Bearer "

@@ -22,11 +22,10 @@ from being silently accepted. See the design spec for the rationale.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-
-import re
 
 import msgspec
 from msgspec import UNSET, UnsetType

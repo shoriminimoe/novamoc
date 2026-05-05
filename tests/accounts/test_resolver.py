@@ -8,8 +8,8 @@ from novamoc.domain.accounts import TenantResolutionError
 
 def test_valid_bearer_returns_t1_context() -> None:
     from novamoc.domain.accounts._resolver import (
-        _TENANT_T1_DEV_TOKEN,
         _TENANT_T1,
+        _TENANT_T1_DEV_TOKEN,
         resolve_tenant,
     )
 

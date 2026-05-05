@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from advanced_alchemy.types import DateTimeUTC, GUID, JsonB
+from advanced_alchemy.types import GUID, DateTimeUTC, JsonB
 from sqlalchemy import BigInteger, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,6 @@ class SchemaChangeLog(DefaultBase):
     committed_at: Mapped[_dt.datetime] = mapped_column(
         DateTimeUTC,
         server_default=func.now(),
-        default=lambda: _dt.datetime.now(_dt.timezone.utc),
+        default=lambda: _dt.datetime.now(_dt.UTC),
     )
     actor_id: Mapped[str | None]

@@ -18,7 +18,6 @@ Configured at app construction with the OpenAPI doc bypass:
 """
 
 from __future__ import annotations
-from novamoc.domain.accounts import RequestAuth
 
 from typing import TYPE_CHECKING
 
@@ -27,6 +26,7 @@ from litestar.middleware.authentication import (
     AuthenticationResult,
 )
 
+from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.accounts._resolver import resolve_tenant
 
 if TYPE_CHECKING:
