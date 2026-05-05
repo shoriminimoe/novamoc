@@ -25,6 +25,7 @@ import msgspec
 from litestar.exceptions import ValidationException
 from litestar.plugins.problem_details import ProblemDetailsException
 
+from novamoc.domain.accounts import TenantResolutionError
 from novamoc.domain.schema._errors import (
     ErrorCode,
     SchemaError,
@@ -101,6 +102,26 @@ def schema_error_to_problem_details(
         detail=exc.message,
         instance=make_instance(),
         extra=dict(exc.extras) if exc.extras else None,
+    )
+
+
+def tenant_resolution_error_to_problem_details(
+    exc: TenantResolutionError,
+) -> ProblemDetailsException:
+    """Convert a ``TenantResolutionError`` to a 401 ``ProblemDetailsException``.
+
+    The wire shape is intentionally minimal: ``extras`` is empty so client
+    code does not branch on which variant of the credential failure was
+    triggered. When token formats grow, additional codes split out and
+    extras can carry per-code context.
+    """
+
+    return ProblemDetailsException(
+        type_=f"{_PROBLEM_TYPE_BASE}:tenant_not_resolved",
+        title="Tenant not resolved",
+        status_code=401,
+        detail=exc.detail,
+        instance=make_instance(),
     )
 
 

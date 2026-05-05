@@ -97,3 +97,18 @@ def test_schema_error_tenant_not_found_renders_404_with_extras() -> None:
     assert pd_exc.type_ == "urn:novamoc:problems:tenant_not_found"
     assert pd_exc.title == "Tenant not found"
     assert pd_exc.extra == {"tenant_id": "who-dis"}
+
+
+def test_tenant_resolution_error_renders_401() -> None:
+    from novamoc.api._problem_details import (
+        tenant_resolution_error_to_problem_details,
+    )
+    from novamoc.domain.accounts import TenantResolutionError
+
+    exc = TenantResolutionError()
+    pd_exc = tenant_resolution_error_to_problem_details(exc)
+
+    assert pd_exc.status_code == 401
+    assert pd_exc.type_ == "urn:novamoc:problems:tenant_not_resolved"
+    assert pd_exc.title == "Tenant not resolved"
+    assert pd_exc.extra is None
