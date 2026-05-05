@@ -47,3 +47,11 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-ra"
+filterwarnings = [
+    # advanced-alchemy 1.9.x calls its own deprecated `set_async_context()`
+    # from the Litestar plugin's `provide_session` (and other framework
+    # extensions). The function is a no-op stub that only warns; the call
+    # site is still on `main` upstream and there's no tracking issue yet.
+    # Drop this entry once advanced-alchemy ships a fix and we upgrade.
+    "ignore:Call to deprecated function 'set_async_context'.*:DeprecationWarning:advanced_alchemy._listeners",
+]
