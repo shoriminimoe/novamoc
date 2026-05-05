@@ -3,14 +3,18 @@ from __future__ import annotations
 import pytest
 from litestar.datastructures import Headers
 
-from novamoc.domain.accounts import RequestAuth, TenantResolutionError
+from novamoc.domain.accounts import TenantResolutionError
 
 
 def test_valid_bearer_returns_t1_context() -> None:
-    from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN, resolve_tenant
+    from novamoc.domain.accounts._resolver import (
+        _TENANT_T1_DEV_TOKEN,
+        _TENANT_T1,
+        resolve_tenant,
+    )
 
     headers = Headers({"authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"})
-    assert resolve_tenant(headers) == RequestAuth(tenant_id="t1")
+    assert resolve_tenant(headers) == _TENANT_T1
 
 
 def test_missing_authorization_header_raises() -> None:

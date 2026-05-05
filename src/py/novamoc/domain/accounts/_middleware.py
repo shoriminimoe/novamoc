@@ -18,6 +18,7 @@ Configured at app construction with the OpenAPI doc bypass:
 """
 
 from __future__ import annotations
+from novamoc.domain.accounts import RequestAuth
 
 from typing import TYPE_CHECKING
 
@@ -36,5 +37,5 @@ class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
     async def authenticate_request(
         self, connection: ASGIConnection
     ) -> AuthenticationResult:
-        auth = resolve_tenant(connection.headers)
-        return AuthenticationResult(user=None, auth=auth)
+        tenant_id = resolve_tenant(connection.headers)
+        return AuthenticationResult(user=None, auth=RequestAuth(tenant_id=tenant_id))
