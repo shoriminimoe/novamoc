@@ -15,12 +15,16 @@ from __future__ import annotations
 
 from novamoc.domain.accounts._auth import RequestAuth
 from novamoc.domain.accounts._errors import TenantResolutionError
-from novamoc.domain.accounts._middleware import AuthenticationMiddleware
+from novamoc.domain.accounts._middleware import (
+    AuthenticationMiddleware,
+    TenantContextMiddleware,
+)
 from novamoc.domain.accounts._resolver import resolve_tenant
 
 __all__ = (
     "AuthenticationMiddleware",
     "RequestAuth",
+    "TenantContextMiddleware",
     "TenantResolutionError",
     "resolve_tenant",
 )
