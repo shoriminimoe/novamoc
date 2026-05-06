@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from advanced_alchemy.base import DefaultBase
+from advanced_alchemy.base import DefaultBase, UUIDAuditBase
 from advanced_alchemy.types import GUID, JsonB
 from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .._base import TenantScopedAuditBase
+from .._mixins import TenantScopedMixin
 
 
-class MaintenanceRecord(TenantScopedAuditBase):
+class MaintenanceRecord(TenantScopedMixin, UUIDAuditBase):
     """Maintenance record entity projection (ADR-005, ADR-012)."""
 
     __tablename__ = "maintenance_records"
@@ -36,7 +36,7 @@ class MaintenanceRecord(TenantScopedAuditBase):
     row_state_hlc: Mapped[str]
 
 
-class MaintenanceRecordFieldValue(DefaultBase):
+class MaintenanceRecordFieldValue(TenantScopedMixin, DefaultBase):
     """Per-field LWW projection for maintenance records (ADR-007, ADR-012)."""
 
     __tablename__ = "maintenance_record_field_values"
@@ -47,7 +47,6 @@ class MaintenanceRecordFieldValue(DefaultBase):
         ),
     )
 
-    tenant_id: Mapped[str] = mapped_column(primary_key=True)
     maintenance_record_id: Mapped[UUID] = mapped_column(GUID, primary_key=True)
     field_id: Mapped[str] = mapped_column(primary_key=True)
     value_json: Mapped[Any | None] = mapped_column(JsonB)

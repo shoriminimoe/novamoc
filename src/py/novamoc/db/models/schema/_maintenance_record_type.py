@@ -3,15 +3,16 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from advanced_alchemy.base import UUIDAuditBase
 from advanced_alchemy.types import GUID, JsonB
 from sqlalchemy import Enum, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .._base import TenantScopedAuditBase
+from .._mixins import TenantScopedMixin
 from ._types import FieldDataType
 
 
-class MaintenanceRecordType(TenantScopedAuditBase):
+class MaintenanceRecordType(TenantScopedMixin, UUIDAuditBase):
     """User-defined maintenance record type. Server-authoritative current state."""
 
     __tablename__ = "maintenance_record_types"
@@ -25,7 +26,7 @@ class MaintenanceRecordType(TenantScopedAuditBase):
     active: Mapped[bool] = mapped_column(default=True, server_default="1")
 
 
-class MaintenanceRecordTypeField(TenantScopedAuditBase):
+class MaintenanceRecordTypeField(TenantScopedMixin, UUIDAuditBase):
     """User-defined field on a maintenance record type. Server-authoritative current state."""
 
     __tablename__ = "maintenance_record_type_fields"

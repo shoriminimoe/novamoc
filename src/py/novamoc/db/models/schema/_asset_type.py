@@ -3,15 +3,16 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from advanced_alchemy.base import UUIDAuditBase
 from advanced_alchemy.types import GUID, JsonB
 from sqlalchemy import Enum, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .._base import TenantScopedAuditBase
+from .._mixins import TenantScopedMixin
 from ._types import FieldDataType
 
 
-class AssetType(TenantScopedAuditBase):
+class AssetType(TenantScopedMixin, UUIDAuditBase):
     """User-defined asset type. Server-authoritative current state (ADR-008).
 
     ``active`` carries the lifecycle flag: a tombstoned row (``active = false``)
@@ -28,7 +29,7 @@ class AssetType(TenantScopedAuditBase):
     active: Mapped[bool] = mapped_column(default=True, server_default="1")
 
 
-class AssetTypeField(TenantScopedAuditBase):
+class AssetTypeField(TenantScopedMixin, UUIDAuditBase):
     """User-defined field on an asset type. Server-authoritative current state."""
 
     __tablename__ = "asset_type_fields"
