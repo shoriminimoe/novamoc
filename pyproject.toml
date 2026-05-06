@@ -98,14 +98,17 @@ ignore = [
     # every test is pure noise.
     "S101",
 ]
+# Enable `from __future__ import annotations` imports
+future-annotations = true
 
 [tool.ruff.lint.per-file-ignores]
 # Reserved for glob patterns matching multiple files. Specific-file ignores
 # belong in a module-level `# ruff: noqa: <CODE>` comment near the top of
 # the file with rationale alongside.
 #
-# Magic numbers in test bodies are how tests are written.
-"tests/**/*.py" = ["PLR2004"]
+# Magic numbers in test bodies are how tests are written. Tests are allowed to
+# reference private members.
+"tests/**/*.py" = ["PLR2004", "SLF001"]
 # `id` column legitimately shadows the builtin (advanced-alchemy
 # UUIDPrimaryKey mixin). Runtime resolution of `Mapped[T]` is handled
 # by `[tool.ruff.lint.flake8-type-checking].runtime-evaluated-base-classes`.
@@ -130,6 +133,9 @@ runtime-evaluated-base-classes = [
     "advanced_alchemy.base.DefaultBase",
     # msgspec serialization / decoding introspects struct fields.
     "msgspec.Struct",
+]
+runtime-evaluated-decorators = [
+    "sqlalchemy.orm.declarative_mixin",
 ]
 
 [tool.ruff.lint.isort]
