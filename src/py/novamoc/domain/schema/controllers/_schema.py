@@ -7,10 +7,19 @@ schema); dispatch is by the runtime variant class via :func:`dispatch`.
 ``GET /schema`` returns a ``SchemaSnapshotResponse`` — the full
 per-tenant schema projection (all asset types and maintenance record
 types with their nested fields, including tombstones) plus the current
-``schema_version``. The tenant id comes from the DI-injected
-``RequestAuth`` (ADR-017); a missing or invalid bearer token is
-rejected upstream by ``AuthenticationMiddleware`` before the
-handler runs.
+``schema_version``. The handler does not read the tenant id directly:
+``TenantContextMiddleware`` (mounted upstream in ``asgi.create_app``)
+sets ``current_tenant_id`` from ``request.auth.tenant_id`` before the
+handler runs, and Layer 1 of the tenant-scoping listeners
+(``db._listeners``) supplies the ``WHERE tenant_id = ...`` predicate
+on every read. A missing or invalid bearer token is rejected upstream
+by ``AuthenticationMiddleware`` before either middleware runs.
+
+``POST /schema``'s ``apply_command`` reads ``request.auth`` directly
+because the dispatch table passes ``RequestAuth`` through to handlers
+that need it for ``update``/``delete`` ``item_id`` tuples. ``request.auth``
+is populated by ``AuthenticationMiddleware`` — Litestar's standard
+attribute access, not a DI provider.
 
 Error rendering is the app-level ``ProblemDetailsPlugin`` registered in
 ``novamoc.asgi.create_app``: ``SchemaError``,
@@ -21,9 +30,10 @@ not register exception handlers itself.
 
 from __future__ import annotations
 
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from advanced_alchemy.extensions.litestar import providers
+from advanced_alchemy.filters import OrderBy
 from litestar import Controller, Request, Response, get, post
 from litestar.datastructures import ETag
 from litestar.openapi.datastructures import ResponseSpec
@@ -40,6 +50,9 @@ from novamoc.domain.schema._read_payloads import (
     MaintenanceRecordTypeView,
     SchemaSnapshotResponse,
 )
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 def _matches_current_etag(if_none_match: str | None, current: ETag) -> bool:
@@ -161,20 +174,16 @@ class SchemaController(Controller):
         # Snapshot consistency: every read in this handler runs on the same
         # request-scoped db_session injected by Litestar — one transaction,
         # one SQLite WAL snapshot. So `current_version` and the four
-        # `list_for_tenant` reads see the same point-in-time, and the body
-        # we return is internally consistent with the ETag we stamp on it.
-        # If a concurrent POST commits during our request, we may be one
-        # version behind by the time the response sends, but the next
-        # request will see the new version (schema_version is monotonic) and
-        # the If-None-Match comparison will correctly miss. Don't reorder
-        # version vs projection reads expecting it to matter — under the
-        # snapshot it doesn't, and `current_version` must run *before* the
-        # If-None-Match check to enable the 304 short-circuit.
-        tenant_id = request.auth.tenant_id
-
-        schema_version = await schema_change_log_service.current_version(
-            tenant_id=tenant_id
-        )
+        # `list` reads see the same point-in-time, and the body we return is
+        # internally consistent with the ETag we stamp on it. If a concurrent
+        # POST commits during our request, we may be one version behind by the
+        # time the response sends, but the next request will see the new
+        # version (schema_version is monotonic) and the If-None-Match
+        # comparison will correctly miss. Don't reorder version vs projection
+        # reads expecting it to matter — under the snapshot it doesn't, and
+        # `current_version` must run *before* the If-None-Match check to
+        # enable the 304 short-circuit.
+        schema_version = await schema_change_log_service.current_version()
         current_etag = ETag(value=str(schema_version))
 
         if _matches_current_etag(request.headers.get("if-none-match"), current_etag):
@@ -184,17 +193,18 @@ class SchemaController(Controller):
             not_modified.set_etag(current_etag)
             return not_modified
 
-        asset_types = await asset_type_service.list_for_tenant(tenant_id=tenant_id)
-        asset_type_fields = await asset_type_field_service.list_for_tenant(
-            tenant_id=tenant_id
+        # ORDER BY clauses are load-bearing: the strong ETag (RFC 7232 §2.3
+        # byte-equality) requires that two responses for the same
+        # schema_version produce byte-identical bodies.
+        asset_types = await asset_type_service.list(OrderBy(field_name="id"))
+        asset_type_fields = await asset_type_field_service.list(
+            OrderBy(field_name="parent_id"), OrderBy(field_name="id")
         )
-        record_types = await maintenance_record_type_service.list_for_tenant(
-            tenant_id=tenant_id
+        record_types = await maintenance_record_type_service.list(
+            OrderBy(field_name="id")
         )
-        record_type_fields = (
-            await maintenance_record_type_field_service.list_for_tenant(
-                tenant_id=tenant_id
-            )
+        record_type_fields = await maintenance_record_type_field_service.list(
+            OrderBy(field_name="parent_id"), OrderBy(field_name="id")
         )
 
         fields_by_asset_type: dict[UUID, list[AssetTypeFieldView]] = {}

@@ -14,12 +14,11 @@ projection tables land.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import msgspec
 from advanced_alchemy.exceptions import IntegrityError
 
-from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._errors import (
     ConflictError,
@@ -29,12 +28,16 @@ from novamoc.domain.schema._errors import (
 )
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 
+if TYPE_CHECKING:
+    from novamoc.domain.accounts import RequestAuth
+    from novamoc.domain.schema import _payloads
+    from novamoc.domain.schema._bundle import ServiceBundle
+
 
 async def create(
     services: ServiceBundle, auth: RequestAuth, req: _payloads.CreateAssetTypeField
 ) -> SchemaCommitOutcome:
     parent = await services.asset_type.get_one_or_none(
-        tenant_id=auth.tenant_id,
         id=req.payload.parent_id,
     )
     if parent is None:
@@ -42,7 +45,6 @@ async def create(
     try:
         await services.asset_type_field.create(
             data={
-                "tenant_id": auth.tenant_id,
                 "id": req.entity_id,
                 "parent_id": req.payload.parent_id,
                 "name": req.payload.name,
@@ -57,7 +59,6 @@ async def create(
             code=ErrorCode.NAME_RESERVED, name=req.payload.name
         ) from exc
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.CREATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
@@ -72,10 +73,7 @@ async def activate(
     auth: RequestAuth,
     req: _payloads.ActivateAssetTypeField,
 ) -> SchemaCommitOutcome:
-    obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -88,7 +86,6 @@ async def activate(
         )
         outcome = Outcome.ACTIVATED
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.ACTIVATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -99,10 +96,7 @@ async def activate(
 async def update(
     services: ServiceBundle, auth: RequestAuth, req: _payloads.UpdateAssetTypeField
 ) -> SchemaCommitOutcome:
-    obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     # ``omit_defaults=True`` on the payload struct drops UNSET fields here;
@@ -121,7 +115,6 @@ async def update(
         # See note in update_asset_type — IntegrityError → NAME_RESERVED.
         raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.UPDATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload=payload,
@@ -136,10 +129,7 @@ async def deactivate(
     auth: RequestAuth,
     req: _payloads.DeactivateAssetTypeField,
 ) -> SchemaCommitOutcome:
-    obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -152,7 +142,6 @@ async def deactivate(
     else:
         outcome = Outcome.NOOP
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.DEACTIVATE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -165,14 +154,10 @@ async def clear(
 ) -> SchemaCommitOutcome:
     # TODO(#7): Wipe field values from the data-projection store once EAV projection
     # tables land. For now only append the change-log row.
-    obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.CLEAR_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
@@ -185,10 +170,7 @@ async def clear(
 async def delete(
     services: ServiceBundle, auth: RequestAuth, req: _payloads.DeleteAssetTypeField
 ) -> SchemaCommitOutcome:
-    obj = await services.asset_type_field.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.asset_type_field.delete(
@@ -196,7 +178,6 @@ async def delete(
         auto_commit=False,
     )
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.DELETE_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
         payload={},
