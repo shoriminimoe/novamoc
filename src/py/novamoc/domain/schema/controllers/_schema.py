@@ -54,6 +54,8 @@ from novamoc.domain.schema._read_payloads import (
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from litestar import Request
+
 
 def _matches_current_etag(if_none_match: str | None, current: ETag) -> bool:
     """Return True if the request's ``If-None-Match`` matches ``current``.

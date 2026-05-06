@@ -7,9 +7,10 @@ alongside ``TenantScopedMixin``.
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
 
 
+@declarative_mixin
 class TenantScopedMixin:
     """Mark a mapped class as tenant-scoped.
 
