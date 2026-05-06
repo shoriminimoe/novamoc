@@ -9,9 +9,7 @@ them to ``seed(...)`` or ``load_scenario(...)``.
 
 from __future__ import annotations
 
-from typing import TypeAlias
-
-Scenario: TypeAlias = tuple[str, ...]
+type Scenario = tuple[str, ...]
 
 ACTIVE_TRUCK: Scenario = ("truck/asset_type",)
 DEACTIVATED_TRUCK: Scenario = ("truck/asset_type__deactivated",)

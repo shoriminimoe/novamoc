@@ -6,16 +6,10 @@ a real engine to catch migration-style drift early.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 import msgspec
 import pytest
-from render_problem_docs import _default_src_dir, _default_titles, render_all
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
     AsyncSessionConfig,
@@ -33,6 +27,7 @@ from litestar.plugins.problem_details import (
 )
 from litestar.static_files import create_static_files_router
 from litestar.testing import AsyncTestClient
+from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -40,6 +35,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import StaticPool
+
+# Importing the listeners registers tenant-scoping event handlers on SQLAlchemy.
+import novamoc.db._listeners
 
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
@@ -51,8 +49,10 @@ from novamoc.api._problem_details import (
     tenant_resolution_error_to_problem_details,
 )
 from novamoc.config import problem_html_dir
+from novamoc.db._tenant_context import use_tenant
 from novamoc.domain.accounts import (
     AuthenticationMiddleware,
+    TenantContextMiddleware,
     TenantResolutionError,
 )
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
@@ -67,7 +67,40 @@ from novamoc.domain.schema.services import (
     SchemaChangeLogService,
 )
 from tests.data.loader import load_scenario
-from tests.data.scenarios import Scenario
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+    from uuid import UUID
+
+    from tests.data.scenarios import Scenario
+
+
+@pytest.fixture(autouse=True)
+def tenant(request: pytest.FixtureRequest) -> Iterator[str | None]:
+    """Set the storage-layer tenant contextvar for every test's duration.
+
+    Autouse so tests don't need to declare ``tenant`` purely to get a
+    contextvar; defaults to "t1". Tests that need a specific tenant
+    value (or want to flip across tenants) override via indirect
+    parametrization, declaring ``tenant: str`` only when they actually
+    read the value:
+
+        @pytest.mark.parametrize("tenant", ["t-a", "t-b"], indirect=True)
+        async def test_cross_tenant(tenant: str): ...
+
+    Tests that must run with no tenant context (to assert the fail-closed
+    paths in the listeners or to verify the contextvar primitive itself)
+    opt out with the ``no_tenant`` marker:
+
+        @pytest.mark.no_tenant
+        async def test_unscoped_select_raises(): ...
+    """
+    if request.node.get_closest_marker("no_tenant"):
+        yield None
+        return
+    tenant_id = getattr(request, "param", "t1")
+    with use_tenant(tenant_id):
+        yield tenant_id
 
 
 @pytest.fixture
@@ -109,8 +142,8 @@ def services(session) -> ServiceBundle:
 def seed(
     session: AsyncSession,
     services: ServiceBundle,
-) -> Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]]:
-    """Return an async ``seed(scenario)`` callable that loads a scenario.
+) -> Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]]:
+    """Return an async ``seed(scenario[, tenant_id=...])`` callable.
 
     Wraps ``tests.data.loader.load_scenario`` with the per-test ``session``
     and ``services`` fixtures so test bodies stay focused on assertions:
@@ -120,9 +153,22 @@ def seed(
         async def test_x(seed, services):
             ids = await seed(ACTIVE_TRUCK)
             truck_id = ids["asset_type"]["Truck"]
+
+    When ``tenant_id`` is supplied the scenario is loaded under that tenant
+    regardless of the ambient ``tenant`` fixture, which is useful for
+    cross-tenant isolation tests that seed the same scenario twice:
+
+        a_ids = await seed(ACTIVE_TRUCK, tenant_id="t-a")
+        b_ids = await seed(ACTIVE_TRUCK, tenant_id="t-b")
     """
 
-    async def _seed(scenario: Scenario) -> Mapping[str, Mapping[str, UUID]]:
+    async def _seed(
+        scenario: Scenario,
+        tenant_id: str | None = None,
+    ) -> Mapping[str, Mapping[str, UUID]]:
+        if tenant_id is not None:
+            with use_tenant(tenant_id):
+                return await load_scenario(scenario, session=session, services=services)
         return await load_scenario(scenario, session=session, services=services)
 
     return _seed
@@ -167,6 +213,7 @@ async def app() -> Litestar:
                 AuthenticationMiddleware,
                 exclude=r"^/(openapi|problems)",
             ),
+            TenantContextMiddleware(),
         ],
         plugins=[
             SQLAlchemyPlugin(config=alchemy_config),

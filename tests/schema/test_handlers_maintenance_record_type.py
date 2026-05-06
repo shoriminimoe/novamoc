@@ -1,13 +1,12 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._errors import (
@@ -17,6 +16,11 @@ from novamoc.domain.schema._errors import (
     PayloadShapeError,
 )
 from novamoc.domain.schema._outcomes import Outcome
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from novamoc.domain.schema._bundle import ServiceBundle
 
 _T = "t1"
 _AUTH = RequestAuth(tenant_id=_T)
@@ -154,7 +158,9 @@ async def test_update_when_deactivated_is_allowed(
     await session.flush()
     assert out.outcome is Outcome.UPDATED
     row = await services.maintenance_record_type.get_one_or_none(tenant_id=_T, id=eid)
-    assert row is not None and row.name == "Oil Change" and row.active is False
+    assert row is not None
+    assert row.name == "Oil Change"
+    assert row.active is False
 
 
 async def test_update_missing_raises_not_found(services: ServiceBundle) -> None:

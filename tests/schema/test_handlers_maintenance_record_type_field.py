@@ -1,18 +1,22 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.db.models.schema import FieldDataType
 from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._errors import ConflictError, EntityNotFoundError, ErrorCode
 from novamoc.domain.schema._outcomes import Outcome
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from novamoc.domain.schema._bundle import ServiceBundle
 
 _T = "t1"
 _AUTH = RequestAuth(tenant_id=_T)

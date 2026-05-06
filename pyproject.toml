@@ -100,14 +100,37 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Reserved for glob patterns matching multiple files. Specific-file ignores
+# belong in a module-level `# ruff: noqa: <CODE>` comment near the top of
+# the file with rationale alongside.
+#
 # Magic numbers in test bodies are how tests are written.
 "tests/**/*.py" = ["PLR2004"]
-# `id` column on SQLAlchemy models legitimately shadows the builtin via the
-# UUIDPrimaryKey mixin in advanced-alchemy.
+# `id` column legitimately shadows the builtin (advanced-alchemy
+# UUIDPrimaryKey mixin). Runtime resolution of `Mapped[T]` is handled
+# by `[tool.ruff.lint.flake8-type-checking].runtime-evaluated-base-classes`.
 "src/py/novamoc/db/models/**/*.py" = ["A003"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"
+
+[tool.ruff.lint.flake8-type-checking]
+# Frameworks below introspect class field annotations at runtime. Their
+# subclasses keep field-type imports at runtime; TC001/2/3 must not push
+# them under `if TYPE_CHECKING:`. Listing them here teaches ruff to skip
+# those classes by inheritance rather than relying on per-file or
+# module-level noqa. Plain @dataclass does NOT need to be exempted —
+# field annotations are not runtime-resolved (ruff already handles
+# ClassVar / InitVar) — and is intentionally not listed.
+runtime-evaluated-base-classes = [
+    # advanced-alchemy declarative bases — SQLAlchemy resolves Mapped[T] at
+    # mapper-configuration time.
+    "advanced_alchemy.base.UUIDAuditBase",
+    "advanced_alchemy.base.UUIDBase",
+    "advanced_alchemy.base.DefaultBase",
+    # msgspec serialization / decoding introspects struct fields.
+    "msgspec.Struct",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["novamoc", "tests"]
@@ -130,6 +153,9 @@ testpaths = ["tests"]
 # not a package and does not ship in the wheel.
 pythonpath = ["scripts"]
 addopts = "-ra"
+markers = [
+    "no_tenant: opt out of the autouse `tenant` fixture's contextvar setup",
+]
 filterwarnings = [
     # advanced-alchemy 1.9.x calls its own deprecated `set_async_context()`
     # from the Litestar plugin's `provide_session` (and other framework

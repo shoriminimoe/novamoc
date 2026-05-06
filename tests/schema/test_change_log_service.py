@@ -1,18 +1,21 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from novamoc.db._tenant_context import use_tenant
 from novamoc.db.models import schema as schema_models
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema.services import SchemaChangeLogService
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_append_writes_a_row_and_returns_seq(session: AsyncSession) -> None:
     svc = SchemaChangeLogService(session=session)
     eid = uuid4()
     row = await svc.append(
-        tenant_id="t1",
         command=SchemaCommand.ACTIVATE_ASSET_TYPE,
         entity_id=eid,
         payload={"name": "Truck"},
@@ -29,13 +32,11 @@ async def test_append_writes_a_row_and_returns_seq(session: AsyncSession) -> Non
 async def test_append_assigns_monotonic_seq(session: AsyncSession) -> None:
     svc = SchemaChangeLogService(session=session)
     a = await svc.append(
-        tenant_id="t1",
         command=SchemaCommand.ACTIVATE_ASSET_TYPE,
         entity_id=uuid4(),
         payload={"name": "A"},
     )
     b = await svc.append(
-        tenant_id="t1",
         command=SchemaCommand.ACTIVATE_ASSET_TYPE,
         entity_id=uuid4(),
         payload={"name": "B"},
@@ -71,13 +72,13 @@ async def test_append_assigns_dense_per_tenant_seq(session: AsyncSession) -> Non
     interleaved: list[tuple[str, int]] = []
     # interleave A,B,A,B,A,B,A
     for tenant in ("tA", "tB", "tA", "tB", "tA", "tB", "tA"):
-        row = await svc.append(
-            tenant_id=tenant,
-            command=SchemaCommand.CREATE_ASSET_TYPE,
-            entity_id=uuid4(),
-            payload={},
-        )
-        interleaved.append((tenant, row.seq))
+        with use_tenant(tenant):
+            row = await svc.append(
+                command=SchemaCommand.CREATE_ASSET_TYPE,
+                entity_id=uuid4(),
+                payload={},
+            )
+            interleaved.append((tenant, row.seq))
     await session.flush()
 
     a_seqs = [seq for tenant, seq in interleaved if tenant == "tA"]
