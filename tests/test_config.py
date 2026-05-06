@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
 
 from novamoc.config import problem_docs_base_url
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_problem_docs_base_url_defaults_to_localhost(

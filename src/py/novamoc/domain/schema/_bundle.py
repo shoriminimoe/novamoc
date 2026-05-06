@@ -10,17 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
-from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.schema._outcomes import SchemaCommitOutcome
-from novamoc.domain.schema.services import (
-    AssetTypeFieldService,
-    AssetTypeService,
-    MaintenanceRecordTypeFieldService,
-    MaintenanceRecordTypeService,
-    SchemaChangeLogService,
-)
+if TYPE_CHECKING:
+    from novamoc.domain.accounts import RequestAuth
+    from novamoc.domain.schema._outcomes import SchemaCommitOutcome
+    from novamoc.domain.schema.services import (
+        AssetTypeFieldService,
+        AssetTypeService,
+        MaintenanceRecordTypeFieldService,
+        MaintenanceRecordTypeService,
+        SchemaChangeLogService,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +33,10 @@ class ServiceBundle:
     change_log: SchemaChangeLogService
 
 
-Handler: TypeAlias = Callable[
-    ["ServiceBundle", RequestAuth, Any], Awaitable[SchemaCommitOutcome]
+# PEP 695 `type` statement: the right-hand side is lazily evaluated, so the
+# names used here can stay under `if TYPE_CHECKING:`.
+type Handler = Callable[
+    [ServiceBundle, RequestAuth, Any], Awaitable[SchemaCommitOutcome]
 ]
 
 
