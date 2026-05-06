@@ -38,7 +38,7 @@ render-problem-docs:
 
 # Lint python — auto-fixes what's fixable; the ratchet gates remaining violations
 lint-py:
-	uv run ruff check --fix --exit-zero
+	uv run ruff check --fix --exit-zero --output-format grouped 
 
 # Format python
 format-py:
