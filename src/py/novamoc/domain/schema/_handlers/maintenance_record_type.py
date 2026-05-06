@@ -7,12 +7,11 @@ are separate verbs.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import msgspec
 from advanced_alchemy.exceptions import IntegrityError
 
-from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._errors import (
     ConflictError,
@@ -21,6 +20,11 @@ from novamoc.domain.schema._errors import (
     PayloadShapeError,
 )
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
+
+if TYPE_CHECKING:
+    from novamoc.domain.accounts import RequestAuth
+    from novamoc.domain.schema import _payloads
+    from novamoc.domain.schema._bundle import ServiceBundle
 
 
 async def create(
@@ -31,7 +35,6 @@ async def create(
     try:
         await services.maintenance_record_type.create(
             data={
-                "tenant_id": auth.tenant_id,
                 "id": req.entity_id,
                 "name": req.payload.name,
                 "active": True,
@@ -43,7 +46,6 @@ async def create(
             code=ErrorCode.NAME_RESERVED, name=req.payload.name
         ) from exc
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.CREATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload=msgspec.to_builtins(req.payload),
@@ -58,10 +60,7 @@ async def activate(
     auth: RequestAuth,
     req: _payloads.ActivateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
-    obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.maintenance_record_type.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -74,7 +73,6 @@ async def activate(
         )
         outcome = Outcome.ACTIVATED
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.ACTIVATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},
@@ -87,10 +85,7 @@ async def update(
     auth: RequestAuth,
     req: _payloads.UpdateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
-    obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.maintenance_record_type.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     payload = msgspec.to_builtins(req.payload)
@@ -105,7 +100,6 @@ async def update(
     except IntegrityError as exc:
         raise ConflictError(code=ErrorCode.NAME_RESERVED) from exc
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.UPDATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload=payload,
@@ -120,10 +114,7 @@ async def deactivate(
     auth: RequestAuth,
     req: _payloads.DeactivateMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
-    obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.maintenance_record_type.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     if obj.active:
@@ -136,7 +127,6 @@ async def deactivate(
     else:
         outcome = Outcome.NOOP
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.DEACTIVATE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},
@@ -149,10 +139,7 @@ async def delete(
     auth: RequestAuth,
     req: _payloads.DeleteMaintenanceRecordType,
 ) -> SchemaCommitOutcome:
-    obj = await services.maintenance_record_type.get_one_or_none(
-        tenant_id=auth.tenant_id,
-        id=req.entity_id,
-    )
+    obj = await services.maintenance_record_type.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     await services.maintenance_record_type.delete(
@@ -160,7 +147,6 @@ async def delete(
         auto_commit=False,
     )
     row = await services.change_log.append(
-        tenant_id=auth.tenant_id,
         command=SchemaCommand.DELETE_MAINTENANCE_RECORD_TYPE,
         entity_id=req.entity_id,
         payload={},

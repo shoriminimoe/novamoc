@@ -1,14 +1,13 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.db.models import schema as schema_models
 from novamoc.db.models.schema import FieldDataType
 from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._errors import (
@@ -18,6 +17,11 @@ from novamoc.domain.schema._errors import (
     PayloadShapeError,
 )
 from novamoc.domain.schema._outcomes import Outcome
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from novamoc.domain.schema._bundle import ServiceBundle
 
 _T = "t1"
 _AUTH = RequestAuth(tenant_id=_T)
@@ -80,12 +84,10 @@ async def test_create(session: AsyncSession, services: ServiceBundle) -> None:
     await session.flush()
     assert out.outcome is Outcome.CREATED
     row = await services.asset_type_field.get_one_or_none(tenant_id=_T, id=fid)
-    assert (
-        row is not None
-        and row.name == "vin"
-        and row.parent_id == parent
-        and row.active is True
-    )
+    assert row is not None
+    assert row.name == "vin"
+    assert row.parent_id == parent
+    assert row.active is True
 
     log = (await session.execute(select(schema_models.SchemaChangeLog))).scalars().all()
     assert log[-1].command == SchemaCommand.CREATE_ASSET_TYPE_FIELD
@@ -213,7 +215,8 @@ async def test_update_field_changes_data_type(
     await session.flush()
     assert out.outcome is Outcome.UPDATED
     row = await services.asset_type_field.get_one_or_none(tenant_id=_T, id=fid)
-    assert row is not None and row.data_type == "number"
+    assert row is not None
+    assert row.data_type == "number"
 
 
 async def test_update_field_no_changes_rejects(
@@ -265,7 +268,8 @@ async def test_update_field_explicit_null_clears_validation(
     )
     await session.flush()
     row = await services.asset_type_field.get_one_or_none(tenant_id=_T, id=fid)
-    assert row is not None and row.validation == {"max_length": 17}
+    assert row is not None
+    assert row.validation == {"max_length": 17}
 
     # Now explicitly clear validation via null.
     await dispatch(
@@ -278,7 +282,8 @@ async def test_update_field_explicit_null_clears_validation(
     )
     await session.flush()
     row = await services.asset_type_field.get_one_or_none(tenant_id=_T, id=fid)
-    assert row is not None and row.validation is None
+    assert row is not None
+    assert row.validation is None
 
 
 async def test_deactivate_field(session: AsyncSession, services: ServiceBundle) -> None:

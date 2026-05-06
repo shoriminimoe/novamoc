@@ -21,16 +21,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from litestar.middleware import ASGIMiddleware
 from litestar.middleware.authentication import (
     AbstractAuthenticationMiddleware,
     AuthenticationResult,
 )
 
-from novamoc.domain.accounts import RequestAuth
+from novamoc.db._tenant_context import use_tenant
+from novamoc.domain.accounts._auth import RequestAuth
 from novamoc.domain.accounts._resolver import resolve_tenant
 
 if TYPE_CHECKING:
     from litestar.connection import ASGIConnection
+    from litestar.types import ASGIApp, Receive, Scope, Send
 
 
 class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
@@ -39,3 +42,26 @@ class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
     ) -> AuthenticationResult:
         tenant_id = resolve_tenant(connection.headers)
         return AuthenticationResult(user=None, auth=RequestAuth(tenant_id=tenant_id))
+
+
+class TenantContextMiddleware(ASGIMiddleware):
+    """Bind the per-request RequestAuth.tenant_id to the storage-layer ContextVar.
+
+    Stacks after AuthenticationMiddleware so scope["auth"] is already
+    populated. Resets the contextvar on the way out, including
+    exception paths.
+    """
+
+    async def handle(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        next_app: ASGIApp,
+    ) -> None:
+        auth = scope.get("auth")
+        if auth is None:
+            await next_app(scope, receive, send)
+            return
+        with use_tenant(auth.tenant_id):
+            await next_app(scope, receive, send)

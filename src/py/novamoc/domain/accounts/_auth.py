@@ -17,6 +17,10 @@ requests and frees future "switch tenant" flows from any User-shape
 refactor.
 """
 
+# `RequestAuth` is a msgspec Struct introspected at runtime by Litestar
+# (request-scope decoding via `request.auth`); field-annotation imports
+# stay at runtime.
+
 from __future__ import annotations
 
 import msgspec

@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from advanced_alchemy.base import DefaultBase
+from advanced_alchemy.base import DefaultBase, UUIDAuditBase
 from advanced_alchemy.types import GUID, JsonB
 from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .._base import TenantScopedAuditBase
+from .._mixins import TenantScopedMixin
 
 
-class Asset(TenantScopedAuditBase):
+class Asset(TenantScopedMixin, UUIDAuditBase):
     """Asset entity projection (ADR-005, ADR-012).
 
     Materialized current-state projection of the event log. ``properties`` holds
@@ -35,7 +35,7 @@ class Asset(TenantScopedAuditBase):
     row_state_hlc: Mapped[str]
 
 
-class AssetFieldValue(DefaultBase):
+class AssetFieldValue(TenantScopedMixin, DefaultBase):
     """Per-field LWW projection for assets (ADR-007, ADR-012).
 
     The fold unit. Each row carries the winning HLC for one ``(asset, field)``.
@@ -52,7 +52,6 @@ class AssetFieldValue(DefaultBase):
         ),
     )
 
-    tenant_id: Mapped[str] = mapped_column(primary_key=True)
     asset_id: Mapped[UUID] = mapped_column(GUID, primary_key=True)
     field_id: Mapped[str] = mapped_column(primary_key=True)
     value_json: Mapped[Any | None] = mapped_column(JsonB)

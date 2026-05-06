@@ -29,6 +29,8 @@ def create_app() -> Litestar:
     from litestar.static_files import create_static_files_router
     from litestar_granian import GranianPlugin
 
+    # Register tenant-scoping event handlers on SQLAlchemy.
+    import novamoc.db._listeners  # noqa: F401
     from novamoc.api._problem_details import (
         litestar_validation_error_to_problem_details,
         msgspec_validation_error_to_problem_details,
@@ -38,6 +40,7 @@ def create_app() -> Litestar:
     from novamoc.config import problem_html_dir
     from novamoc.domain.accounts import (
         AuthenticationMiddleware,
+        TenantContextMiddleware,
         TenantResolutionError,
     )
     from novamoc.domain.schema._errors import SchemaError
@@ -74,6 +77,7 @@ def create_app() -> Litestar:
                 AuthenticationMiddleware,
                 exclude=r"^/(openapi|problems)",
             ),
+            TenantContextMiddleware(),
         ],
         plugins=[
             GranianPlugin(),

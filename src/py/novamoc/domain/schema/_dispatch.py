@@ -9,18 +9,20 @@ universe of accepted commands is one ``rg``-able place.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from novamoc.domain.accounts import RequestAuth
 from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._bundle import Handler, ServiceBundle
 from novamoc.domain.schema._handlers import (
     asset_type,
     asset_type_field,
     maintenance_record_type,
     maintenance_record_type_field,
 )
-from novamoc.domain.schema._outcomes import SchemaCommitOutcome
+
+if TYPE_CHECKING:
+    from novamoc.domain.accounts import RequestAuth
+    from novamoc.domain.schema._bundle import Handler, ServiceBundle
+    from novamoc.domain.schema._outcomes import SchemaCommitOutcome
 
 __all__ = ("dispatch",)
 

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 from advanced_alchemy.extensions.litestar import repository, service
 from sqlalchemy import func, select
 
 import novamoc.db.models as m
-from novamoc.domain.schema._commands import SchemaCommand
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from novamoc.domain.schema._commands import SchemaCommand
 
 
 class SchemaChangeLogService(
@@ -28,7 +31,6 @@ class SchemaChangeLogService(
     async def append(
         self,
         *,
-        tenant_id: str,
         command: SchemaCommand,
         entity_id: UUID,
         payload: dict[str, Any],
@@ -44,10 +46,9 @@ class SchemaChangeLogService(
         # so there is no data corruption — only a request that the
         # client may retry. Tighten when the writer-serialisation pass
         # for ADR-004 lands.
-        next_seq = await self.current_version(tenant_id=tenant_id) + 1
+        next_seq = await self.current_version() + 1
         return await self.create(
             data={
-                "tenant_id": tenant_id,
                 "seq": next_seq,
                 "command": str(command.value),
                 "entity_id": entity_id,
@@ -56,10 +57,20 @@ class SchemaChangeLogService(
             auto_commit=False,
         )
 
-    async def current_version(self, *, tenant_id: str) -> int:
-        """Return ``MAX(seq)`` for the tenant, or ``0`` if none."""
-        stmt = select(func.coalesce(func.max(m.schema.SchemaChangeLog.seq), 0)).where(
-            m.schema.SchemaChangeLog.tenant_id == tenant_id
-        )
+    async def current_version(self) -> int:
+        """Return the tenant's current schema_version (MAX(seq) or 0).
+
+        The tenant scope comes from Layer 1's *aggregate-fallback* path
+        (``db._listeners._inject_tenant_filter``), not from
+        ``with_loader_criteria``: this statement is a scalar aggregate
+        with an empty ``state.all_mappers``, so loader-criteria has
+        nothing to attach to. The fallback walks the FROM clause,
+        finds ``schema_change_log``, and adds
+        ``WHERE tenant_id = current_tenant_id.get()`` directly on the
+        Core ``Select``. If you change this query, double-check that it
+        still routes through the fallback (or rewrite as an ORM-entity
+        load and verify ``state.all_mappers`` is non-empty).
+        """
+        stmt = select(func.coalesce(func.max(m.schema.SchemaChangeLog.seq), 0))
         result = await self.repository.session.execute(stmt)
         return int(result.scalar_one())

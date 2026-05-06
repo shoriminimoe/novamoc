@@ -1,7 +1,7 @@
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
@@ -9,6 +9,9 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
     MaintenanceRecordTypeService,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.parametrize(

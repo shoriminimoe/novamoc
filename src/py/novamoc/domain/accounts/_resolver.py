@@ -37,8 +37,8 @@ def resolve_tenant(headers: Headers) -> str:
     """
     value = headers.get("authorization")
     if value is None or not value.startswith(_BEARER_PREFIX):
-        raise TenantResolutionError()
+        raise TenantResolutionError
     token = value[len(_BEARER_PREFIX) :]
     if token != _TENANT_T1_DEV_TOKEN:
-        raise TenantResolutionError()
+        raise TenantResolutionError
     return _TENANT_T1

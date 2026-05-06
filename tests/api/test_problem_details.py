@@ -74,7 +74,8 @@ def test_msgspec_validation_error_renders_400_invalid_payload_shape() -> None:
     assert pd_exc.type_ == "http://test/problems/invalid_payload_shape.html"
     assert pd_exc.title == "Invalid payload shape"
     assert "expected str, got int" in pd_exc.detail
-    assert pd_exc.instance is not None and pd_exc.instance.startswith("urn:uuid:")
+    assert pd_exc.instance is not None
+    assert pd_exc.instance.startswith("urn:uuid:")
 
 
 def test_litestar_validation_exception_renders_400_invalid_payload_shape() -> None:

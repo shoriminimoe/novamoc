@@ -23,15 +23,19 @@ when the first such scenario is written.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from advanced_alchemy.utils.fixtures import open_fixture_async
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from novamoc.domain.schema._bundle import ServiceBundle
-from tests.data.scenarios import Scenario
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from novamoc.domain.schema._bundle import ServiceBundle
+    from tests.data.scenarios import Scenario
 
 FIXTURES_PATH: Path = Path(__file__).parent / "fixtures"
 

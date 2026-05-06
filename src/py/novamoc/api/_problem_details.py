@@ -30,7 +30,6 @@ import msgspec
 from litestar.plugins.problem_details import ProblemDetailsException
 
 from novamoc.config import problem_docs_base_url
-from novamoc.domain.accounts import TenantResolutionError
 from novamoc.domain.schema._errors import (
     ErrorCode,
     SchemaError,
@@ -38,6 +37,8 @@ from novamoc.domain.schema._errors import (
 
 if TYPE_CHECKING:
     from litestar.exceptions import ValidationException
+
+    from novamoc.domain.accounts import TenantResolutionError
 
 _TITLES: dict[ErrorCode, str] = {
     ErrorCode.PAYLOAD_NO_CHANGES: "Payload contained no changes",

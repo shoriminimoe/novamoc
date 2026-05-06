@@ -8,18 +8,22 @@ mock.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from novamoc.domain.schema._bundle import ServiceBundle
 from tests.data.loader import load_scenario
 from tests.data.scenarios import (
     ACTIVE_TRUCK,
     ACTIVE_TRUCK_WITH_VIN_FIELD,
     DEACTIVATED_TRUCK,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from novamoc.domain.schema._bundle import ServiceBundle
 
 _TENANT = "t1"
 
@@ -54,7 +58,8 @@ async def test_seed_fixture_loads_scenario(seed, services: ServiceBundle) -> Non
     ids = await seed(ACTIVE_TRUCK)
     truck_id = ids["asset_type"]["Truck"]
     row = await services.asset_type.get_one_or_none(tenant_id=_TENANT, id=truck_id)
-    assert row is not None and row.name == "Truck"
+    assert row is not None
+    assert row.name == "Truck"
 
 
 async def test_load_multi_atom_scenario_respects_parent_child_order(
