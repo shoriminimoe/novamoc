@@ -22,12 +22,19 @@ typecheck: typecheck-py
 test: test-py
 
 # Run the backend server
-serve:
+serve: render-problem-docs
 	uv run litestar --app novamoc.asgi:create_app run
 
 # Build python packages
-build-py:
+build-py: render-problem-docs
 	uv build
+
+# Render per-code problem-details docs (markdown → HTML, build-time).
+# Output lands under docs/problems_html/ with an inner layout that
+# mirrors the install path; uv_build's [tool.uv.build-backend.data]
+# `purelib` scheme ships it into the wheel as package data.
+render-problem-docs:
+	uv run python scripts/render_problem_docs.py
 
 # Lint python — auto-fixes what's fixable; the ratchet gates remaining violations
 lint-py:
@@ -55,4 +62,4 @@ ratchet-update:
 
 # Clean artifacts
 clean:
-	rm -r dist
+	rm -rf dist build

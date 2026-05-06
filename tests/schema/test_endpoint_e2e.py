@@ -39,7 +39,7 @@ async def test_post_schema_returns_409_on_duplicate_name(client) -> None:
     assert second.headers["content-type"].startswith("application/problem+json")
     err = second.json()
     assert err["status"] == 409
-    assert err["type"] == "urn:novamoc:problems:name_reserved"
+    assert err["type"] == "http://test/problems/name_reserved.html"
     assert err["title"] == "Name reserved"
 
 
@@ -56,7 +56,7 @@ async def test_post_schema_returns_404_for_update_missing(client) -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
     assert body["status"] == 404
-    assert body["type"] == "urn:novamoc:problems:entity_not_found"
+    assert body["type"] == "http://test/problems/entity_not_found.html"
 
 
 async def test_post_schema_returns_400_on_unknown_command(client) -> None:
@@ -70,7 +70,7 @@ async def test_post_schema_returns_400_on_unknown_command(client) -> None:
     )
     assert resp.status_code == 400
     assert resp.headers["content-type"].startswith("application/problem+json")
-    assert resp.json()["type"] == "urn:novamoc:problems:invalid_payload_shape"
+    assert resp.json()["type"] == "http://test/problems/invalid_payload_shape.html"
 
 
 async def test_post_schema_returns_400_on_payload_with_unknown_field(client) -> None:
@@ -86,7 +86,7 @@ async def test_post_schema_returns_400_on_payload_with_unknown_field(client) -> 
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
     assert body["status"] == 400
-    assert body["type"] == "urn:novamoc:problems:invalid_payload_shape"
+    assert body["type"] == "http://test/problems/invalid_payload_shape.html"
 
 
 async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
@@ -144,7 +144,7 @@ async def test_post_schema_without_authorization_returns_401(client) -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
     assert body["status"] == 401
-    assert body["type"] == "urn:novamoc:problems:tenant_not_resolved"
+    assert body["type"] == "http://test/problems/tenant_not_resolved.html"
     assert body["title"] == "Tenant not resolved"
 
 

@@ -23,9 +23,18 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-root = "src/py"
+# Ship per-code problem-details HTML as wheel data alongside the package.
+# ``just render-problem-docs`` writes flat ``<code>.html`` files into
+# ``build/wheel_data/novamoc/html/``; uv_build's purelib data scheme
+# preserves that subtree, landing them at
+# ``<site-packages>/novamoc/html/<code>.html`` in a wheel install.
+# Editable installs do not materialize wheel data, so the runtime falls
+# back to the build-artifact tree (see ``novamoc.config``).
+data = { "purelib" = "build/wheel_data" }
 
 [dependency-groups]
 dev = [
+    "markdown-it-py>=3.0.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.12",
@@ -106,14 +115,20 @@ known-first-party = ["novamoc", "tests"]
 [tool.ty.environment]
 root = ["./src/py"]
 # Project root added so ty can resolve cross-file imports inside tests/
-# (e.g. ``from tests.data.loader import load_scenario``). extra-paths only
-# affects module resolution, not which files ty type-checks.
-extra-paths = ["./"]
+# (e.g. ``from tests.data.loader import load_scenario``). ``./scripts``
+# lets ty resolve the build-time renderer module that the test fixture
+# imports without it shipping in the wheel. extra-paths only affects
+# module resolution, not which files ty type-checks.
+extra-paths = ["./", "./scripts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# ``scripts`` carries the build-time problem-docs renderer, which the test
+# fixture imports to render HTML before the app boots. The directory is
+# not a package and does not ship in the wheel.
+pythonpath = ["scripts"]
 addopts = "-ra"
 filterwarnings = [
     # advanced-alchemy 1.9.x calls its own deprecated `set_async_context()`

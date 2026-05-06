@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (updated by ADR-018)
 date: 2026-05-03
 category: transport
 decision-makers: [Sam Caldwell]

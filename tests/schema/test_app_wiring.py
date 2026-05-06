@@ -23,5 +23,5 @@ async def test_app_starts_and_post_schema_route_exists() -> None:
         assert resp.status_code == 400, resp.text
         assert resp.headers["content-type"].startswith("application/problem+json")
         body = resp.json()
-        assert body["type"] == "urn:novamoc:problems:invalid_payload_shape"
+        assert body["type"] == "http://test/problems/invalid_payload_shape.html"
         assert body["status"] == 400
