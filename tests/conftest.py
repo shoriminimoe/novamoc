@@ -7,10 +7,14 @@ a real engine to catch migration-style drift early.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import msgspec
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
     AsyncSessionConfig,
@@ -169,3 +173,26 @@ async def client(app: Litestar):
         # the header per-request.
         c.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
         yield c
+
+
+@pytest.fixture(scope="session")
+def monkeypatch_session() -> Iterator[pytest.MonkeyPatch]:
+    """Session-scoped sibling of pytest's built-in ``monkeypatch`` (which
+    is function-scoped). Used by other session-scoped fixtures that need
+    to set env vars for the entire test run."""
+    mp = pytest.MonkeyPatch()
+    yield mp
+    mp.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _problem_docs_base_url(
+    monkeypatch_session: pytest.MonkeyPatch,
+) -> None:
+    """Pin NOVAMOC_PROBLEM_DOCS_BASE_URL for every test in the session.
+
+    Tests assert against type URIs of the form ``http://test/problems/<code>.html``
+    rather than whatever the developer's shell happens to export.
+    """
+
+    monkeypatch_session.setenv("NOVAMOC_PROBLEM_DOCS_BASE_URL", "http://test")

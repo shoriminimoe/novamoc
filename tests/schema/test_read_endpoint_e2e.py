@@ -129,7 +129,7 @@ async def test_get_schema_without_authorization_returns_401(client) -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
     assert body["status"] == 401
-    assert body["type"] == "urn:novamoc:problems:tenant_not_resolved"
+    assert body["type"] == "http://test/problems/tenant_not_resolved.html"
 
 
 async def test_get_schema_emits_etag_zero_for_empty_tenant(client) -> None:

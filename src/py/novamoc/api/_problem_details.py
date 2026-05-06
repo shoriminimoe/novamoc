@@ -15,26 +15,29 @@ Wire shape:
 
 Per-error-code extras (e.g., the conflicting `name`) are RFC 9457 §3.2
 extension members — top-level keys alongside the standard slots.
+
+The type-URI base (``problem_docs_base_url()``) is env-configurable so
+the eventual standalone docs site can take over without code changes;
+the leaf segment is the stable contract.
 """
 
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 import msgspec
-from litestar.exceptions import ValidationException
 from litestar.plugins.problem_details import ProblemDetailsException
 
+from novamoc.config import problem_docs_base_url
 from novamoc.domain.accounts import TenantResolutionError
 from novamoc.domain.schema._errors import (
     ErrorCode,
     SchemaError,
 )
 
-# TODO(#13): replace with the published docs URL once it exists. The
-# leaf segment is the stable contract; the base is opaque per RFC 9457 §3.1.
-_PROBLEM_TYPE_BASE = "urn:novamoc:problems"
-
+if TYPE_CHECKING:
+    from litestar.exceptions import ValidationException
 
 _TITLES: dict[ErrorCode, str] = {
     ErrorCode.PAYLOAD_NO_CHANGES: "Payload contained no changes",
@@ -54,8 +57,12 @@ _STATUS_CODES: dict[ErrorCode, int] = {
 }
 
 
-def _type_uri(code: ErrorCode) -> str:
-    return f"{_PROBLEM_TYPE_BASE}:{code.value}"
+def _type_uri(code: ErrorCode | str) -> str:
+    # The ``.html`` suffix is part of the URL path, not the code; clients
+    # that branch on the leaf segment strip the extension to recover the
+    # code. See ADR-018.
+    code_str = code.value if isinstance(code, ErrorCode) else code
+    return f"{problem_docs_base_url()}/problems/{code_str}.html"
 
 
 class ProblemDetails(msgspec.Struct, omit_defaults=True):
@@ -115,7 +122,7 @@ def tenant_resolution_error_to_problem_details(
     """
 
     return ProblemDetailsException(
-        type_=f"{_PROBLEM_TYPE_BASE}:tenant_not_resolved",
+        type_=_type_uri("tenant_not_resolved"),
         title="Tenant not resolved",
         status_code=401,
         detail=exc.detail,
