@@ -12,6 +12,7 @@ from uuid import UUID
 
 import msgspec
 import pytest
+from render_problem_docs import _default_src_dir, _default_titles, render_all
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +31,7 @@ from litestar.plugins.problem_details import (
     ProblemDetailsConfig,
     ProblemDetailsPlugin,
 )
+from litestar.static_files import create_static_files_router
 from litestar.testing import AsyncTestClient
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -41,12 +43,14 @@ from sqlalchemy.pool import StaticPool
 
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
+from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.api._problem_details import (
     litestar_validation_error_to_problem_details,
     msgspec_validation_error_to_problem_details,
     schema_error_to_problem_details,
     tenant_resolution_error_to_problem_details,
 )
+from novamoc.config import problem_html_dir
 from novamoc.domain.accounts import (
     AuthenticationMiddleware,
     TenantResolutionError,
@@ -151,10 +155,18 @@ async def app() -> Litestar:
             ValidationException: litestar_validation_error_to_problem_details,
         },
     )
+    problem_docs_router = create_static_files_router(
+        path="/problems",
+        directories=[str(problem_html_dir())],
+        name="problems",
+    )
     return Litestar(
-        route_handlers=[SchemaController],
+        route_handlers=[SchemaController, problem_docs_router],
         middleware=[
-            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
+            DefineMiddleware(
+                AuthenticationMiddleware,
+                exclude=r"^/(openapi|problems)",
+            ),
         ],
         plugins=[
             SQLAlchemyPlugin(config=alchemy_config),
@@ -196,3 +208,21 @@ def _problem_docs_base_url(
     """
 
     monkeypatch_session.setenv("NOVAMOC_PROBLEM_DOCS_BASE_URL", "http://test")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _render_problem_html() -> None:
+    """Render per-code HTML before any test boots the app.
+
+    Tests run in editable-install mode where uv_build's wheel data is
+    not materialized, so ``problem_html_dir()`` resolves to the
+    build-artifact fallback at ``build/wheel_data/novamoc/html/``.
+    Rendering there keeps the test path identical to the dev workflow
+    driven by ``just render-problem-docs``.
+    """
+    render_all(
+        src_dir=_default_src_dir(),
+        out_dir=problem_html_dir(),
+        expected_codes=PROBLEM_CODES,
+        titles=_default_titles(),
+    )

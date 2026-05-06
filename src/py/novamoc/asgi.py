@@ -26,6 +26,7 @@ def create_app() -> Litestar:
         ProblemDetailsConfig,
         ProblemDetailsPlugin,
     )
+    from litestar.static_files import create_static_files_router
     from litestar_granian import GranianPlugin
 
     from novamoc.api._problem_details import (
@@ -34,6 +35,7 @@ def create_app() -> Litestar:
         schema_error_to_problem_details,
         tenant_resolution_error_to_problem_details,
     )
+    from novamoc.config import problem_html_dir
     from novamoc.domain.accounts import (
         AuthenticationMiddleware,
         TenantResolutionError,
@@ -59,10 +61,19 @@ def create_app() -> Litestar:
         },
     )
 
+    problem_docs_router = create_static_files_router(
+        path="/problems",
+        directories=[str(problem_html_dir())],
+        name="problems",
+    )
+
     return Litestar(
-        route_handlers=[SchemaController],
+        route_handlers=[SchemaController, problem_docs_router],
         middleware=[
-            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
+            DefineMiddleware(
+                AuthenticationMiddleware,
+                exclude=r"^/(openapi|problems)",
+            ),
         ],
         plugins=[
             GranianPlugin(),
