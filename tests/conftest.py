@@ -29,8 +29,6 @@ from litestar.static_files import create_static_files_router
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
@@ -71,6 +69,11 @@ from tests.data.loader import load_scenario
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
     from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import (
+        AsyncEngine,
+        AsyncSession,
+    )
 
     from tests.data.scenarios import Scenario
 
