@@ -16,9 +16,10 @@ Wire shape:
 Per-error-code extras (e.g., the conflicting `name`) are RFC 9457 §3.2
 extension members — top-level keys alongside the standard slots.
 
-The type-URI base (``problem_docs_base_url()``) is env-configurable so
-the eventual standalone docs site can take over without code changes;
-the leaf segment is the stable contract.
+Each converter is built by a `make_*_converter(base_url)` factory that
+closes over the configured docs base URL. ``create_app`` constructs
+them once at startup with ``Settings.problem.docs_base_url`` and
+registers them on the `ProblemDetailsPlugin`.
 """
 
 from __future__ import annotations
@@ -29,12 +30,13 @@ from typing import TYPE_CHECKING
 import msgspec
 from litestar.plugins.problem_details import ProblemDetailsException
 
-from novamoc.config import problem_docs_base_url
 from novamoc.domain.schema._errors import (
     ErrorCode,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from litestar.exceptions import ValidationException
 
     from novamoc.domain.accounts import TenantResolutionError
@@ -58,12 +60,12 @@ _STATUS_CODES: dict[ErrorCode, int] = {
 }
 
 
-def _type_uri(code: ErrorCode | str) -> str:
+def _type_uri(code: ErrorCode | str, base_url: str) -> str:
     # The ``.html`` suffix is part of the URL path, not the code; clients
     # that branch on the leaf segment strip the extension to recover the
     # code. See ADR-018.
     code_str = code.value if isinstance(code, ErrorCode) else code
-    return f"{problem_docs_base_url()}/problems/{code_str}.html"
+    return f"{base_url}/problems/{code_str}.html"
 
 
 class ProblemDetails(msgspec.Struct, omit_defaults=True):
@@ -92,63 +94,71 @@ def make_instance() -> str:
     return f"urn:uuid:{uuid.uuid4()}"
 
 
-def schema_error_to_problem_details(
-    exc: SchemaError,
-) -> ProblemDetailsException:
-    """Convert a `SchemaError` to a `ProblemDetailsException`.
+def make_schema_error_converter(
+    base_url: str,
+) -> Callable[[SchemaError], ProblemDetailsException]:
+    def _convert(exc: SchemaError) -> ProblemDetailsException:
+        return ProblemDetailsException(
+            type_=_type_uri(exc.code, base_url),
+            title=_TITLES[exc.code],
+            status_code=_STATUS_CODES[exc.code],
+            detail=exc.message,
+            instance=make_instance(),
+            extra=dict(exc.extras) if exc.extras else None,
+        )
 
-    The plugin's response renderer flattens `extra` into top-level keys
-    when it is a Mapping (RFC 9457 §3.2 extension members).
-    """
-
-    return ProblemDetailsException(
-        type_=_type_uri(exc.code),
-        title=_TITLES[exc.code],
-        status_code=_STATUS_CODES[exc.code],
-        detail=exc.message,
-        instance=make_instance(),
-        extra=dict(exc.extras) if exc.extras else None,
-    )
+    return _convert
 
 
-def tenant_resolution_error_to_problem_details(
-    exc: TenantResolutionError,
-) -> ProblemDetailsException:
-    """Convert a ``TenantResolutionError`` to a 401 ``ProblemDetailsException``.
+def make_tenant_resolution_error_converter(
+    base_url: str,
+) -> Callable[[TenantResolutionError], ProblemDetailsException]:
+    def _convert(exc: TenantResolutionError) -> ProblemDetailsException:
+        return ProblemDetailsException(
+            type_=_type_uri("tenant_not_resolved", base_url),
+            title="Tenant not resolved",
+            status_code=401,
+            detail=exc.detail,
+            instance=make_instance(),
+        )
 
-    The wire shape is intentionally minimal: ``extras`` is empty so client
-    code does not branch on which variant of the credential failure was
-    triggered. When token formats grow, additional codes split out and
-    extras can carry per-code context.
-    """
-
-    return ProblemDetailsException(
-        type_=_type_uri("tenant_not_resolved"),
-        title="Tenant not resolved",
-        status_code=401,
-        detail=exc.detail,
-        instance=make_instance(),
-    )
+    return _convert
 
 
-def _invalid_payload_shape(detail: str) -> ProblemDetailsException:
+def _make_invalid_payload_shape(
+    base_url: str,
+) -> Callable[[str], ProblemDetailsException]:
     code = ErrorCode.INVALID_PAYLOAD_SHAPE
-    return ProblemDetailsException(
-        type_=_type_uri(code),
-        title=_TITLES[code],
-        status_code=_STATUS_CODES[code],
-        detail=detail,
-        instance=make_instance(),
-    )
+
+    def _build(detail: str) -> ProblemDetailsException:
+        return ProblemDetailsException(
+            type_=_type_uri(code, base_url),
+            title=_TITLES[code],
+            status_code=_STATUS_CODES[code],
+            detail=detail,
+            instance=make_instance(),
+        )
+
+    return _build
 
 
-def msgspec_validation_error_to_problem_details(
-    exc: msgspec.ValidationError,
-) -> ProblemDetailsException:
-    return _invalid_payload_shape(str(exc))
+def make_msgspec_validation_error_converter(
+    base_url: str,
+) -> Callable[[msgspec.ValidationError], ProblemDetailsException]:
+    build = _make_invalid_payload_shape(base_url)
+
+    def _convert(exc: msgspec.ValidationError) -> ProblemDetailsException:
+        return build(str(exc))
+
+    return _convert
 
 
-def litestar_validation_error_to_problem_details(
-    exc: ValidationException,
-) -> ProblemDetailsException:
-    return _invalid_payload_shape(exc.detail or str(exc))
+def make_litestar_validation_error_converter(
+    base_url: str,
+) -> Callable[[ValidationException], ProblemDetailsException]:
+    build = _make_invalid_payload_shape(base_url)
+
+    def _convert(exc: ValidationException) -> ProblemDetailsException:
+        return build(exc.detail or str(exc))
+
+    return _convert

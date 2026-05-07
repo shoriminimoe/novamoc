@@ -8,31 +8,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import msgspec
 import pytest
 from advanced_alchemy.base import metadata_registry
-from advanced_alchemy.extensions.litestar import (
-    AsyncSessionConfig,
-    EngineConfig,
-    SQLAlchemyAsyncConfig,
-    SQLAlchemyPlugin,
-)
-from litestar import Litestar
-from litestar.exceptions import ValidationException
-from litestar.middleware.base import DefineMiddleware
-from litestar.openapi.config import OpenAPIConfig
-from litestar.plugins.problem_details import (
-    ProblemDetailsConfig,
-    ProblemDetailsPlugin,
-)
-from litestar.static_files import create_static_files_router
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
 
 # Importing the listeners registers tenant-scoping event handlers on SQLAlchemy.
 import novamoc.db._listeners
@@ -40,23 +23,17 @@ import novamoc.db._listeners
 # Importing the models registers their tables on the shared metadata registry.
 import novamoc.db.models  # noqa: F401
 from novamoc.api._problem_codes import PROBLEM_CODES
-from novamoc.api._problem_details import (
-    litestar_validation_error_to_problem_details,
-    msgspec_validation_error_to_problem_details,
-    schema_error_to_problem_details,
-    tenant_resolution_error_to_problem_details,
+from novamoc.asgi import create_app
+from novamoc.config import (
+    DatabaseSettings,
+    ProblemSettings,
+    ServerSettings,
+    Settings,
+    problem_html_dir,
 )
-from novamoc.config import problem_html_dir
 from novamoc.db._tenant_context import use_tenant
-from novamoc.domain.accounts import (
-    AuthenticationMiddleware,
-    TenantContextMiddleware,
-    TenantResolutionError,
-)
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
 from novamoc.domain.schema._bundle import ServiceBundle
-from novamoc.domain.schema._errors import SchemaError
-from novamoc.domain.schema.controllers import SchemaController
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     AssetTypeService,
@@ -70,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
     from uuid import UUID
 
+    from litestar import Litestar
     from sqlalchemy.ext.asyncio import (
         AsyncEngine,
         AsyncSession,
@@ -178,52 +156,36 @@ def seed(
 
 
 @pytest.fixture
-async def app() -> Litestar:
+def settings() -> Settings:
+    """Test-time ``Settings`` literal used by the ``app`` fixture.
+
+    All fields are explicit so the test app's behaviour does not depend on
+    ambient env-var state. ``StaticPool`` keeps the in-memory SQLite engine
+    on a single connection so the request-scoped session, the autocommit
+    handler, and any background fold see the same database.
+    """
+    return Settings(
+        db=DatabaseSettings(
+            url="sqlite+aiosqlite:///:memory:",
+            static_pool=True,
+            create_all=True,
+            before_send_handler="autocommit",
+        ),
+        server=ServerSettings(granian=False),
+        problem=ProblemSettings(docs_base_url="http://test"),
+    )
+
+
+@pytest.fixture
+async def app(settings: Settings) -> Litestar:
     """A Litestar app with an in-memory SQLite for e2e tests.
 
-    ``StaticPool`` forces the engine to keep one connection, so all
-    queries (the plugin's request-scoped session, the autocommit
-    handler, etc.) reach the same in-memory database. Each function-
-    scoped fixture instance gets its own engine, so its database lives
-    only for the duration of the test and dies when the engine is
-    disposed at fixture teardown.
+    Built via ``create_app(settings=...)`` so production and test paths
+    share the same wiring; the per-test ``settings`` fixture supplies an
+    explicit ``StaticPool`` in-memory DB and the ``http://test`` problem-
+    docs base URL the e2e assertions key off.
     """
-    alchemy_config = SQLAlchemyAsyncConfig(
-        connection_string="sqlite+aiosqlite:///:memory:",
-        before_send_handler="autocommit",
-        session_config=AsyncSessionConfig(expire_on_commit=False),
-        create_all=True,
-        engine_config=EngineConfig(poolclass=StaticPool),
-    )
-    problem_details_config = ProblemDetailsConfig(
-        enable_for_all_http_exceptions=True,
-        exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
-            SchemaError: schema_error_to_problem_details,
-            TenantResolutionError: tenant_resolution_error_to_problem_details,
-            msgspec.ValidationError: msgspec_validation_error_to_problem_details,
-            ValidationException: litestar_validation_error_to_problem_details,
-        },
-    )
-    problem_docs_router = create_static_files_router(
-        path="/problems",
-        directories=[str(problem_html_dir())],
-        name="problems",
-    )
-    return Litestar(
-        route_handlers=[SchemaController, problem_docs_router],
-        middleware=[
-            DefineMiddleware(
-                AuthenticationMiddleware,
-                exclude=r"^/(openapi|problems)",
-            ),
-            TenantContextMiddleware(),
-        ],
-        plugins=[
-            SQLAlchemyPlugin(config=alchemy_config),
-            ProblemDetailsPlugin(config=problem_details_config),
-        ],
-        openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
-    )
+    return create_app(settings=settings)
 
 
 @pytest.fixture
@@ -235,29 +197,6 @@ async def client(app: Litestar):
         # the header per-request.
         c.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
         yield c
-
-
-@pytest.fixture(scope="session")
-def monkeypatch_session() -> Iterator[pytest.MonkeyPatch]:
-    """Session-scoped sibling of pytest's built-in ``monkeypatch`` (which
-    is function-scoped). Used by other session-scoped fixtures that need
-    to set env vars for the entire test run."""
-    mp = pytest.MonkeyPatch()
-    yield mp
-    mp.undo()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _problem_docs_base_url(
-    monkeypatch_session: pytest.MonkeyPatch,
-) -> None:
-    """Pin NOVAMOC_PROBLEM_DOCS_BASE_URL for every test in the session.
-
-    Tests assert against type URIs of the form ``http://test/problems/<code>.html``
-    rather than whatever the developer's shell happens to export.
-    """
-
-    monkeypatch_session.setenv("NOVAMOC_PROBLEM_DOCS_BASE_URL", "http://test")
 
 
 @pytest.fixture(scope="session", autouse=True)

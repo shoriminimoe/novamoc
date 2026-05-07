@@ -6,9 +6,9 @@ from litestar.plugins.problem_details import ProblemDetailsException
 
 from novamoc.api._problem_details import (
     ProblemDetails,
-    litestar_validation_error_to_problem_details,
-    msgspec_validation_error_to_problem_details,
-    schema_error_to_problem_details,
+    make_litestar_validation_error_converter,
+    make_msgspec_validation_error_converter,
+    make_schema_error_converter,
 )
 from novamoc.domain.schema._errors import (
     ConflictError,
@@ -16,6 +16,8 @@ from novamoc.domain.schema._errors import (
     ErrorCode,
     PayloadShapeError,
 )
+
+_BASE_URL = "http://test"
 
 
 def test_problem_details_minimal_encode() -> None:
@@ -37,8 +39,9 @@ def test_problem_details_minimal_encode() -> None:
 
 
 def test_schema_command_error_conflict_renders_409_with_extras() -> None:
+    convert = make_schema_error_converter(_BASE_URL)
     exc = ConflictError(code=ErrorCode.NAME_RESERVED, name="Truck")
-    pd_exc = schema_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert isinstance(pd_exc, ProblemDetailsException)
     assert pd_exc.status_code == 409
@@ -51,24 +54,27 @@ def test_schema_command_error_conflict_renders_409_with_extras() -> None:
 
 
 def test_schema_command_error_payload_shape_renders_400() -> None:
+    convert = make_schema_error_converter(_BASE_URL)
     exc = PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
-    pd_exc = schema_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert pd_exc.status_code == 400
     assert pd_exc.type_ == "http://test/problems/payload_no_changes.html"
 
 
 def test_schema_command_error_entity_not_found_renders_404() -> None:
+    convert = make_schema_error_converter(_BASE_URL)
     exc = EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
-    pd_exc = schema_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert pd_exc.status_code == 404
     assert pd_exc.type_ == "http://test/problems/entity_not_found.html"
 
 
 def test_msgspec_validation_error_renders_400_invalid_payload_shape() -> None:
+    convert = make_msgspec_validation_error_converter(_BASE_URL)
     exc = msgspec.ValidationError("expected str, got int")
-    pd_exc = msgspec_validation_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert pd_exc.status_code == 400
     assert pd_exc.type_ == "http://test/problems/invalid_payload_shape.html"
@@ -79,8 +85,9 @@ def test_msgspec_validation_error_renders_400_invalid_payload_shape() -> None:
 
 
 def test_litestar_validation_exception_renders_400_invalid_payload_shape() -> None:
+    convert = make_litestar_validation_error_converter(_BASE_URL)
     exc = ValidationException(detail="malformed body")
-    pd_exc = litestar_validation_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert pd_exc.status_code == 400
     assert pd_exc.type_ == "http://test/problems/invalid_payload_shape.html"
@@ -90,12 +97,13 @@ def test_litestar_validation_exception_renders_400_invalid_payload_shape() -> No
 
 def test_tenant_resolution_error_renders_401() -> None:
     from novamoc.api._problem_details import (
-        tenant_resolution_error_to_problem_details,
+        make_tenant_resolution_error_converter,
     )
     from novamoc.domain.accounts import TenantResolutionError
 
+    convert = make_tenant_resolution_error_converter(_BASE_URL)
     exc = TenantResolutionError()
-    pd_exc = tenant_resolution_error_to_problem_details(exc)
+    pd_exc = convert(exc)
 
     assert pd_exc.status_code == 401
     assert pd_exc.type_ == "http://test/problems/tenant_not_resolved.html"
