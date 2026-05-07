@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 novaMOC is a local-first, multi-tenant maintenance-tracking app: Svelte SPA client (with WASM SQLite, ADR-003) + Python/Litestar server (SQLite via aiosqlite, ADR-004) joined by a hand-rolled event-sourced sync protocol (HLC ordering + per-field LWW). Architecture is fixed by the ADRs in `docs/adr/`; **read the relevant ADRs before making non-trivial changes** — they are load-bearing and define hard constraints. Open design work and execution plans live in `docs/superpowers/specs/` and `docs/superpowers/plans/`.
 
+**Pre-release status — breaking changes are fine.** novaMOC is unreleased and in active design. There are no external consumers of the wire format, env-var names, database schema, or Python API yet, so prefer the cleanest design over backward compatibility. Don't add deprecation aliases, "kept for compatibility" hedges, or migration shims for things that haven't shipped. When the surface stabilises the user will tell you to stop making breaking changes; until then, name things right the first time.
+
 Two **distinct classes of data** with deliberately different handling (ADR-001):
 
 - **Schema** (asset types / their fields, maintenance record types / their fields) — server-authoritative current state, cannot be edited offline (ADR-008). Per-tenant `schema_version` = the highest `seq` in `schema_change_log` for that tenant.

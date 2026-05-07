@@ -9,15 +9,79 @@ resolved by ``AuthenticationMiddleware``.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-_PROBLEM_DOCS_BASE_URL_ENV = "NOVAMOC_PROBLEM_DOCS_BASE_URL"
-_PROBLEM_DOCS_BASE_URL_DEFAULT = "http://localhost:8000"
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_TRUE_LITERALS = frozenset({"true", "1"})
+_FALSE_LITERALS = frozenset({"false", "0"})
 
 
-def problem_docs_base_url() -> str:
-    return os.environ.get(_PROBLEM_DOCS_BASE_URL_ENV, _PROBLEM_DOCS_BASE_URL_DEFAULT)
+def _to_bool(value: str | None, *, default: bool) -> bool:
+    """Parse an env-var string as a bool. Return ``default`` when value is None.
+
+    Accepts ``true`` / ``false`` / ``1`` / ``0`` case-insensitively. Any other
+    set value raises ``ValueError`` so a typo in the deployment is a startup
+    failure, not a silent default.
+    """
+    if value is None:
+        return default
+    normalized = value.lower()
+    if normalized in _TRUE_LITERALS:
+        return True
+    if normalized in _FALSE_LITERALS:
+        return False
+    msg = f"cannot parse {value!r} as bool; expected one of true/false/1/0"
+    raise ValueError(msg)
+
+
+def _str_env(name: str, default: str) -> Callable[[], str]:
+    """Return a `default_factory` that reads ``name`` from env at call time."""
+    return lambda: os.environ.get(name, default)
+
+
+def _bool_env(name: str, default: bool) -> Callable[[], bool]:
+    """Return a `default_factory` that reads ``name`` from env and parses as bool."""
+    return lambda: _to_bool(os.environ.get(name), default=default)
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseSettings:
+    url: str = field(
+        default_factory=_str_env("NOVAMOC_DB_URL", "sqlite+aiosqlite:///novamoc.sqlite")
+    )
+    static_pool: bool = field(
+        default_factory=_bool_env("NOVAMOC_DB_STATIC_POOL", False)
+    )
+    create_all: bool = field(default_factory=_bool_env("NOVAMOC_DB_CREATE_ALL", True))
+    before_send_handler: str = field(
+        default_factory=_str_env("NOVAMOC_DB_BEFORE_SEND_HANDLER", "autocommit")
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ServerSettings:
+    granian: bool = field(default_factory=_bool_env("NOVAMOC_SERVER_GRANIAN", True))
+
+
+@dataclass(frozen=True, slots=True)
+class ProblemSettings:
+    docs_base_url: str = field(
+        default_factory=_str_env(
+            "NOVAMOC_PROBLEM_DOCS_BASE_URL", "http://localhost:8000"
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    db: DatabaseSettings = field(default_factory=DatabaseSettings)
+    server: ServerSettings = field(default_factory=ServerSettings)
+    problem: ProblemSettings = field(default_factory=ProblemSettings)
 
 
 def problem_html_dir() -> Path:
