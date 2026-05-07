@@ -17,15 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-_PROBLEM_DOCS_BASE_URL_ENV = "NOVAMOC_PROBLEM_DOCS_BASE_URL"
-_PROBLEM_DOCS_BASE_URL_DEFAULT = "http://localhost:8000"
-
 _TRUE_LITERALS = frozenset({"true", "1"})
 _FALSE_LITERALS = frozenset({"false", "0"})
-
-
-def problem_docs_base_url() -> str:
-    return os.environ.get(_PROBLEM_DOCS_BASE_URL_ENV, _PROBLEM_DOCS_BASE_URL_DEFAULT)
 
 
 def _to_bool(value: str | None, *, default: bool) -> bool:
