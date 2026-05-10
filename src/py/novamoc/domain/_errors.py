@@ -20,6 +20,7 @@ class ErrorCode(StrEnum):
     PARENT_TYPE_NOT_FOUND = "parent_type_not_found"
     ENTITY_NOT_FOUND = "entity_not_found"
     HLC_DRIFT_EXCEEDED = "hlc_drift_exceeded"
+    SCHEMA_VERSION_STALE = "schema_version_stale"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -32,6 +33,9 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found.",
     ErrorCode.HLC_DRIFT_EXCEEDED: (
         "Event HLC physical clock is too far ahead of the server's wall clock."
+    ),
+    ErrorCode.SCHEMA_VERSION_STALE: (
+        "Batch schema_version does not match the tenant's current schema version."
     ),
 }
 

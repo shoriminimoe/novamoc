@@ -53,7 +53,7 @@ def settings() -> Settings:
 async def test_past_hlc_is_accepted(client: AsyncTestClient) -> None:
     resp = await client.post(
         "/events",
-        json={"schema_version": 1, "events": [_event(_PAST_HLC)]},
+        json={"schema_version": 0, "events": [_event(_PAST_HLC)]},
     )
     assert resp.status_code == 202, resp.text
 
@@ -63,7 +63,7 @@ async def test_far_future_hlc_is_rejected_as_drift_exceeded(
 ) -> None:
     resp = await client.post(
         "/events",
-        json={"schema_version": 1, "events": [_event(_FAR_FUTURE_HLC)]},
+        json={"schema_version": 0, "events": [_event(_FAR_FUTURE_HLC)]},
     )
     assert resp.status_code == 400, resp.text
     body = resp.json()
@@ -80,7 +80,7 @@ async def test_malformed_hlc_is_rejected_as_invalid_payload_shape(
 ) -> None:
     resp = await client.post(
         "/events",
-        json={"schema_version": 1, "events": [_event("not-an-hlc")]},
+        json={"schema_version": 0, "events": [_event("not-an-hlc")]},
     )
     assert resp.status_code == 400, resp.text
     body = resp.json()
@@ -96,7 +96,7 @@ async def test_first_bad_event_rejects_whole_batch(
     resp = await client.post(
         "/events",
         json={
-            "schema_version": 1,
+            "schema_version": 0,
             "events": [
                 _event(_PAST_HLC),
                 _event(_FAR_FUTURE_HLC),
