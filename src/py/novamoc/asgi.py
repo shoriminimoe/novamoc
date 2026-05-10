@@ -47,6 +47,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
         TenantContextMiddleware,
         TenantResolutionError,
     )
+    from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema._errors import SchemaError
     from novamoc.domain.schema.controllers import SchemaController
 
@@ -90,7 +91,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
     ]
 
     return Litestar(
-        route_handlers=[SchemaController, problem_docs_router],
+        route_handlers=[SchemaController, EventsController, problem_docs_router],
         middleware=[
             DefineMiddleware(
                 AuthenticationMiddleware,
