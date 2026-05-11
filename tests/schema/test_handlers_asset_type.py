@@ -5,16 +5,16 @@ import pytest
 from sqlalchemy import select
 
 from novamoc.db.models import schema as schema_models
-from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.schema import _payloads
-from novamoc.domain.schema._commands import SchemaCommand
-from novamoc.domain.schema._dispatch import dispatch
-from novamoc.domain.schema._errors import (
+from novamoc.domain._errors import (
     ConflictError,
     EntityNotFoundError,
     ErrorCode,
     PayloadShapeError,
 )
+from novamoc.domain.accounts import RequestAuth
+from novamoc.domain.schema import _payloads
+from novamoc.domain.schema._commands import SchemaCommand
+from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._outcomes import Outcome
 from tests.data.scenarios import ACTIVE_TRUCK, DEACTIVATED_TRUCK
 

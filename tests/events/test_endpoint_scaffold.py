@@ -12,7 +12,7 @@ async def test_post_events_returns_202_for_valid_batch(client) -> None:
             "schema_version": 1,
             "events": [
                 {
-                    "hlc": "1700000000000-0-abc",
+                    "hlc": "0001700000000000-00000-abc",
                     "family": "asset",
                     "type_id": str(uuid4()),
                     "instance_id": str(uuid4()),

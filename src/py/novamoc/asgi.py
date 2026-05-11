@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
         SQLAlchemyPlugin,
     )
     from litestar import Litestar
+    from litestar.datastructures import State
     from litestar.exceptions import ValidationException
     from litestar.middleware.base import DefineMiddleware
     from litestar.openapi.config import OpenAPIConfig
@@ -36,19 +37,19 @@ def create_app(settings: Settings | None = None) -> Litestar:
     # Register tenant-scoping event handlers on SQLAlchemy.
     import novamoc.db._listeners  # noqa: F401
     from novamoc.api._problem_details import (
+        make_domain_error_converter,
         make_litestar_validation_error_converter,
         make_msgspec_validation_error_converter,
-        make_schema_error_converter,
         make_tenant_resolution_error_converter,
     )
     from novamoc.config import Settings, problem_html_dir
+    from novamoc.domain._errors import DomainError
     from novamoc.domain.accounts import (
         AuthenticationMiddleware,
         TenantContextMiddleware,
         TenantResolutionError,
     )
     from novamoc.domain.events.controllers import EventsController
-    from novamoc.domain.schema._errors import SchemaError
     from novamoc.domain.schema.controllers import SchemaController
 
     s = settings if settings is not None else Settings()
@@ -67,11 +68,11 @@ def create_app(settings: Settings | None = None) -> Litestar:
         engine_config=engine_config,
     )
 
-    base_url = s.problem.docs_base_url
+    base_url = s.app.docs_base_url
     problem_details_config = ProblemDetailsConfig(
         enable_for_all_http_exceptions=True,
         exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
-            SchemaError: make_schema_error_converter(base_url),
+            DomainError: make_domain_error_converter(base_url),
             TenantResolutionError: make_tenant_resolution_error_converter(base_url),
             msgspec.ValidationError: make_msgspec_validation_error_converter(base_url),
             ValidationException: make_litestar_validation_error_converter(base_url),
@@ -100,6 +101,10 @@ def create_app(settings: Settings | None = None) -> Litestar:
             TenantContextMiddleware(),
         ],
         plugins=plugins,
+        # ``state.settings`` is read by per-controller DI providers
+        # (see ``EventsController.dependencies``) so handlers receive
+        # only the narrow slice they need rather than the whole tree.
+        state=State({"settings": s}),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),

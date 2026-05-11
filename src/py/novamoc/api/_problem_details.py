@@ -2,7 +2,7 @@
 
 The `ProblemDetails` msgspec struct is published as the OpenAPI response
 body for every error path. The converters below turn typed exceptions
-(`SchemaError`, msgspec/Litestar validation errors, eventually
+(`DomainError`, msgspec/Litestar validation errors, eventually
 others) into Litestar's `ProblemDetailsException`, which the
 `ProblemDetailsPlugin` renders as `application/problem+json`.
 
@@ -18,7 +18,7 @@ extension members — top-level keys alongside the standard slots.
 
 Each converter is built by a `make_*_converter(base_url)` factory that
 closes over the configured docs base URL. ``create_app`` constructs
-them once at startup with ``Settings.problem.docs_base_url`` and
+them once at startup with ``Settings.app.docs_base_url`` and
 registers them on the `ProblemDetailsPlugin`.
 """
 
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import msgspec
 from litestar.plugins.problem_details import ProblemDetailsException
 
-from novamoc.domain.schema._errors import (
+from novamoc.domain._errors import (
     ErrorCode,
 )
 
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 
     from litestar.exceptions import ValidationException
 
+    from novamoc.domain._errors import DomainError
     from novamoc.domain.accounts import TenantResolutionError
-    from novamoc.domain.schema._errors import SchemaError
 
 _TITLES: dict[ErrorCode, str] = {
     ErrorCode.PAYLOAD_NO_CHANGES: "Payload contained no changes",
@@ -48,6 +48,7 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.NAME_RESERVED: "Name reserved",
     ErrorCode.PARENT_TYPE_NOT_FOUND: "Parent type not found",
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
+    ErrorCode.HLC_DRIFT_EXCEEDED: "HLC drift exceeded",
 }
 
 
@@ -57,6 +58,7 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.NAME_RESERVED: 409,
     ErrorCode.PARENT_TYPE_NOT_FOUND: 409,
     ErrorCode.ENTITY_NOT_FOUND: 404,
+    ErrorCode.HLC_DRIFT_EXCEEDED: 400,
 }
 
 
@@ -94,10 +96,10 @@ def make_instance() -> str:
     return f"urn:uuid:{uuid.uuid4()}"
 
 
-def make_schema_error_converter(
+def make_domain_error_converter(
     base_url: str,
-) -> Callable[[SchemaError], ProblemDetailsException]:
-    def _convert(exc: SchemaError) -> ProblemDetailsException:
+) -> Callable[[DomainError], ProblemDetailsException]:
+    def _convert(exc: DomainError) -> ProblemDetailsException:
         return ProblemDetailsException(
             type_=_type_uri(exc.code, base_url),
             title=_TITLES[exc.code],

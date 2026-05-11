@@ -9,7 +9,7 @@ markdown doc — the render script enforces that the three stay in sync.
 
 from __future__ import annotations
 
-from novamoc.domain.schema._errors import ErrorCode
+from novamoc.domain._errors import ErrorCode
 
 PROBLEM_CODES: frozenset[str] = frozenset(
     {c.value for c in ErrorCode} | {"tenant_not_resolved"}

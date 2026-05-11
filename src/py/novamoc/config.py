@@ -1,10 +1,4 @@
-"""Application-level configuration helpers.
-
-Pre-auth dev configuration that previously lived here (the
-``KNOWN_TENANT_IDS`` stub) was retired by ADR-017 — the tenant identity
-now comes from the request envelope (Bearer token → ``RequestAuth``)
-resolved by ``AuthenticationMiddleware``.
-"""
+"""Application-level configuration helpers."""
 
 from __future__ import annotations
 
@@ -22,11 +16,11 @@ _FALSE_LITERALS = frozenset({"false", "0"})
 
 
 def _to_bool(value: str | None, *, default: bool) -> bool:
-    """Parse an env-var string as a bool. Return ``default`` when value is None.
+    """Parse a bool from an env-var string; ``None`` returns ``default``.
 
-    Accepts ``true`` / ``false`` / ``1`` / ``0`` case-insensitively. Any other
-    set value raises ``ValueError`` so a typo in the deployment is a startup
-    failure, not a silent default.
+    Accepts ``true`` / ``false`` / ``1`` / ``0`` case-insensitively. Any
+    other value raises ``ValueError`` so a typo in the deployment is a
+    startup failure, not a silent default.
     """
     if value is None:
         return default
@@ -40,13 +34,33 @@ def _to_bool(value: str | None, *, default: bool) -> bool:
 
 
 def _str_env(name: str, default: str) -> Callable[[], str]:
-    """Return a `default_factory` that reads ``name`` from env at call time."""
+    """Build a ``default_factory`` that reads ``name`` from env at call time."""
     return lambda: os.environ.get(name, default)
 
 
 def _bool_env(name: str, default: bool) -> Callable[[], bool]:
-    """Return a `default_factory` that reads ``name`` from env and parses as bool."""
+    """Build a ``default_factory`` that reads ``name`` from env and parses as bool."""
     return lambda: _to_bool(os.environ.get(name), default=default)
+
+
+def _float_env(name: str, default: float) -> Callable[[], float]:
+    """Build a ``default_factory`` that reads ``name`` from env and parses as float.
+
+    A non-numeric value raises ``ValueError`` at startup rather than
+    silently falling through to the default.
+    """
+
+    def _read() -> float:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except ValueError as exc:
+            msg = f"cannot parse {raw!r} as float for {name}"
+            raise ValueError(msg) from exc
+
+    return _read
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +83,26 @@ class ServerSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class ProblemSettings:
+class AppSettings:
+    """App-wide tunables that don't belong to a single subsystem.
+
+    Attributes:
+        docs_base_url: Base URL the problem-details ``type`` URIs
+            point at (the static-files router under ``/problems``
+            is served from the same host).
+        hlc_drift_limit_seconds: One-sided clock-drift budget
+            (ADR-006). Events whose HLC physical component sits
+            more than this many seconds ahead of the server wall
+            clock are rejected at acceptance time.
+    """
+
     docs_base_url: str = field(
         default_factory=_str_env(
             "NOVAMOC_PROBLEM_DOCS_BASE_URL", "http://localhost:8000"
         )
+    )
+    hlc_drift_limit_seconds: float = field(
+        default_factory=_float_env("NOVAMOC_HLC_DRIFT_LIMIT_SECONDS", 60.0)
     )
 
 
@@ -81,7 +110,7 @@ class ProblemSettings:
 class Settings:
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
-    problem: ProblemSettings = field(default_factory=ProblemSettings)
+    app: AppSettings = field(default_factory=AppSettings)
 
 
 def problem_html_dir() -> Path:

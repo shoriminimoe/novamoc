@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from novamoc.domain.schema._errors import (
+from novamoc.domain._errors import (
     ConflictError,
     EntityNotFoundError,
     ErrorCode,

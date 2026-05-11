@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 import msgspec
 from advanced_alchemy.exceptions import IntegrityError
 
-from novamoc.domain.schema._commands import SchemaCommand
-from novamoc.domain.schema._errors import (
+from novamoc.domain._errors import (
     ConflictError,
     EntityNotFoundError,
     ErrorCode,
     PayloadShapeError,
 )
+from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
 
 if TYPE_CHECKING:
