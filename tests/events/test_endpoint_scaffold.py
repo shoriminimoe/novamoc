@@ -9,7 +9,7 @@ async def test_post_events_returns_202_for_valid_batch(client) -> None:
     resp = await client.post(
         "/events",
         json={
-            "schema_version": 1,
+            "schema_version": 0,
             "events": [
                 {
                     "hlc": "0001700000000000-00000-abc",
@@ -32,6 +32,6 @@ async def test_post_events_accepts_empty_batch(client) -> None:
     # and explicitly defers all validation to later milestones (M1.2+).
     resp = await client.post(
         "/events",
-        json={"schema_version": 1, "events": []},
+        json={"schema_version": 0, "events": []},
     )
     assert resp.status_code == 202, resp.text
