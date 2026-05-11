@@ -40,3 +40,48 @@ class SchemaVersionStaleError(DomainError):
             expected=expected,
             received=received,
         )
+
+
+class UnknownFieldError(DomainError):
+    """Event references a field that does not exist on the targeted
+    entity type (ADR-008 / ADR-012).
+
+    Tombstoned (``active=false``) fields are *not* rejected here —
+    ADR-012 decouples the data fold from schema visibility so events
+    can still land on a field that has been deactivated. This error
+    fires when the field id (or ``col:<name>`` column) is not present
+    on the entity type at all.
+    """
+
+    def __init__(
+        self,
+        *,
+        family: str,
+        type_id: str,
+        field: str,
+    ) -> None:
+        super().__init__(
+            code=ErrorCode.UNKNOWN_FIELD,
+            family=family,
+            type_id=type_id,
+            field=field,
+        )
+
+
+class ValueTypeMismatchError(DomainError):
+    """Event value's JSON shape does not match the field's declared
+    :class:`FieldDataType` (ADR-005)."""
+
+    def __init__(
+        self,
+        *,
+        field: str,
+        expected: str,
+        received: str,
+    ) -> None:
+        super().__init__(
+            code=ErrorCode.VALUE_TYPE_MISMATCH,
+            field=field,
+            expected=expected,
+            received=received,
+        )

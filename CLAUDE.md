@@ -128,6 +128,59 @@ The handler does NOT take a tenant id parameter. `TenantContextMiddleware` (moun
 
 ETag = `"<schema_version>"` (RFC 7232 quoted decimal); `If-None-Match` matching the current version short-circuits to `304 Not Modified` after only the cheap `MAX(seq)` query (no projection scan). Tombstoned (`active=false`) rows are included in the response — clients filter at read time per use case (ADR-008/ADR-009: events targeting `deactivate_*`-d fields are still valid).
 
+## Events endpoint (`POST /events`)
+
+Companion to the schema endpoint and the only fully implemented write
+path for **data** events (ADR-002 / ADR-011 / ADR-013). The controller
+enforces three pre-persistence gates and then routes each event to its
+handler:
+
+1. **Schema-version gate** (batch-level, ADR-008 / ADR-009) — the
+   batch's ``schema_version`` must equal the tenant's current schema
+   version, or the whole batch is rejected as ``schema_version_stale``.
+2. **HLC parse + drift bound** (per-event, ADR-006) — each event's
+   ``hlc`` is parsed; an HLC more than ``hlc_drift_limit_seconds`` ahead
+   of server wall time raises ``hlc_drift_exceeded``. Past HLCs are
+   always accepted.
+3. **Per-event handler dispatch** (M1.4) — each event is routed via
+   ``_HANDLERS[(event.family, type(event.body))]``; today the handlers
+   do field-existence + value-shape validation, M1.5+ layers persistence
+   and projection writes into the same cells.
+
+Pipeline mirrors the schema endpoint's shape:
+
+1. **Wire decode** — ``domain/events/_payloads.py`` defines
+   ``EventBatch`` and the ``EventBody`` discriminated union (``Created``,
+   ``Updated``, ``Deactivated``, ``Activated``) with msgspec's
+   tag-field discrimination on ``event``.
+2. **Service bundle** — ``domain/events/_bundle.py`` aggregates the two
+   ``*TypeFieldService`` instances and owns a per-request memo
+   (``fields_for(family, type_id)``) so a batch with many events on one
+   type pays one ``SELECT`` for the field set.
+3. **Dispatch** — ``_dispatch.py`` holds a single explicit ``_HANDLERS``
+   table keyed on ``(EntityFamily, type[EventBody])``. Adding an event
+   type or family requires one new handler module-level function plus
+   one row in the table.
+4. **Handlers** — ``_handlers/{asset,maintenance_record}.py`` expose
+   ``created`` / ``updated`` / ``deactivated`` / ``activated``. M1.4
+   created/updated load the type's field set via
+   ``services.fields_for(...)`` and call the sync
+   ``validate_values(...)``; deactivated/activated are no-ops that hold
+   the cell open for M1.5+ persistence.
+5. **Validators** — ``_validators.py`` exports one public sync entry
+   point ``validate_values(event, values, fields_by_id)`` plus the
+   ``matches_data_type`` / ``json_type_name`` predicates. The validator
+   does no I/O; handlers feed it a preloaded field map.
+6. **Controller** — ``controllers/_events.py`` is thin: schema-version
+   gate, per-event HLC check, ``dispatch(services, auth, event)``. It
+   does **not** import ``_validators`` — that's the handler's concern.
+
+Errors flow through the same problem-details converter as the schema
+endpoint. Per-event error types live in ``domain/events/_errors.py``
+(``HLCDriftExceededError``, ``SchemaVersionStaleError``,
+``UnknownFieldError``, ``ValueTypeMismatchError``); generic shape errors
+reuse ``PayloadShapeError(code=ErrorCode.INVALID_PAYLOAD_SHAPE)``.
+
 ## Data model conventions
 
 - All synced tables (schema + data) are tenant-scoped. Projection tables compose `(TenantScopedMixin, UUIDAuditBase)` — composite PK `(tenant_id, id)` with `tenant_id` as the leading column so the implicit PK index serves per-tenant queries (ADR-014). Log/EAV tables (`schema_change_log`, `*_field_values`) compose `(TenantScopedMixin, DefaultBase)`. `event_log` is the lone exception — it keeps a sole `seq` PK with hand-declared non-PK `tenant_id` because SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PKs; the listeners' column-presence heuristic still enforces tenant scoping on it.

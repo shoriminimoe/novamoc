@@ -17,3 +17,7 @@ ACTIVE_TRUCK_WITH_VIN_FIELD: Scenario = (
     "truck/asset_type",
     "truck/asset_type_field__vin",
 )
+ACTIVE_OIL_CHANGE_WITH_NOTES: Scenario = (
+    "oil_change/maintenance_record_type",
+    "oil_change/maintenance_record_type_field__notes",
+)

@@ -21,6 +21,8 @@ class ErrorCode(StrEnum):
     ENTITY_NOT_FOUND = "entity_not_found"
     HLC_DRIFT_EXCEEDED = "hlc_drift_exceeded"
     SCHEMA_VERSION_STALE = "schema_version_stale"
+    UNKNOWN_FIELD = "unknown_field"
+    VALUE_TYPE_MISMATCH = "value_type_mismatch"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -36,6 +38,12 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ),
     ErrorCode.SCHEMA_VERSION_STALE: (
         "Batch schema_version does not match the tenant's current schema version."
+    ),
+    ErrorCode.UNKNOWN_FIELD: (
+        "Event references a field that does not exist on this entity type."
+    ),
+    ErrorCode.VALUE_TYPE_MISMATCH: (
+        "Event value's JSON shape does not match the field's declared data type."
     ),
 }
 
