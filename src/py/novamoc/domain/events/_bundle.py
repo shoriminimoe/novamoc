@@ -18,10 +18,13 @@ import msgspec
 from advanced_alchemy.exceptions import IntegrityError as RepositoryIntegrityError
 
 from novamoc.db.models.data import EventOp
+from novamoc.domain.events._fold import FieldUpsert, apply_field_value
 from novamoc.domain.events._payloads import (
+    Created,
     Deactivated,
     EntityFamily,
     EventOutcome,
+    Updated,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +61,18 @@ def _value_json_for_body(body: EventBody) -> dict[str, Any] | None:
     return msgspec.to_builtins(body)
 
 
+def _values_for_fold(body: EventBody) -> dict[str, Any]:
+    """Field-value payload the per-field LWW fold should walk.
+
+    ``Created`` and ``Updated`` both carry ``values`` per the wire
+    schema; ``Deactivated`` / ``Activated`` are row-state events with
+    no per-field payload — those flow through M1.8.
+    """
+    if isinstance(body, (Created, Updated)):
+        return body.values
+    return {}
+
+
 @dataclass(frozen=True, slots=True)
 class EventServiceBundle:
     asset_type_field_service: AssetTypeFieldService
@@ -92,11 +107,15 @@ class EventServiceBundle:
         return loaded
 
     async def append_event(self, event: EventEnvelope) -> EventOutcome:
-        """Insert one ``event_log`` row inside a savepoint.
+        """Insert one ``event_log`` row and fold its values into the
+        per-field projection — both inside one savepoint.
 
-        The savepoint isolates the ``IntegrityError`` path so the outer
-        transaction (committed at response time by the autocommit
-        handler) stays usable for subsequent events in the batch.
+        Sharing the savepoint with the ``event_log`` insert keeps the
+        log and the ``*_field_values`` projection consistent: a fold
+        failure rolls the log row back too. The savepoint also
+        isolates the ``IntegrityError`` path so the outer transaction
+        (committed at response time by the autocommit handler) stays
+        usable for subsequent events in the batch.
 
         Returns:
             ``accepted`` for a fresh insert, ``duplicate`` if the
@@ -117,6 +136,17 @@ class EventServiceBundle:
                     },
                     auto_commit=False,
                 )
+                for field_id, value in _values_for_fold(event.body).items():
+                    await apply_field_value(
+                        session,
+                        FieldUpsert(
+                            family=event.family,
+                            instance_id=event.instance_id,
+                            field_id=field_id,
+                            value=value,
+                            hlc=event.hlc,
+                        ),
+                    )
         except RepositoryIntegrityError:
             # advanced_alchemy wraps SQLAlchemy IntegrityError into its
             # own taxonomy (DuplicateKeyError extends this). The
