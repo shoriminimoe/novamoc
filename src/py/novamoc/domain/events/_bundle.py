@@ -26,6 +26,7 @@ from novamoc.domain.events._payloads import (
     EventOutcome,
     Updated,
 )
+from novamoc.domain.events._projection import apply_entity_projection
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -137,16 +138,22 @@ class EventServiceBundle:
                     auto_commit=False,
                 )
                 for field_id, value in _values_for_fold(event.body).items():
-                    await apply_field_value(
-                        session,
-                        FieldUpsert(
-                            family=event.family,
-                            instance_id=event.instance_id,
-                            field_id=field_id,
-                            value=value,
-                            hlc=event.hlc,
-                        ),
+                    upsert = FieldUpsert(
+                        family=event.family,
+                        instance_id=event.instance_id,
+                        field_id=field_id,
+                        value=value,
+                        hlc=event.hlc,
                     )
+                    # The fold's applied/skipped signal gates the
+                    # entity-table mirror — only when M1.6 actually
+                    # wrote the field-value row does M1.7 update the
+                    # entity row. Otherwise a stale event would set
+                    # the entity cell while leaving *_field_values
+                    # pointing at the winner.
+                    applied = await apply_field_value(session, upsert)
+                    if applied:
+                        await apply_entity_projection(session, upsert)
         except RepositoryIntegrityError:
             # advanced_alchemy wraps SQLAlchemy IntegrityError into its
             # own taxonomy (DuplicateKeyError extends this). The
