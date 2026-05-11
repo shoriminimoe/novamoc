@@ -19,7 +19,7 @@ from novamoc.domain.events._payloads import EntityFamily
 if TYPE_CHECKING:
     from novamoc.domain.accounts import RequestAuth
     from novamoc.domain.events._bundle import EventServiceBundle, Handler
-    from novamoc.domain.events._payloads import EventEnvelope
+    from novamoc.domain.events._payloads import EventEnvelope, EventOutcome
 
 
 __all__ = ("dispatch",)
@@ -45,5 +45,5 @@ async def dispatch(
     services: EventServiceBundle,
     auth: RequestAuth,
     event: EventEnvelope,
-) -> None:
-    await _HANDLERS[(event.family, type(event.body))](services, auth, event)
+) -> EventOutcome:
+    return await _HANDLERS[(event.family, type(event.body))](services, auth, event)

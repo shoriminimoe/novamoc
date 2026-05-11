@@ -131,21 +131,26 @@ ETag = `"<schema_version>"` (RFC 7232 quoted decimal); `If-None-Match` matching 
 ## Events endpoint (`POST /events`)
 
 Companion to the schema endpoint and the only fully implemented write
-path for **data** events (ADR-002 / ADR-011 / ADR-013). The controller
-enforces three pre-persistence gates and then routes each event to its
-handler:
+path for **data** events (ADR-002 / ADR-011 / ADR-013). Batch-level
+failures (``schema_version_stale``, malformed body) reject the whole
+submission via ``application/problem+json``; per-event work is atomic
+at the event grain (M1.5) and surfaces as ``accepted`` / ``duplicate``
+/ ``rejected:<code>`` outcomes in the response.
+
+Controller responsibilities (all the controller does):
 
 1. **Schema-version gate** (batch-level, ADR-008 / ADR-009) — the
    batch's ``schema_version`` must equal the tenant's current schema
    version, or the whole batch is rejected as ``schema_version_stale``.
 2. **HLC parse + drift bound** (per-event, ADR-006) — each event's
    ``hlc`` is parsed; an HLC more than ``hlc_drift_limit_seconds`` ahead
-   of server wall time raises ``hlc_drift_exceeded``. Past HLCs are
-   always accepted.
-3. **Per-event handler dispatch** (M1.4) — each event is routed via
-   ``_HANDLERS[(event.family, type(event.body))]``; today the handlers
-   do field-existence + value-shape validation, M1.5+ layers persistence
-   and projection writes into the same cells.
+   of server wall time is rejected as
+   ``rejected:hlc_drift_exceeded``. Past HLCs are always accepted.
+3. **Dispatch + outcome aggregation** — each surviving event is routed
+   via ``_HANDLERS[(event.family, type(event.body))]``. The handler
+   validates and appends to ``event_log``; the controller catches any
+   ``DomainError`` it raises, maps it to ``rejected:<code>``, and
+   aggregates the per-event outcomes into the response.
 
 Pipeline mirrors the schema endpoint's shape:
 
@@ -154,26 +159,31 @@ Pipeline mirrors the schema endpoint's shape:
    ``Updated``, ``Deactivated``, ``Activated``) with msgspec's
    tag-field discrimination on ``event``.
 2. **Service bundle** — ``domain/events/_bundle.py`` aggregates the two
-   ``*TypeFieldService`` instances and owns a per-request memo
-   (``fields_for(family, type_id)``) so a batch with many events on one
-   type pays one ``SELECT`` for the field set.
+   ``*TypeFieldService`` instances, the ``EventLogService``, and the
+   batch's ``schema_version`` into one per-request object. Owns the
+   ``fields_for(family, type_id)`` memo (a batch with many events on
+   one type pays one ``SELECT``) and the ``append_event(event)`` helper
+   that does the savepoint-isolated ``event_log`` insert and returns
+   the ``accepted`` / ``duplicate`` outcome.
 3. **Dispatch** — ``_dispatch.py`` holds a single explicit ``_HANDLERS``
-   table keyed on ``(EntityFamily, type[EventBody])``. Adding an event
-   type or family requires one new handler module-level function plus
-   one row in the table.
+   table keyed on ``(EntityFamily, type[EventBody])``. Each handler
+   returns an ``EventOutcome``; adding an event type or family requires
+   one new handler module-level function plus one row in the table.
 4. **Handlers** — ``_handlers/{asset,maintenance_record}.py`` expose
-   ``created`` / ``updated`` / ``deactivated`` / ``activated``. M1.4
-   created/updated load the type's field set via
-   ``services.fields_for(...)`` and call the sync
-   ``validate_values(...)``; deactivated/activated are no-ops that hold
-   the cell open for M1.5+ persistence.
+   ``created`` / ``updated`` / ``deactivated`` / ``activated``. Each
+   returns an ``EventOutcome``. ``created``/``updated`` load the type's
+   field set via ``services.fields_for(...)``, run sync
+   ``validate_values(...)``, then call ``services.append_event(...)``;
+   ``deactivated``/``activated`` skip validation and just append.
 5. **Validators** — ``_validators.py`` exports one public sync entry
    point ``validate_values(event, values, fields_by_id)`` plus the
    ``matches_data_type`` / ``json_type_name`` predicates. The validator
    does no I/O; handlers feed it a preloaded field map.
 6. **Controller** — ``controllers/_events.py`` is thin: schema-version
-   gate, per-event HLC check, ``dispatch(services, auth, event)``. It
-   does **not** import ``_validators`` — that's the handler's concern.
+   gate, per-event HLC check, ``dispatch(services, auth, event)``,
+   catch ``DomainError`` → ``rejected:<code>``. It does **not** import
+   ``_validators`` and does **not** touch ``event_log`` directly — both
+   are the handler's concern.
 
 Errors flow through the same problem-details converter as the schema
 endpoint. Per-event error types live in ``domain/events/_errors.py``

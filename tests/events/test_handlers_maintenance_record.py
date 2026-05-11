@@ -22,6 +22,7 @@ from novamoc.domain.events._payloads import (
     EventEnvelope,
     Updated,
 )
+from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     MaintenanceRecordTypeFieldService,
@@ -49,6 +50,8 @@ def event_services(session: AsyncSession) -> EventServiceBundle:
         maintenance_record_type_field_service=MaintenanceRecordTypeFieldService(
             session=session
         ),
+        event_log_service=EventLogService(session=session),
+        schema_version=0,
     )
 
 
@@ -114,15 +117,17 @@ async def test_updated_validates_like_created(
     await maintenance_record.updated(event_services, _auth(), _envelope(type_id, body))
 
 
-async def test_deactivated_is_noop(event_services: EventServiceBundle) -> None:
+async def test_deactivated_appends(event_services: EventServiceBundle) -> None:
     body = Deactivated()
-    await maintenance_record.deactivated(
+    outcome = await maintenance_record.deactivated(
         event_services, _auth(), _envelope(uuid4(), body)
     )
+    assert outcome.outcome == "accepted"
 
 
-async def test_activated_is_noop(event_services: EventServiceBundle) -> None:
+async def test_activated_appends(event_services: EventServiceBundle) -> None:
     body = Activated()
-    await maintenance_record.activated(
+    outcome = await maintenance_record.activated(
         event_services, _auth(), _envelope(uuid4(), body)
     )
+    assert outcome.outcome == "accepted"
