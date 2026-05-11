@@ -50,6 +50,8 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
     ErrorCode.HLC_DRIFT_EXCEEDED: "HLC drift exceeded",
     ErrorCode.SCHEMA_VERSION_STALE: "Schema version stale",
+    ErrorCode.UNKNOWN_FIELD: "Unknown field",
+    ErrorCode.VALUE_TYPE_MISMATCH: "Value type mismatch",
 }
 
 
@@ -61,6 +63,8 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.ENTITY_NOT_FOUND: 404,
     ErrorCode.HLC_DRIFT_EXCEEDED: 400,
     ErrorCode.SCHEMA_VERSION_STALE: 409,
+    ErrorCode.UNKNOWN_FIELD: 404,
+    ErrorCode.VALUE_TYPE_MISMATCH: 400,
 }
 
 
