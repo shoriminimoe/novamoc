@@ -82,6 +82,10 @@ If you notice the same per-line / module-level ignore appearing across many file
 
 Plain `@dataclass` is **not** in `runtime-evaluated-decorators`. Field annotations on a regular dataclass don't need runtime resolution — `ClassVar` / `InitVar` are special-cased by `dataclasses` itself and ruff already handles them. So dataclass field types should move under `if TYPE_CHECKING:` like any other type-only import. If a `type Handler = Callable[...]`-style alias references those types, use the PEP 695 `type` statement (lazily evaluated) rather than `TypeAlias` (eagerly evaluated).
 
+## Docstrings
+
+Keep docstrings concise. Use **Napoleon style** (Google-style sections: `Args:`, `Returns:`, `Raises:`). Skip sections that have nothing to say — a one-line summary is often the whole docstring. Don't restate type information that's already in the signature.
+
 ## Critical layering rule
 
 **`src/py/novamoc/db/` must not depend on Litestar.** db-layer modules import only `advanced_alchemy.base` / `advanced_alchemy.types` — never `advanced_alchemy.extensions.litestar`. The Litestar-flavored extensions (`SQLAlchemyAsyncConfig`, `repository`, `service`) belong to web-facing code: `domain/**/services/`, `domain/**/controllers/`, `asgi.py`, and `tests/conftest.py`. Keeping db-layer storage-only is what lets us swap or test the storage layer independently.
