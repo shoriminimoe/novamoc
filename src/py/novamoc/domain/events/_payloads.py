@@ -131,12 +131,46 @@ class EventEnvelope(msgspec.Struct, forbid_unknown_fields=True):
 
 
 class EventBatch(msgspec.Struct, forbid_unknown_fields=True):
-    """Batch posted to ``POST /events``, applied transactionally.
+    """Batch posted to ``POST /events``.
+
+    Per-event outcomes (see :class:`EventOutcome`) are atomic at the
+    event grain, not the batch grain (M1.5): one rejected or duplicate
+    event does not poison its neighbours. Batch-level failures
+    (``schema_version_stale``, malformed body) still reject the
+    whole submission via the ``application/problem+json`` envelope.
 
     Attributes:
         schema_version: Client's loaded schema state (ADR-008/009).
-        events: Ordered tuple; all succeed or none do.
+        events: Ordered tuple. Order is preserved in the response.
     """
 
     schema_version: int
     events: tuple[EventEnvelope, ...]
+
+
+class EventOutcome(msgspec.Struct, forbid_unknown_fields=True):
+    """Per-event outcome in the ``POST /events`` response.
+
+    ``outcome`` is one of:
+
+    - ``accepted`` — appended to ``event_log``.
+    - ``duplicate`` — a row with the same ``(tenant_id, hlc)`` already
+      exists (idempotent re-delivery, ADR-011).
+    - ``rejected:<code>`` — per-event validation failed; ``<code>`` is
+      the corresponding :class:`ErrorCode` value (``hlc_drift_exceeded``,
+      ``unknown_field``, ``value_type_mismatch``, or
+      ``invalid_payload_shape``).
+    """
+
+    hlc: str
+    outcome: str
+
+
+class EventBatchResponse(msgspec.Struct, forbid_unknown_fields=True):
+    """Response body for ``POST /events``.
+
+    ``outcomes`` is ordered to match the input ``events`` tuple, so a
+    client can correlate by index in addition to by ``hlc``.
+    """
+
+    outcomes: tuple[EventOutcome, ...]

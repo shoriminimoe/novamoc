@@ -1,11 +1,11 @@
-"""Scaffold-level tests for ``POST /events`` (M1.1)."""
+"""Smoke tests for ``POST /events`` (M1.1 scaffold + M1.5 outcomes)."""
 
 from __future__ import annotations
 
 from uuid import uuid4
 
 
-async def test_post_events_returns_202_for_valid_batch(client) -> None:
+async def test_post_events_returns_202_with_accepted_outcome(client) -> None:
     resp = await client.post(
         "/events",
         json={
@@ -25,13 +25,18 @@ async def test_post_events_returns_202_for_valid_batch(client) -> None:
         },
     )
     assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body == {
+        "outcomes": [
+            {"hlc": "0001700000000000-00000-abc", "outcome": "accepted"},
+        ]
+    }
 
 
 async def test_post_events_accepts_empty_batch(client) -> None:
-    # Empty batches are syntactically valid; this issue is scaffold-only
-    # and explicitly defers all validation to later milestones (M1.2+).
     resp = await client.post(
         "/events",
         json={"schema_version": 0, "events": []},
     )
     assert resp.status_code == 202, resp.text
+    assert resp.json() == {"outcomes": []}
