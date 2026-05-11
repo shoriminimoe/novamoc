@@ -20,6 +20,7 @@ from novamoc.domain.events._payloads import (
     Deactivated,
     EntityFamily,
     EventEnvelope,
+    Parent,
     Updated,
 )
 from novamoc.domain.events.services import EventLogService
@@ -75,7 +76,10 @@ async def test_created_with_valid_values(
     ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES)
     type_id = ids["maintenance_record_type"]["OilChange"]
     field_id = ids["maintenance_record_type_field"]["notes"]
-    body = Created(values={str(field_id): "All filters replaced."})
+    body = Created(
+        parent=Parent(type_id=uuid4(), instance_id=uuid4()),
+        values={str(field_id): "All filters replaced."},
+    )
     await maintenance_record.created(event_services, _auth(), _envelope(type_id, body))
 
 

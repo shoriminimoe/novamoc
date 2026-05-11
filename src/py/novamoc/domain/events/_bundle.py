@@ -27,6 +27,7 @@ from novamoc.domain.events._payloads import (
     Updated,
 )
 from novamoc.domain.events._projection import apply_entity_projection
+from novamoc.domain.events._row_state import apply_row_state
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -137,6 +138,11 @@ class EventServiceBundle:
                     },
                     auto_commit=False,
                 )
+                # Row-state runs BEFORE per-field application so a
+                # Created event's row exists by the time M1.7 mirrors
+                # values into the entity table. Updated has no
+                # row-state component and this call is a no-op for it.
+                await apply_row_state(session, event)
                 for field_id, value in _values_for_fold(event.body).items():
                     upsert = FieldUpsert(
                         family=event.family,
