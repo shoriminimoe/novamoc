@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Override root .gitignore patterns that legitimately apply to Python
+# build artifacts but accidentally match SPA source / lockfile / env template.
+!src/lib/
+!package-lock.json
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
