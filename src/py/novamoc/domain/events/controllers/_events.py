@@ -1,34 +1,23 @@
 """HTTP controller for ``/events`` (ADR-013).
 
-The controller runs the request through one batch-level gate and a
-per-event pipeline. Batch-level failures (``schema_version_stale``,
-malformed body) reject the whole submission via
-``application/problem+json``; per-event outcomes are atomic at the
-event grain (M1.5).
+Batch-level failures (``schema_version_stale``, malformed body) reject
+the whole submission via ``application/problem+json``; per-event work
+is atomic at the event grain (M1.5).
 
-1. **Schema-version gate** (batch-level, M1.3 / ADR-008 / ADR-009): the
-   batch's ``schema_version`` must equal the tenant's current schema
-   version. A mismatch raises ``schema_version_stale``.
+Batch-level: ``schema_version`` must equal the tenant's current schema
+version (M1.3 / ADR-008 / ADR-009).
 
-For each event in order:
+Per event, in order:
 
-* HLC parse + drift check (M1.2, ADR-006). Malformed HLCs and HLCs
-  more than ``AppSettings.hlc_drift_limit_seconds`` ahead of the
-  server are reported as ``rejected:invalid_payload_shape`` and
-  ``rejected:hlc_drift_exceeded`` respectively.
-* Handler dispatch (M1.4). The ``(family, body_type)`` handler runs
-  field-existence + value-shape validation; the controller does not
-  import ``_validators`` directly. Domain errors raised by the
-  handler are reported as ``rejected:<code>``.
-* Append to ``event_log`` (M1.5, ADR-011). A row whose
-  ``UNIQUE(tenant_id, hlc)`` collides with an existing row is
-  reported as ``duplicate`` (idempotent re-delivery). Inserts run
-  inside a ``begin_nested()`` savepoint so an ``IntegrityError`` on
-  one event leaves the surrounding transaction usable for the next.
-
-Projection writes (field-value LWW, row state, entity-table updates)
-land in M1.6+. This controller currently only writes to
-``event_log``; the fold runs against that log later.
+* HLC parse + drift check (M1.2 / ADR-006) → ``rejected:invalid_payload_shape``
+  or ``rejected:hlc_drift_exceeded``.
+* Handler dispatch (M1.4). ``DomainError`` from the
+  ``(family, body_type)`` handler becomes ``rejected:<code>``; the
+  controller does not import ``_validators``.
+* Append to ``event_log`` (M1.5 / ADR-011). A ``UNIQUE(tenant_id, hlc)``
+  collision lands as ``duplicate``. Each insert runs inside a
+  ``begin_nested()`` savepoint so one ``IntegrityError`` does not
+  poison the rest of the batch.
 """
 
 from __future__ import annotations
@@ -85,12 +74,11 @@ async def _provide_drift_limit_seconds(state: State) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AppendDeps:
-    """Aggregated dependencies for :meth:`EventsController.append`.
+    """DI-injectable bundle so :meth:`EventsController.append` takes one
+    parameter instead of five.
 
-    Bundles services + tunables into one DI-injectable container so
-    the handler signature stays narrow. Public name (no underscore
-    prefix) because Litestar's signature parser resolves the type at
-    import time when binding the parameter.
+    Public name (no underscore prefix) because Litestar's signature
+    parser resolves the type at import time when binding the parameter.
     """
 
     drift_limit_seconds: float
@@ -124,16 +112,16 @@ def _op_for_body(body: object) -> EventOp:
 
 
 def _value_json_for_body(body: object) -> dict[str, Any] | None:
-    """Round-trip the body through msgspec so the stored payload
-    matches the wire shape. ``Deactivated`` carries no payload."""
+    """``Deactivated`` carries no payload; everything else round-trips
+    through msgspec to match the wire shape."""
     if isinstance(body, Deactivated):
         return None
     return msgspec.to_builtins(body)
 
 
 class _RejectOutcomeError(Exception):
-    """Sentinel raised by per-event validators to short-circuit the
-    pipeline with a ``rejected:<code>`` outcome."""
+    """Sentinel for per-event validators to short-circuit with a
+    ``rejected:<code>`` outcome."""
 
     def __init__(self, code: ErrorCode) -> None:
         super().__init__(code.value)
@@ -151,8 +139,8 @@ async def _validate_event(
     """Run M1.2 HLC + M1.4 dispatch checks for one event.
 
     Raises:
-        _RejectOutcomeError: validation failed; the caller maps the
-            attached ``code`` to a ``rejected:<code>`` outcome.
+        _RejectOutcomeError: validation failed; ``code`` maps to the
+            ``rejected:<code>`` outcome.
     """
     try:
         parsed = HLC.parse(event.hlc)
@@ -178,11 +166,12 @@ async def _append_one(
     """Insert one ``event_log`` row inside a savepoint.
 
     The savepoint isolates the ``IntegrityError`` path so the outer
-    transaction — committed at response time by the autocommit
-    handler — stays usable for subsequent events in the batch.
+    transaction (committed at response time by the autocommit handler)
+    stays usable for subsequent events in the batch.
 
     Returns:
-        ``accepted`` or ``duplicate`` outcome.
+        ``accepted`` for a fresh insert, ``duplicate`` if the
+        ``UNIQUE(tenant_id, hlc)`` constraint was hit.
     """
     session = event_log_service.repository.session
     try:
