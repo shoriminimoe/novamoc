@@ -22,7 +22,7 @@ is populated by ``AuthenticationMiddleware`` — Litestar's standard
 attribute access, not a DI provider.
 
 Error rendering is the app-level ``ProblemDetailsPlugin`` registered in
-``novamoc.asgi.create_app``: ``SchemaError``,
+``novamoc.asgi.create_app``: ``DomainError``,
 ``msgspec.ValidationError``, and Litestar's ``ValidationException`` all
 render as ``application/problem+json`` per ADR-016. The controller does
 not register exception handlers itself.

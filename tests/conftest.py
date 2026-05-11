@@ -25,8 +25,8 @@ import novamoc.db.models  # noqa: F401
 from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.asgi import create_app
 from novamoc.config import (
+    AppSettings,
     DatabaseSettings,
-    ProblemSettings,
     ServerSettings,
     Settings,
     problem_html_dir,
@@ -172,7 +172,7 @@ def settings() -> Settings:
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),
-        problem=ProblemSettings(docs_base_url="http://test"),
+        app=AppSettings(docs_base_url="http://test"),
     )
 
 

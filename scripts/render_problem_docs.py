@@ -31,7 +31,7 @@ from markdown_it import MarkdownIt
 
 from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.api._problem_details import _TITLES
-from novamoc.domain.schema._errors import ErrorCode
+from novamoc.domain._errors import ErrorCode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

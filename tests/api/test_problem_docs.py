@@ -16,7 +16,7 @@ from render_problem_docs import _default_src_dir, render_all, render_one
 
 from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.api._problem_details import _TITLES
-from novamoc.domain.schema._errors import ErrorCode
+from novamoc.domain._errors import ErrorCode
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from novamoc.api._problem_codes import PROBLEM_CODES
-from novamoc.domain.schema._errors import ErrorCode
+from novamoc.domain._errors import ErrorCode
 
 
 def test_problem_codes_includes_every_error_code_member() -> None:

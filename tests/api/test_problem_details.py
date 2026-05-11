@@ -6,11 +6,11 @@ from litestar.plugins.problem_details import ProblemDetailsException
 
 from novamoc.api._problem_details import (
     ProblemDetails,
+    make_domain_error_converter,
     make_litestar_validation_error_converter,
     make_msgspec_validation_error_converter,
-    make_schema_error_converter,
 )
-from novamoc.domain.schema._errors import (
+from novamoc.domain._errors import (
     ConflictError,
     EntityNotFoundError,
     ErrorCode,
@@ -39,7 +39,7 @@ def test_problem_details_minimal_encode() -> None:
 
 
 def test_schema_command_error_conflict_renders_409_with_extras() -> None:
-    convert = make_schema_error_converter(_BASE_URL)
+    convert = make_domain_error_converter(_BASE_URL)
     exc = ConflictError(code=ErrorCode.NAME_RESERVED, name="Truck")
     pd_exc = convert(exc)
 
@@ -54,7 +54,7 @@ def test_schema_command_error_conflict_renders_409_with_extras() -> None:
 
 
 def test_schema_command_error_payload_shape_renders_400() -> None:
-    convert = make_schema_error_converter(_BASE_URL)
+    convert = make_domain_error_converter(_BASE_URL)
     exc = PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
     pd_exc = convert(exc)
 
@@ -63,7 +63,7 @@ def test_schema_command_error_payload_shape_renders_400() -> None:
 
 
 def test_schema_command_error_entity_not_found_renders_404() -> None:
-    convert = make_schema_error_converter(_BASE_URL)
+    convert = make_domain_error_converter(_BASE_URL)
     exc = EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
     pd_exc = convert(exc)
 
