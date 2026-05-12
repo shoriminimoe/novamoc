@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Clears clause superseded by ADR-019.
 
 ## Context
 
@@ -80,7 +80,7 @@ Reads filter on `WHERE deleted = 0`. Like `properties`, both columns can be rebu
 
 Equivalent behavior can be implemented as a SQLite trigger if both environments support triggers cleanly; the semantics are the same. Application-level transactions give more explicit control to start with.
 
-**Clears.** A `set` event with `value_json = NULL`, or a field-grain `delete`, sets the corresponding key in `properties` to JSON `null` for user fields (superseded by ADR-019; this ADR originally specified `json_remove`), or sets the corresponding column to NULL for `col:` events.
+**Clears.** A `set` event with `value_json = NULL`, or a field-grain `delete`, removes the corresponding key from `properties` for user fields, or sets the corresponding column to NULL for `col:` events.
 
 **Reads.** Application queries read from entity tables using `json_extract(properties, '$.field_name')` for user-defined fields, as in ADR-005. The `*_field_values` tables are projection bookkeeping, not a read surface for application code.
 
