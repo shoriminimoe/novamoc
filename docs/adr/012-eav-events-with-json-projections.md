@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Clears clause superseded by ADR-019.
 
 ## Context
 
