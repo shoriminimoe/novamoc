@@ -1,18 +1,20 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
-  import { postSchemaCommand, type SchemaCommandBody } from './commands'
-  import type { TypeView } from './schema'
+  import { postSchemaCommand, type FieldKind, type SchemaCommandBody } from './commands'
+  import type { FieldView } from './schema'
 
   interface Props {
-    type: TypeView
+    kind: FieldKind
+    field: FieldView
     onChanged: () => void
   }
 
-  let { type, onChanged }: Props = $props()
+  let { kind, field, onChanged }: Props = $props()
 
   type Mode =
     | { kind: 'idle' }
     | { kind: 'renaming'; draft: string }
+    | { kind: 'confirming_clear' }
     | { kind: 'confirming_delete' }
     | { kind: 'submitting' }
     | { kind: 'error'; status: number; code: string; message: string }
@@ -24,7 +26,11 @@
   }
 
   function startRename(): void {
-    mode = { kind: 'renaming', draft: type.name }
+    mode = { kind: 'renaming', draft: field.name }
+  }
+
+  function startConfirmClear(): void {
+    mode = { kind: 'confirming_clear' }
   }
 
   function startConfirmDelete(): void {
@@ -60,34 +66,42 @@
     event.preventDefault()
     if (mode.kind !== 'renaming') return
     const draft = mode.draft.trim()
-    if (draft === '' || draft === type.name) return
+    if (draft === '' || draft === field.name) return
     void send({
-      type: 'update_asset_type',
-      entity_id: type.id,
+      type: `update_${kind}`,
+      entity_id: field.id,
       payload: { name: draft },
     })
   }
 
   function activate(): void {
     void send({
-      type: 'activate_asset_type',
-      entity_id: type.id,
+      type: `activate_${kind}`,
+      entity_id: field.id,
       payload: {},
     })
   }
 
   function deactivate(): void {
     void send({
-      type: 'deactivate_asset_type',
-      entity_id: type.id,
+      type: `deactivate_${kind}`,
+      entity_id: field.id,
+      payload: {},
+    })
+  }
+
+  function confirmClear(): void {
+    void send({
+      type: `clear_${kind}`,
+      entity_id: field.id,
       payload: {},
     })
   }
 
   function confirmDelete(): void {
     void send({
-      type: 'delete_asset_type',
-      entity_id: type.id,
+      type: `delete_${kind}`,
+      entity_id: field.id,
       payload: {},
     })
   }
@@ -98,17 +112,20 @@
   let busy = $derived(mode.kind === 'submitting')
 </script>
 
-<div class="mt-3 space-y-2">
+<div class="mt-1 space-y-1">
   {#if mode.kind === 'renaming'}
     <form class="flex items-end gap-2" onsubmit={submitRename}>
       <div class="flex-1">
-        <label for="rename-{type.id}" class="block text-xs font-medium text-gray-700">
+        <label
+          for="rename-{kind}-{field.id}"
+          class="block text-[10px] font-medium text-gray-700"
+        >
           New name
         </label>
         <input
-          id="rename-{type.id}"
+          id="rename-{kind}-{field.id}"
           type="text"
-          class="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
+          class="mt-0.5 w-full rounded border px-2 py-0.5 font-mono text-xs"
           class:border-gray-300={!nameError}
           class:border-red-500={nameError}
           class:ring-1={nameError}
@@ -119,33 +136,57 @@
       </div>
       <button
         type="button"
-        class="rounded border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
+        class="rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50"
         onclick={reset}
       >
         Cancel
       </button>
       <button
         type="submit"
-        class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-        disabled={mode.draft.trim() === '' || mode.draft.trim() === type.name}
+        class="rounded bg-blue-600 px-2 py-0.5 text-xs text-white disabled:opacity-50"
+        disabled={mode.draft.trim() === '' || mode.draft.trim() === field.name}
       >
         Save
       </button>
     </form>
-  {:else if mode.kind === 'confirming_delete'}
-    <div class="flex items-center justify-between rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
-      <span>Delete <span class="font-mono">{type.name}</span>?</span>
+  {:else if mode.kind === 'confirming_clear'}
+    <div
+      class="flex items-center justify-between rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800"
+    >
+      <span>Clear values for <span class="font-mono">{field.name}</span>?</span>
       <span class="flex gap-2">
         <button
           type="button"
-          class="rounded border border-red-300 bg-white px-2 py-0.5 text-xs hover:bg-red-100"
+          class="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] hover:bg-amber-100"
           onclick={reset}
         >
           Cancel
         </button>
         <button
           type="button"
-          class="rounded bg-red-600 px-2 py-0.5 text-xs text-white"
+          class="rounded bg-amber-600 px-2 py-0.5 text-[10px] text-white"
+          onclick={confirmClear}
+        >
+          Clear
+        </button>
+      </span>
+    </div>
+  {:else if mode.kind === 'confirming_delete'}
+    <div
+      class="flex items-center justify-between rounded border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800"
+    >
+      <span>Delete field <span class="font-mono">{field.name}</span>?</span>
+      <span class="flex gap-2">
+        <button
+          type="button"
+          class="rounded border border-red-300 bg-white px-2 py-0.5 text-[10px] hover:bg-red-100"
+          onclick={reset}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="rounded bg-red-600 px-2 py-0.5 text-[10px] text-white"
           onclick={confirmDelete}
         >
           Delete
@@ -153,19 +194,19 @@
       </span>
     </div>
   {:else}
-    <div class="flex flex-wrap gap-2 text-xs">
+    <div class="flex flex-wrap gap-1.5 text-[11px]">
       <button
         type="button"
-        class="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50"
+        class="rounded border border-gray-300 px-1.5 py-0.5 hover:bg-gray-50 disabled:opacity-50"
         onclick={startRename}
         disabled={busy}
       >
         Rename
       </button>
-      {#if type.active}
+      {#if field.active}
         <button
           type="button"
-          class="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50"
+          class="rounded border border-gray-300 px-1.5 py-0.5 hover:bg-gray-50 disabled:opacity-50"
           onclick={deactivate}
           disabled={busy}
         >
@@ -174,7 +215,7 @@
       {:else}
         <button
           type="button"
-          class="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50"
+          class="rounded border border-gray-300 px-1.5 py-0.5 hover:bg-gray-50 disabled:opacity-50"
           onclick={activate}
           disabled={busy}
         >
@@ -183,7 +224,15 @@
       {/if}
       <button
         type="button"
-        class="rounded border border-red-300 px-2 py-0.5 text-red-700 hover:bg-red-50 disabled:opacity-50"
+        class="rounded border border-amber-300 px-1.5 py-0.5 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+        onclick={startConfirmClear}
+        disabled={busy}
+      >
+        Clear
+      </button>
+      <button
+        type="button"
+        class="rounded border border-red-300 px-1.5 py-0.5 text-red-700 hover:bg-red-50 disabled:opacity-50"
         onclick={startConfirmDelete}
         disabled={busy}
       >
@@ -196,9 +245,9 @@
   {/if}
 
   {#if mode.kind === 'error'}
-    <p class="text-xs text-red-700">
+    <p class="text-[11px] text-red-700">
       {#if mode.code === 'entity_not_found'}
-        This asset type no longer exists — reload.
+        This field no longer exists — reload.
       {:else}
         {mode.status} · {mode.code} — {mode.message}
       {/if}

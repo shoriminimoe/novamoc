@@ -1,11 +1,11 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
   import { fetchSchema, type SchemaSnapshot, type TypeView } from './schema'
-  import AssetTypeActions from './AssetTypeActions.svelte'
-  import AssetTypeCreateForm from './AssetTypeCreateForm.svelte'
-  import AssetTypeFieldActions from './AssetTypeFieldActions.svelte'
-  import AssetTypeFieldCreateForm from './AssetTypeFieldCreateForm.svelte'
+  import FieldActions from './FieldActions.svelte'
+  import FieldCreateForm from './FieldCreateForm.svelte'
+  import TypeActions from './TypeActions.svelte'
   import TypeCard from './TypeCard.svelte'
+  import TypeCreateForm from './TypeCreateForm.svelte'
 
   interface Props {
     /** Bump from outside to force a re-fetch (e.g. after the token changes). */
@@ -96,10 +96,18 @@
     {@const assetTypes = visibleTypes(loadState.snapshot.asset_types)}
     {@const activeAssetTypes = loadState.snapshot.asset_types.filter((t) => t.active)}
     {@const recordTypes = visibleTypes(loadState.snapshot.maintenance_record_types)}
+    {@const activeRecordTypes = loadState.snapshot.maintenance_record_types.filter((t) => t.active)}
     <div class="grid gap-8 md:grid-cols-2">
       <div class="space-y-4">
-        <AssetTypeCreateForm onCreated={() => void load()} />
-        <AssetTypeFieldCreateForm
+        <TypeCreateForm
+          kind="asset_type"
+          label="asset type"
+          onCreated={() => void load()}
+        />
+        <FieldCreateForm
+          kind="asset_type_field"
+          label="asset-type field"
+          parentLabel="Parent asset type"
           parents={activeAssetTypes}
           onCreated={() => void load()}
         />
@@ -116,17 +124,37 @@
               <div>
                 <TypeCard {type} {showTombstoned}>
                   {#snippet fieldActions(field)}
-                    <AssetTypeFieldActions {field} onChanged={() => void load()} />
+                    <FieldActions
+                      kind="asset_type_field"
+                      {field}
+                      onChanged={() => void load()}
+                    />
                   {/snippet}
                 </TypeCard>
-                <AssetTypeActions {type} onChanged={() => void load()} />
+                <TypeActions
+                  kind="asset_type"
+                  {type}
+                  onChanged={() => void load()}
+                />
               </div>
             {/each}
           </div>
         {/if}
       </div>
-      <div>
-        <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-600">
+      <div class="space-y-4">
+        <TypeCreateForm
+          kind="maintenance_record_type"
+          label="maintenance record type"
+          onCreated={() => void load()}
+        />
+        <FieldCreateForm
+          kind="maintenance_record_type_field"
+          label="maintenance-record-type field"
+          parentLabel="Parent maintenance record type"
+          parents={activeRecordTypes}
+          onCreated={() => void load()}
+        />
+        <h3 class="mb-3 mt-4 text-sm font-semibold uppercase tracking-wide text-gray-600">
           Maintenance record types ({recordTypes.length})
         </h3>
         {#if recordTypes.length === 0}
@@ -136,7 +164,22 @@
         {:else}
           <div class="space-y-3">
             {#each recordTypes as type (type.id)}
-              <TypeCard {type} {showTombstoned} />
+              <div>
+                <TypeCard {type} {showTombstoned}>
+                  {#snippet fieldActions(field)}
+                    <FieldActions
+                      kind="maintenance_record_type_field"
+                      {field}
+                      onChanged={() => void load()}
+                    />
+                  {/snippet}
+                </TypeCard>
+                <TypeActions
+                  kind="maintenance_record_type"
+                  {type}
+                  onChanged={() => void load()}
+                />
+              </div>
             {/each}
           </div>
         {/if}
