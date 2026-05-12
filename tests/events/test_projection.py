@@ -121,9 +121,11 @@ async def test_user_field_writes_into_properties_json(session: AsyncSession) -> 
     assert asset.properties == {field_id: "ABC123"}
 
 
-async def test_user_field_null_removes_key_from_properties(
+async def test_user_field_null_keeps_key_with_json_null_in_properties(
     session: AsyncSession,
 ) -> None:
+    # ADR-019: a cleared user field stays in ``properties`` as JSON
+    # null rather than being removed.
     asset_id = uuid4()
     field_id = str(uuid4())
     await _seed_asset(session, asset_id=asset_id)
@@ -136,7 +138,7 @@ async def test_user_field_null_removes_key_from_properties(
     )
 
     asset = await _read_asset(session, asset_id)
-    assert asset.properties == {}
+    assert asset.properties == {field_id: None}
 
 
 async def test_user_field_update_replaces_value_in_properties(

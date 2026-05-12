@@ -1,4 +1,4 @@
-"""Entity-table projection updates (M1.7, ADR-005 / ADR-012).
+"""Entity-table projection updates (M1.7, ADR-005 / ADR-012 / ADR-019).
 
 Each accepted-and-applied field-grain event mirrors into the entity
 table so application reads can use ``json_extract(properties, ...)``
@@ -7,10 +7,11 @@ mirror is gated on the M1.6 fold's applied/skipped signal: a stale
 event must not update the entity row when the field-value row was
 rejected by the HLC guard, otherwise the two projections diverge.
 
-User-field keys go into the ``properties`` JSON via ``json_set`` /
-``json_remove``; ``col:<name>`` keys target the named column directly.
-A ``null`` value is the cell-clearing sentinel (ADR-012 clears) —
-``json_remove`` for user fields, ``SET <col> = NULL`` for ``col:``.
+User-field keys go into the ``properties`` JSON via ``json_set``;
+``col:<name>`` keys target the named column directly. A ``null``
+value is the cell-clearing sentinel (ADR-019, revising ADR-012) —
+``json_set(..., NULL)`` for user fields so the key stays present
+with JSON ``null``, and ``SET <col> = NULL`` for ``col:``.
 
 The update is a no-op when the entity row does not exist yet — that's
 the M1.8 row-state path (existence + restore). M1.7 + M1.8 together
@@ -50,10 +51,10 @@ def _properties_path(field_id: str) -> str:
 
 
 def _value_expression(properties_col: Any, field_id: str, value: Any) -> Any:
-    path = _properties_path(field_id)
-    if value is None:
-        return func.json_remove(properties_col, path)
-    return func.json_set(properties_col, path, value)
+    # ADR-019: a cleared user field stays in ``properties`` as JSON
+    # null rather than being removed, so the entity's projection
+    # reflects its full schema state.
+    return func.json_set(properties_col, _properties_path(field_id), value)
 
 
 async def apply_entity_projection(session: AsyncSession, upsert: FieldUpsert) -> None:
