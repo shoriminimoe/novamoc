@@ -1,15 +1,20 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
-  import { postSchemaCommand } from './commands'
+  import { postSchemaCommand, type FieldKind } from './commands'
   import type { FieldDataType, TypeView } from './schema'
 
   interface Props {
-    /** Active asset types — used to populate the parent dropdown. */
+    kind: FieldKind
+    /** Human label, e.g. "asset-type field" or "maintenance-record-type field". */
+    label: string
+    /** Parent label for the dropdown, e.g. "Parent asset type". */
+    parentLabel: string
+    /** Active parent types — used to populate the parent dropdown. */
     parents: TypeView[]
     onCreated: () => void
   }
 
-  let { parents, onCreated }: Props = $props()
+  let { kind, label, parentLabel, parents, onCreated }: Props = $props()
 
   type SubmitState =
     | { kind: 'idle' }
@@ -32,6 +37,11 @@
   let validationJson = $state('')
   let submitState = $state<SubmitState>({ kind: 'idle' })
   let parentInput = $state<HTMLSelectElement | null>(null)
+
+  let parentInputId = $derived(`new-${kind}-parent`)
+  let nameInputId = $derived(`new-${kind}-name`)
+  let dataTypeInputId = $derived(`new-${kind}-data-type`)
+  let validationInputId = $derived(`new-${kind}-validation`)
 
   function open(): void {
     expanded = true
@@ -87,7 +97,7 @@
     submitState = { kind: 'submitting' }
     try {
       await postSchemaCommand(createApiClient(), {
-        type: 'create_asset_type_field',
+        type: `create_${kind}`,
         entity_id: crypto.randomUUID(),
         payload: {
           parent_id: parentId,
@@ -138,9 +148,9 @@
     class="w-full rounded border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
     onclick={open}
     disabled={noParents}
-    title={noParents ? 'Create an asset type first' : ''}
+    title={noParents ? `Create a ${parentLabel.toLowerCase()} first` : ''}
   >
-    + New asset-type field
+    + New {label}
   </button>
 {:else}
   <form
@@ -149,13 +159,13 @@
   >
     <div>
       <label
-        for="new-asset-type-field-parent"
+        for={parentInputId}
         class="block text-xs font-medium text-gray-700"
       >
-        Parent asset type
+        {parentLabel}
       </label>
       <select
-        id="new-asset-type-field-parent"
+        id={parentInputId}
         class="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
         class:border-gray-300={!parentError}
         class:border-red-500={parentError}
@@ -172,14 +182,11 @@
       </select>
     </div>
     <div>
-      <label
-        for="new-asset-type-field-name"
-        class="block text-xs font-medium text-gray-700"
-      >
+      <label for={nameInputId} class="block text-xs font-medium text-gray-700">
         Name
       </label>
       <input
-        id="new-asset-type-field-name"
+        id={nameInputId}
         type="text"
         class="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
         class:border-gray-300={!nameError}
@@ -193,13 +200,13 @@
     </div>
     <div>
       <label
-        for="new-asset-type-field-data-type"
+        for={dataTypeInputId}
         class="block text-xs font-medium text-gray-700"
       >
         Data type
       </label>
       <select
-        id="new-asset-type-field-data-type"
+        id={dataTypeInputId}
         class="mt-1 w-full rounded border border-gray-300 px-2 py-1 font-mono text-sm"
         bind:value={dataType}
         disabled={busy}
@@ -211,13 +218,13 @@
     </div>
     <div>
       <label
-        for="new-asset-type-field-validation"
+        for={validationInputId}
         class="block text-xs font-medium text-gray-700"
       >
         Validation (JSON object, optional)
       </label>
       <textarea
-        id="new-asset-type-field-validation"
+        id={validationInputId}
         class="mt-1 w-full rounded border px-2 py-1 font-mono text-xs"
         class:border-gray-300={!validationError}
         class:border-red-500={validationError}

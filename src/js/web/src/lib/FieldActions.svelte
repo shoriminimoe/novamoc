@@ -1,14 +1,15 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
-  import { postSchemaCommand, type SchemaCommandBody } from './commands'
+  import { postSchemaCommand, type FieldKind, type SchemaCommandBody } from './commands'
   import type { FieldView } from './schema'
 
   interface Props {
+    kind: FieldKind
     field: FieldView
     onChanged: () => void
   }
 
-  let { field, onChanged }: Props = $props()
+  let { kind, field, onChanged }: Props = $props()
 
   type Mode =
     | { kind: 'idle' }
@@ -67,7 +68,7 @@
     const draft = mode.draft.trim()
     if (draft === '' || draft === field.name) return
     void send({
-      type: 'update_asset_type_field',
+      type: `update_${kind}`,
       entity_id: field.id,
       payload: { name: draft },
     })
@@ -75,7 +76,7 @@
 
   function activate(): void {
     void send({
-      type: 'activate_asset_type_field',
+      type: `activate_${kind}`,
       entity_id: field.id,
       payload: {},
     })
@@ -83,7 +84,7 @@
 
   function deactivate(): void {
     void send({
-      type: 'deactivate_asset_type_field',
+      type: `deactivate_${kind}`,
       entity_id: field.id,
       payload: {},
     })
@@ -91,7 +92,7 @@
 
   function confirmClear(): void {
     void send({
-      type: 'clear_asset_type_field',
+      type: `clear_${kind}`,
       entity_id: field.id,
       payload: {},
     })
@@ -99,7 +100,7 @@
 
   function confirmDelete(): void {
     void send({
-      type: 'delete_asset_type_field',
+      type: `delete_${kind}`,
       entity_id: field.id,
       payload: {},
     })
@@ -116,13 +117,13 @@
     <form class="flex items-end gap-2" onsubmit={submitRename}>
       <div class="flex-1">
         <label
-          for="rename-field-{field.id}"
+          for="rename-{kind}-{field.id}"
           class="block text-[10px] font-medium text-gray-700"
         >
           New name
         </label>
         <input
-          id="rename-field-{field.id}"
+          id="rename-{kind}-{field.id}"
           type="text"
           class="mt-0.5 w-full rounded border px-2 py-0.5 font-mono text-xs"
           class:border-gray-300={!nameError}
