@@ -67,9 +67,18 @@ async def test_far_future_hlc_yields_rejected_outcome(
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["outcomes"] == [
-        {"hlc": _FAR_FUTURE_HLC, "outcome": "rejected:hlc_drift_exceeded"}
-    ]
+    assert len(body["outcomes"]) == 1
+    outcome = body["outcomes"][0]
+    assert outcome["hlc"] == _FAR_FUTURE_HLC
+    assert outcome["outcome"] == "rejected:hlc_drift_exceeded"
+    problem = outcome["problem"]
+    assert problem["type"] == "http://test/problems/hlc_drift_exceeded.html"
+    assert problem["title"] == "HLC drift exceeded"
+    assert problem["status"] == 400
+    # Top-level extension members per RFC 9457 §3.2 / ADR-016.
+    assert problem["hlc"] == _FAR_FUTURE_HLC
+    assert problem["limit_seconds"] == 5.0
+    assert problem["drift_seconds"] > 5.0
 
 
 async def test_malformed_hlc_yields_rejected_invalid_payload_shape(
@@ -81,9 +90,15 @@ async def test_malformed_hlc_yields_rejected_invalid_payload_shape(
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["outcomes"] == [
-        {"hlc": "not-an-hlc", "outcome": "rejected:invalid_payload_shape"}
-    ]
+    assert len(body["outcomes"]) == 1
+    outcome = body["outcomes"][0]
+    assert outcome["hlc"] == "not-an-hlc"
+    assert outcome["outcome"] == "rejected:invalid_payload_shape"
+    problem = outcome["problem"]
+    assert problem["type"] == "http://test/problems/invalid_payload_shape.html"
+    assert problem["title"] == "Invalid payload shape"
+    assert problem["status"] == 400
+    assert problem["hlc"] == "not-an-hlc"
 
 
 async def test_mixed_batch_records_each_event_independently(

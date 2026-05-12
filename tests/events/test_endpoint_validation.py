@@ -8,7 +8,7 @@ criteria — one rejected event must not poison the batch).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ def _event(
 
 async def _post_one(
     client: AsyncTestClient, schema_version: int, event: dict[str, object]
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Post a one-event batch; return the single outcome."""
     resp = await client.post(
         "/events", json={"schema_version": schema_version, "events": [event]}
@@ -103,6 +103,14 @@ async def test_unknown_user_field_rejects_unknown_field(
         _event(type_id=type_id, values={bogus_field_id: "x"}),
     )
     assert outcome["outcome"] == "rejected:unknown_field"
+    # The exception's extras must reach the wire — without them clients
+    # cannot diagnose which field on which type was unrecognised.
+    problem = outcome["problem"]
+    assert problem["type"].endswith("/problems/unknown_field.html")
+    assert problem["status"] == 404
+    assert problem["family"] == "asset"
+    assert problem["type_id"] == type_id
+    assert problem["field"] == bogus_field_id
 
 
 async def test_field_under_different_type_reported_as_unknown(
@@ -160,6 +168,12 @@ async def test_value_type_mismatch_rejects_with_code(client: AsyncTestClient) ->
         _event(type_id=type_id, values={field_id: "not-a-number"}),
     )
     assert outcome["outcome"] == "rejected:value_type_mismatch"
+    problem = outcome["problem"]
+    assert problem["type"].endswith("/problems/value_type_mismatch.html")
+    assert problem["status"] == 400
+    assert problem["field"] == field_id
+    assert problem["expected"] == "integer"
+    assert problem["received"] == "string"
 
 
 async def test_null_value_is_always_accepted(client: AsyncTestClient) -> None:

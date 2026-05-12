@@ -148,7 +148,7 @@ class EventBatch(msgspec.Struct, forbid_unknown_fields=True):
     events: tuple[EventEnvelope, ...]
 
 
-class EventOutcome(msgspec.Struct, forbid_unknown_fields=True):
+class EventOutcome(msgspec.Struct, forbid_unknown_fields=True, omit_defaults=True):
     """Per-event outcome in the ``POST /events`` response.
 
     ``outcome`` is one of:
@@ -160,10 +160,20 @@ class EventOutcome(msgspec.Struct, forbid_unknown_fields=True):
       the corresponding :class:`ErrorCode` value (``hlc_drift_exceeded``,
       ``unknown_field``, ``value_type_mismatch``, or
       ``invalid_payload_shape``).
+
+    Rejected outcomes also carry ``problem``, a dict shaped like the
+    ``application/problem+json`` body the same error would produce at
+    batch level — standard RFC 9457 slots (``type``, ``title``,
+    ``status``, ``detail``, ``instance``) plus per-code extension
+    members at top level (e.g. ``drift_seconds``, ``field``,
+    ``expected``). The docs page pointed to by ``problem.type``
+    documents the per-code extras. Omitted for ``accepted`` and
+    ``duplicate``.
     """
 
     hlc: str
     outcome: str
+    problem: dict[str, Any] | None = None
 
 
 class EventBatchResponse(msgspec.Struct, forbid_unknown_fields=True):

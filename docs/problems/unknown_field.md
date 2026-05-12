@@ -4,13 +4,20 @@ a field that exists in the schema but under a different
 `asset_type` (or `maintenance_record_type`) is still reported as
 unknown for the type the event addressed.
 
-The response carries the following extension members:
+The problem body carries the following extension members:
 
 - `family` — the entity family the event targeted (`asset` or
   `maintenance_record`).
 - `type_id` — the user-schema type the event addressed.
 - `field` — the unrecognised field key, either a UUID (user
   field) or `col:<column>` (projection column).
+
+On `/events` the rejection arrives as a per-event entry in the
+response's `outcomes` array: `outcome` is `rejected:unknown_field`
+and the standard slots + extras above ride at the top of
+`outcomes[i].problem`. The HTTP status is the batch envelope's `202`;
+`problem.status` carries the `404` this rejection would surface at as
+a standalone request.
 
 ## Common causes
 

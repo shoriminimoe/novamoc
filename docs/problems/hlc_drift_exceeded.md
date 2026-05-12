@@ -4,12 +4,19 @@ server rejects these events at acceptance time so a single client with
 a badly-set clock cannot push the shared HLC state arbitrarily far into
 the future (ADR-006).
 
-The response carries three extension members:
+The problem body carries three extension members:
 
 - `hlc` — the rejected HLC string, as submitted.
 - `drift_seconds` — how far ahead of the server the HLC's physical
   component sits.
 - `limit_seconds` — the server's configured drift bound.
+
+On `/events` the rejection arrives as a per-event entry in the
+response's `outcomes` array: `outcome` is `rejected:hlc_drift_exceeded`
+and the standard slots + extras above ride at the top of
+`outcomes[i].problem`. The HTTP status is the batch envelope's `202`;
+`problem.status` carries the `400` this rejection would surface at as
+a standalone request.
 
 ## Common causes
 

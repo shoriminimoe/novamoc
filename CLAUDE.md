@@ -135,7 +135,14 @@ path for **data** events (ADR-002 / ADR-011 / ADR-013). Batch-level
 failures (``schema_version_stale``, malformed body) reject the whole
 submission via ``application/problem+json``; per-event work is atomic
 at the event grain (M1.5) and surfaces as ``accepted`` / ``duplicate``
-/ ``rejected:<code>`` outcomes in the response.
+/ ``rejected:<code>`` outcomes in the response. Rejected outcomes
+additionally carry ``problem``, a dict shaped like the
+``application/problem+json`` body the same error would produce at
+batch level — standard RFC 9457 slots (``type``, ``title``, ``status``,
+``detail``, ``instance``) plus per-code extension members at top level
+(``drift_seconds``, ``field``, ``expected``, ...). ``api/_problem_details.make_problem_body``
+builds it and is shared with the batch-level converter so the wire
+shape is identical.
 
 Controller responsibilities (all the controller does):
 
@@ -181,9 +188,13 @@ Pipeline mirrors the schema endpoint's shape:
    does no I/O; handlers feed it a preloaded field map.
 6. **Controller** — ``controllers/_events.py`` is thin: schema-version
    gate, per-event HLC check, ``dispatch(services, auth, event)``,
-   catch ``DomainError`` → ``rejected:<code>``. It does **not** import
-   ``_validators`` and does **not** touch ``event_log`` directly — both
-   are the handler's concern.
+   catch ``DomainError`` → ``rejected:<code>`` (with the problem body
+   built by ``make_problem_body``). The HLC parse and drift-exceeded
+   paths funnel through the same conversion by raising
+   ``PayloadShapeError`` / ``HLCDriftExceededError`` rather than
+   building outcomes inline. The controller does **not** import
+   ``_validators`` and does **not** touch ``event_log`` directly —
+   both are the handler's concern.
 
 Errors flow through the same problem-details converter as the schema
 endpoint. Per-event error types live in ``domain/events/_errors.py``
