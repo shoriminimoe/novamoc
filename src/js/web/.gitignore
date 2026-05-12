@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
 # Override root .gitignore patterns that legitimately apply to Python
 # build artifacts but accidentally match SPA source / lockfile / env template.
 !src/lib/
