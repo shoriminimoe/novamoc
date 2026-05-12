@@ -19,7 +19,7 @@ typecheck: typecheck-py
 
 # Test everything
 [parallel]
-test: test-py
+test: test-py test-js
 
 # Run the backend server
 serve: render-problem-docs
@@ -51,6 +51,10 @@ typecheck-py:
 # Test python
 test-py:
 	uv run pytest
+
+# Test javascript (Playwright browser e2e)
+test-js:
+	cd src/js/web && npm run test:e2e
 
 # Check ruff violation counts against the committed ratchet baseline
 ratchet:
