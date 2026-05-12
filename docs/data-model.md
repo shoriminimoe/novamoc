@@ -246,7 +246,7 @@ flowchart TB
 
     class AT_pump,ATF_sn,ATF_inst,MRT_oil,MRTF_hrs,MRTF_note schemaNode
     class SCL logNode
-    class EL  eventNode
+    class EL eventNode
     class A_pump01,AFV,MR_svc01,MRFV dataNode
 ```
 
