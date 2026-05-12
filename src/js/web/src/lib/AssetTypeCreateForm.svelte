@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
   import { postSchemaCommand } from './commands'
-  import { randomUUID } from './uuid'
 
   interface Props {
     onCreated: () => void
@@ -38,7 +37,7 @@
     try {
       await postSchemaCommand(createApiClient(), {
         type: 'create_asset_type',
-        entity_id: randomUUID(),
+        entity_id: crypto.randomUUID(),
         payload: { name: name.trim() },
       })
       close()

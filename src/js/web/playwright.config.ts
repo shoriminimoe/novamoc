@@ -19,7 +19,10 @@ import { defineConfig } from '@playwright/test'
 const API_PORT = 8765
 const APP_PORT = 5174
 const API_URL = `http://127.0.0.1:${API_PORT}`
-const APP_URL = `http://127.0.0.1:${APP_PORT}`
+// Vite serves HTTPS via ``@vitejs/plugin-basic-ssl`` so the browser sees
+// a secure context and ``crypto.randomUUID`` / ``crypto.subtle`` are
+// defined. The cert is self-signed, hence ``ignoreHTTPSErrors`` below.
+const APP_URL = `https://127.0.0.1:${APP_PORT}`
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -31,6 +34,7 @@ export default defineConfig({
   use: {
     baseURL: APP_URL,
     trace: 'retain-on-failure',
+    ignoreHTTPSErrors: true,
   },
   webServer: [
     {
@@ -53,6 +57,7 @@ export default defineConfig({
         VITE_DEFAULT_BEARER_TOKEN: 't1-dev-token',
       },
       url: APP_URL,
+      ignoreHTTPSErrors: true,
       reuseExistingServer: false,
       timeout: 30_000,
       stdout: 'pipe',
