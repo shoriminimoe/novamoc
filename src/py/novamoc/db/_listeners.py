@@ -148,11 +148,24 @@ def _inject_tenant_filter(state) -> None:
 # cross-tenant administrative DML.
 
 
+def _is_tenant_key(key: Any) -> bool:
+    """Return True if a dict key (string column name or Column) names ``tenant_id``.
+
+    SQLAlchemy 2.x normalises ``.values(tenant_id=...)`` into a dict keyed
+    by the column name string; older shapes use the Column object directly.
+    We accept both.
+    """
+    if isinstance(key, str):
+        return key == "tenant_id"
+    return getattr(key, "name", None) == "tenant_id"
+
+
 def _values_carries_tenant(insert_stmt: Insert, multiparams: Any, params: Any) -> bool:
     """Return True if the INSERT names tenant_id in its values or params.
 
     Covers the four shapes SQLAlchemy emits in practice:
-      * ``insert(t).values(tenant_id=...)``  -> ``_values`` dict.
+      * ``insert(t).values(tenant_id=...)``  -> ``_values`` dict whose keys
+        are column names (strings) under SQLAlchemy 2.x.
       * ``insert(t).values([{...}, {...}])`` -> ``_multi_values`` tuple of
         list of column->value dicts.
       * ``session.execute(insert(t), {...})`` -> single dict in ``params``.
@@ -161,7 +174,7 @@ def _values_carries_tenant(insert_stmt: Insert, multiparams: Any, params: Any) -
         dict carries ``tenant_id`` directly).
     """
     explicit = getattr(insert_stmt, "_values", None)
-    if explicit and any(getattr(col, "name", None) == "tenant_id" for col in explicit):
+    if explicit and any(_is_tenant_key(key) for key in explicit):
         return True
 
     multi_values = getattr(insert_stmt, "_multi_values", ()) or ()
