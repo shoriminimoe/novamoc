@@ -1,12 +1,15 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
-  import { postSchemaCommand } from './commands'
+  import { postSchemaCommand, type TypeKind } from './commands'
 
   interface Props {
+    kind: TypeKind
+    /** Human label, e.g. "asset type" or "maintenance record type". */
+    label: string
     onCreated: () => void
   }
 
-  let { onCreated }: Props = $props()
+  let { kind, label, onCreated }: Props = $props()
 
   type SubmitState =
     | { kind: 'idle' }
@@ -17,6 +20,8 @@
   let name = $state('')
   let submitState = $state<SubmitState>({ kind: 'idle' })
   let nameInput = $state<HTMLInputElement | null>(null)
+
+  let inputId = $derived(`new-${kind}-name`)
 
   function open(): void {
     expanded = true
@@ -36,7 +41,7 @@
     submitState = { kind: 'submitting' }
     try {
       await postSchemaCommand(createApiClient(), {
-        type: 'create_asset_type',
+        type: `create_${kind}`,
         entity_id: crypto.randomUUID(),
         payload: { name: name.trim() },
       })
@@ -72,7 +77,7 @@
     class="w-full rounded border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
     onclick={open}
   >
-    + New asset type
+    + New {label}
   </button>
 {:else}
   <form
@@ -80,11 +85,11 @@
     onsubmit={submit}
   >
     <div>
-      <label for="new-asset-type-name" class="block text-xs font-medium text-gray-700">
+      <label for={inputId} class="block text-xs font-medium text-gray-700">
         Name
       </label>
       <input
-        id="new-asset-type-name"
+        id={inputId}
         type="text"
         class="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
         class:border-gray-300={!nameError}

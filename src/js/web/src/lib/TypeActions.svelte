@@ -1,14 +1,15 @@
 <script lang="ts">
   import { createApiClient, ProblemDetailsError } from './api'
-  import { postSchemaCommand, type SchemaCommandBody } from './commands'
+  import { postSchemaCommand, type SchemaCommandBody, type TypeKind } from './commands'
   import type { TypeView } from './schema'
 
   interface Props {
+    kind: TypeKind
     type: TypeView
     onChanged: () => void
   }
 
-  let { type, onChanged }: Props = $props()
+  let { kind, type, onChanged }: Props = $props()
 
   type Mode =
     | { kind: 'idle' }
@@ -62,7 +63,7 @@
     const draft = mode.draft.trim()
     if (draft === '' || draft === type.name) return
     void send({
-      type: 'update_asset_type',
+      type: `update_${kind}`,
       entity_id: type.id,
       payload: { name: draft },
     })
@@ -70,7 +71,7 @@
 
   function activate(): void {
     void send({
-      type: 'activate_asset_type',
+      type: `activate_${kind}`,
       entity_id: type.id,
       payload: {},
     })
@@ -78,7 +79,7 @@
 
   function deactivate(): void {
     void send({
-      type: 'deactivate_asset_type',
+      type: `deactivate_${kind}`,
       entity_id: type.id,
       payload: {},
     })
@@ -86,7 +87,7 @@
 
   function confirmDelete(): void {
     void send({
-      type: 'delete_asset_type',
+      type: `delete_${kind}`,
       entity_id: type.id,
       payload: {},
     })
@@ -102,11 +103,11 @@
   {#if mode.kind === 'renaming'}
     <form class="flex items-end gap-2" onsubmit={submitRename}>
       <div class="flex-1">
-        <label for="rename-{type.id}" class="block text-xs font-medium text-gray-700">
+        <label for="rename-{kind}-{type.id}" class="block text-xs font-medium text-gray-700">
           New name
         </label>
         <input
-          id="rename-{type.id}"
+          id="rename-{kind}-{type.id}"
           type="text"
           class="mt-1 w-full rounded border px-2 py-1 font-mono text-sm"
           class:border-gray-300={!nameError}
@@ -198,7 +199,7 @@
   {#if mode.kind === 'error'}
     <p class="text-xs text-red-700">
       {#if mode.code === 'entity_not_found'}
-        This asset type no longer exists — reload.
+        This {kind === 'asset_type' ? 'asset type' : 'maintenance record type'} no longer exists — reload.
       {:else}
         {mode.status} · {mode.code} — {mode.message}
       {/if}
