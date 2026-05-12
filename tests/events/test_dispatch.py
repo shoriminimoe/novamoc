@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from novamoc.domain.events import _dispatch as dispatch_mod
 from novamoc.domain.events import _payloads
-from novamoc.domain.events._payloads import EntityFamily
+from novamoc.domain.events._payloads import EntityFamily, EventOutcome
 
 if TYPE_CHECKING:
     import pytest
@@ -18,8 +18,9 @@ async def test_dispatch_routes_created_to_asset_created(
 ) -> None:
     called: list[str] = []
 
-    async def _fake(*_args: Any, **_kwargs: Any) -> None:
+    async def _fake(*_args: Any, **_kwargs: Any) -> EventOutcome:
         called.append("asset.created")
+        return EventOutcome(hlc="0000000000000001-00000-client-a", outcome="accepted")
 
     monkeypatch.setitem(
         dispatch_mod._HANDLERS,
@@ -34,5 +35,6 @@ async def test_dispatch_routes_created_to_asset_created(
         instance_id=uuid4(),
         body=_payloads.Created(values={}),
     )
-    await dispatch_mod.dispatch(services=None, auth=None, event=event)  # ty: ignore[invalid-argument-type]
+    outcome = await dispatch_mod.dispatch(services=None, auth=None, event=event)  # ty: ignore[invalid-argument-type]
     assert called == ["asset.created"]
+    assert outcome.outcome == "accepted"

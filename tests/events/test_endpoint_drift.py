@@ -1,4 +1,4 @@
-"""End-to-end tests for HLC drift validation on ``POST /events``."""
+"""End-to-end tests for HLC drift on ``POST /events`` (M1.2 + M1.5)."""
 
 from __future__ import annotations
 
@@ -34,10 +34,6 @@ def _event(hlc: str) -> dict[str, object]:
 
 @pytest.fixture
 def settings() -> Settings:
-    # Tight drift budget so the rejection path is reachable with a
-    # plausible HLC. The default 60s would require an event > 1 min
-    # ahead, which works at runtime but is fragile in test wall-clock
-    # terms.
     return Settings(
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
@@ -56,43 +52,60 @@ async def test_past_hlc_is_accepted(client: AsyncTestClient) -> None:
         json={"schema_version": 0, "events": [_event(_PAST_HLC)]},
     )
     assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["outcomes"] == [{"hlc": _PAST_HLC, "outcome": "accepted"}]
 
 
-async def test_far_future_hlc_is_rejected_as_drift_exceeded(
+async def test_far_future_hlc_yields_rejected_outcome(
     client: AsyncTestClient,
 ) -> None:
+    # Per M1.5 drift is now a per-event reject, not a batch 4xx; the
+    # batch HTTP envelope still returns 202.
     resp = await client.post(
         "/events",
         json={"schema_version": 0, "events": [_event(_FAR_FUTURE_HLC)]},
     )
-    assert resp.status_code == 400, resp.text
+    assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["type"] == "http://test/problems/hlc_drift_exceeded.html"
-    assert body["title"] == "HLC drift exceeded"
-    assert body["status"] == 400
-    assert body["hlc"] == _FAR_FUTURE_HLC
-    assert body["limit_seconds"] == 5.0
-    assert body["drift_seconds"] > 5.0
+    assert len(body["outcomes"]) == 1
+    outcome = body["outcomes"][0]
+    assert outcome["hlc"] == _FAR_FUTURE_HLC
+    assert outcome["outcome"] == "rejected:hlc_drift_exceeded"
+    problem = outcome["problem"]
+    assert problem["type"] == "http://test/problems/hlc_drift_exceeded.html"
+    assert problem["title"] == "HLC drift exceeded"
+    assert problem["status"] == 400
+    # Top-level extension members per RFC 9457 §3.2 / ADR-016.
+    assert problem["hlc"] == _FAR_FUTURE_HLC
+    assert problem["limit_seconds"] == 5.0
+    assert problem["drift_seconds"] > 5.0
 
 
-async def test_malformed_hlc_is_rejected_as_invalid_payload_shape(
+async def test_malformed_hlc_yields_rejected_invalid_payload_shape(
     client: AsyncTestClient,
 ) -> None:
     resp = await client.post(
         "/events",
         json={"schema_version": 0, "events": [_event("not-an-hlc")]},
     )
-    assert resp.status_code == 400, resp.text
+    assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["type"] == "http://test/problems/invalid_payload_shape.html"
+    assert len(body["outcomes"]) == 1
+    outcome = body["outcomes"][0]
+    assert outcome["hlc"] == "not-an-hlc"
+    assert outcome["outcome"] == "rejected:invalid_payload_shape"
+    problem = outcome["problem"]
+    assert problem["type"] == "http://test/problems/invalid_payload_shape.html"
+    assert problem["title"] == "Invalid payload shape"
+    assert problem["status"] == 400
+    assert problem["hlc"] == "not-an-hlc"
 
 
-async def test_first_bad_event_rejects_whole_batch(
+async def test_mixed_batch_records_each_event_independently(
     client: AsyncTestClient,
 ) -> None:
-    # Atomicity contract: even though persistence lands in later
-    # milestones, the rejection path refuses a batch containing a bad
-    # event rather than partial-accepting it.
+    # A drift-exceeded event does NOT poison its neighbours (M1.5
+    # acceptance criteria): accepted events still apply.
     resp = await client.post(
         "/events",
         json={
@@ -100,9 +113,14 @@ async def test_first_bad_event_rejects_whole_batch(
             "events": [
                 _event(_PAST_HLC),
                 _event(_FAR_FUTURE_HLC),
-                _event(_PAST_HLC),
+                _event("0000000000000002-00000-client-a"),
             ],
         },
     )
-    assert resp.status_code == 400, resp.text
-    assert resp.json()["hlc"] == _FAR_FUTURE_HLC
+    assert resp.status_code == 202, resp.text
+    outcomes = resp.json()["outcomes"]
+    assert [o["outcome"] for o in outcomes] == [
+        "accepted",
+        "rejected:hlc_drift_exceeded",
+        "accepted",
+    ]

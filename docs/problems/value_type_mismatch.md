@@ -5,7 +5,7 @@ JSON booleans for `boolean`, ISO 8601 strings for `date` /
 `datetime`. `null` is always accepted (it is the "clear this cell"
 sentinel per the wire format).
 
-The response carries the following extension members:
+The problem body carries the following extension members:
 
 - `field` — the field key (UUID or `col:<column>`) whose value
   failed validation.
@@ -13,6 +13,13 @@ The response carries the following extension members:
   `integer`).
 - `received` — the JSON type observed (`string`, `number`,
   `integer`, `boolean`, `null`, `object`, `array`).
+
+On `/events` the rejection arrives as a per-event entry in the
+response's `outcomes` array: `outcome` is `rejected:value_type_mismatch`
+and the standard slots + extras above ride at the top of
+`outcomes[i].problem`. The HTTP status is the batch envelope's `202`;
+`problem.status` carries the `400` this rejection would surface at as
+a standalone request.
 
 ## Common causes
 

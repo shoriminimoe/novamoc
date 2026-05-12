@@ -25,7 +25,7 @@ registers them on the `ProblemDetailsPlugin`.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 from litestar.plugins.problem_details import ProblemDetailsException
@@ -100,6 +100,30 @@ def make_instance() -> str:
     """Return an opaque per-occurrence instance identifier (`urn:uuid:<uuid4>`)."""
 
     return f"urn:uuid:{uuid.uuid4()}"
+
+
+def make_problem_body(exc: DomainError, base_url: str) -> dict[str, Any]:
+    """RFC 9457 problem-details body for ``exc``.
+
+    The dict matches the JSON shape an ``application/problem+json``
+    response would carry: standard slots first (``type``, ``title``,
+    ``status``, ``detail``, ``instance``), then per-error extras as
+    top-level extension members per RFC 9457 §3.2.
+
+    Callers in the events endpoint embed this dict under
+    ``EventOutcome.problem`` so a rejected per-event outcome carries
+    the same diagnostic surface a batch-level error response would.
+    """
+    body: dict[str, Any] = {
+        "type": _type_uri(exc.code, base_url),
+        "title": _TITLES[exc.code],
+        "status": _STATUS_CODES[exc.code],
+        "detail": exc.message,
+        "instance": make_instance(),
+    }
+    if exc.extras:
+        body.update(exc.extras)
+    return body
 
 
 def make_domain_error_converter(

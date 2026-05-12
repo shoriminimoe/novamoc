@@ -8,6 +8,7 @@ import pytest
 
 from novamoc.domain.events._bundle import EventServiceBundle
 from novamoc.domain.events._payloads import EntityFamily
+from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     MaintenanceRecordTypeFieldService,
@@ -40,6 +41,8 @@ def event_services(session: AsyncSession) -> EventServiceBundle:
         maintenance_record_type_field_service=MaintenanceRecordTypeFieldService(
             session=session
         ),
+        event_log_service=EventLogService(session=session),
+        schema_version=0,
     )
 
 
