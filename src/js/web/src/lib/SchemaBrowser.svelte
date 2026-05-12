@@ -3,6 +3,8 @@
   import { fetchSchema, type SchemaSnapshot, type TypeView } from './schema'
   import AssetTypeActions from './AssetTypeActions.svelte'
   import AssetTypeCreateForm from './AssetTypeCreateForm.svelte'
+  import AssetTypeFieldActions from './AssetTypeFieldActions.svelte'
+  import AssetTypeFieldCreateForm from './AssetTypeFieldCreateForm.svelte'
   import TypeCard from './TypeCard.svelte'
 
   interface Props {
@@ -92,10 +94,15 @@
     </div>
   {:else if loadState.kind === 'loaded'}
     {@const assetTypes = visibleTypes(loadState.snapshot.asset_types)}
+    {@const activeAssetTypes = loadState.snapshot.asset_types.filter((t) => t.active)}
     {@const recordTypes = visibleTypes(loadState.snapshot.maintenance_record_types)}
     <div class="grid gap-8 md:grid-cols-2">
-      <div>
+      <div class="space-y-4">
         <AssetTypeCreateForm onCreated={() => void load()} />
+        <AssetTypeFieldCreateForm
+          parents={activeAssetTypes}
+          onCreated={() => void load()}
+        />
         <h3 class="mb-3 mt-4 text-sm font-semibold uppercase tracking-wide text-gray-600">
           Asset types ({assetTypes.length})
         </h3>
@@ -107,7 +114,11 @@
           <div class="space-y-3">
             {#each assetTypes as type (type.id)}
               <div>
-                <TypeCard {type} {showTombstoned} />
+                <TypeCard {type} {showTombstoned}>
+                  {#snippet fieldActions(field)}
+                    <AssetTypeFieldActions {field} onChanged={() => void load()} />
+                  {/snippet}
+                </TypeCard>
                 <AssetTypeActions {type} onChanged={() => void load()} />
               </div>
             {/each}

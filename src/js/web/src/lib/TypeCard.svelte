@@ -1,12 +1,19 @@
 <script lang="ts">
-  import type { TypeView } from './schema'
+  import type { Snippet } from 'svelte'
+  import type { FieldView, TypeView } from './schema'
 
   interface Props {
     type: TypeView
     showTombstoned: boolean
+    /**
+     * Optional per-field actions row, rendered under each field's
+     * display row. Lets the asset-types column inject field lifecycle
+     * controls without modifying the type-level display.
+     */
+    fieldActions?: Snippet<[FieldView]>
   }
 
-  let { type, showTombstoned }: Props = $props()
+  let { type, showTombstoned, fieldActions }: Props = $props()
 
   let visibleFields = $derived(
     showTombstoned ? type.fields : type.fields.filter((f) => f.active),
@@ -39,23 +46,25 @@
   {:else}
     <ul class="divide-y divide-gray-100">
       {#each visibleFields as field (field.id)}
-        <li
-          class="flex items-center justify-between py-1.5 text-sm"
-          class:opacity-60={!field.active}
-        >
-          <span class="font-mono">{field.name}</span>
-          <span class="flex items-center gap-2">
-            <span class="text-xs uppercase tracking-wide text-gray-500">
-              {field.data_type}
-            </span>
-            {#if !field.active}
-              <span
-                class="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-gray-700"
-              >
-                tombstoned
+        <li class="py-1.5" class:opacity-60={!field.active}>
+          <div class="flex items-center justify-between text-sm">
+            <span class="font-mono">{field.name}</span>
+            <span class="flex items-center gap-2">
+              <span class="text-xs uppercase tracking-wide text-gray-500">
+                {field.data_type}
               </span>
-            {/if}
-          </span>
+              {#if !field.active}
+                <span
+                  class="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-gray-700"
+                >
+                  tombstoned
+                </span>
+              {/if}
+            </span>
+          </div>
+          {#if fieldActions}
+            {@render fieldActions(field)}
+          {/if}
         </li>
       {/each}
     </ul>
