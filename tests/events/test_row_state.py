@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from novamoc.db.models.data import Asset, MaintenanceRecord
+from novamoc.domain._errors import ErrorCode, PayloadShapeError
 from novamoc.domain.events._payloads import (
     Activated,
     Created,
@@ -218,8 +219,9 @@ async def test_created_maintenance_record_requires_parent(
         instance_id=record_id,
         body=Created(values={}),
     )
-    with pytest.raises(ValueError, match="parent"):
+    with pytest.raises(PayloadShapeError, match="parent") as excinfo:
         await apply_row_state(session, event)
+    assert excinfo.value.code is ErrorCode.INVALID_PAYLOAD_SHAPE
 
 
 async def test_created_maintenance_record_with_parent_inserts(

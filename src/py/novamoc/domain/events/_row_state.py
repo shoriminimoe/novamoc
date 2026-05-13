@@ -31,6 +31,7 @@ from sqlalchemy.dialects.sqlite import insert
 
 from novamoc.db._tenant_context import current_tenant_id
 from novamoc.db.models.data import Asset, MaintenanceRecord
+from novamoc.domain._errors import ErrorCode, PayloadShapeError
 from novamoc.domain.events._payloads import (
     Activated,
     Created,
@@ -77,11 +78,14 @@ async def _apply_create(session, event: EventEnvelope) -> bool:
     body = event.body
     if event.family is EntityFamily.MAINTENANCE_RECORD:
         if not isinstance(body, Created) or body.parent is None:
-            # Created MR without a parent is a wire-shape error that
-            # earlier validation should have caught; bail rather than
-            # silently inserting a broken FK.
-            msg = "Created MR event missing parent reference"
-            raise ValueError(msg)
+            # Created MR without a parent is a wire-shape error. Raise a
+            # DomainError so the controller's catch maps it to
+            # rejected:invalid_payload_shape rather than a 500.
+            raise PayloadShapeError(
+                code=ErrorCode.INVALID_PAYLOAD_SHAPE,
+                message="Created MR event missing parent reference",
+                hlc=event.hlc,
+            )
         base_values["asset_id"] = body.parent.instance_id
 
     base = insert(table).values(base_values)  # ty: ignore[invalid-argument-type]
