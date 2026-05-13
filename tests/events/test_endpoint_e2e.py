@@ -21,6 +21,8 @@ from novamoc.db.models.data import (
     Asset,
     AssetFieldValue,
     EventLog,
+    MaintenanceRecord,
+    MaintenanceRecordFieldValue,
 )
 
 if TYPE_CHECKING:
@@ -100,6 +102,102 @@ def _created_event(
         "instance_id": str(instance_id),
         "body": {"event": "created", "values": values},
     }
+
+
+def _mr_created_event(
+    *,
+    type_id: UUID,
+    instance_id: UUID,
+    hlc: str,
+    values: dict[str, Any],
+    parent: dict[str, str] | None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"event": "created", "values": values}
+    if parent is not None:
+        body["parent"] = parent
+    return {
+        "hlc": hlc,
+        "family": "maintenance_record",
+        "type_id": str(type_id),
+        "instance_id": str(instance_id),
+        "body": body,
+    }
+
+
+async def _make_mr_field(
+    client: AsyncTestClient, *, data_type: str = "text"
+) -> tuple[UUID, UUID, int]:
+    """Create a maintenance_record_type + field via POST /schema. Returns
+    (type_id, field_id, schema_version)."""
+    type_id = uuid4()
+    field_id = uuid4()
+    resp = await client.post(
+        "/schema",
+        json={
+            "type": "create_maintenance_record_type",
+            "entity_id": str(type_id),
+            "payload": {"name": f"OilChange-{uuid4()}"},
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
+    resp = await client.post(
+        "/schema",
+        json={
+            "type": "create_maintenance_record_type_field",
+            "entity_id": str(field_id),
+            "payload": {
+                "parent_id": str(type_id),
+                "name": "mileage",
+                "data_type": data_type,
+            },
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
+    return type_id, field_id, int(resp.json()["schema_version"])
+
+
+async def _create_parent_asset(
+    client: AsyncTestClient, *, hlc: str
+) -> tuple[UUID, UUID, int]:
+    """Seed an asset_type + asset instance so an MR can reference it.
+
+    Returns ``(asset_type_id, asset_instance_id, schema_version)``. The
+    asset_type is created via ``POST /schema`` (bumping the tenant's
+    schema_version) and the asset row via ``POST /events`` (each
+    request commits its own transaction so the FK is satisfied by the
+    time the MR event lands). The returned ``schema_version`` is the
+    post-create value — callers reuse it for subsequent events so the
+    schema-version gate stays in sync.
+    """
+    asset_type_id = uuid4()
+    resp = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type",
+            "entity_id": str(asset_type_id),
+            "payload": {"name": f"Truck-{uuid4()}"},
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
+    schema_version = int(resp.json()["schema_version"])
+
+    asset_instance_id = uuid4()
+    resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                _created_event(
+                    type_id=asset_type_id,
+                    instance_id=asset_instance_id,
+                    hlc=hlc,
+                    values={"col:name": "Parent-Truck"},
+                )
+            ],
+        },
+    )
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted", resp.text
+    return asset_type_id, asset_instance_id, schema_version
 
 
 async def test_happy_path_writes_log_field_values_and_entity_row(
@@ -443,3 +541,211 @@ async def test_mixed_outcome_batch_appends_only_accepted_events(
             await _query(app, select(func.count()).select_from(EventLog))
         ).scalar_one()
         assert count == 2
+
+
+# --- maintenance_record-family coverage ---
+#
+# The events endpoint dispatches by ``(family, body type)`` to two
+# distinct handler modules (``_handlers/asset.py`` vs
+# ``_handlers/maintenance_record.py``); asset coverage above does not
+# transitively cover MR. These tests exercise the same full pipeline
+# (event_log + field-value fold + entity-table projection + row-state)
+# for the MR family, including the ``parent`` reference Created carries
+# and the ADR-012 row lifecycle.
+
+
+async def test_mr_happy_path_writes_log_field_values_and_entity_row(
+    client: AsyncTestClient, app: Litestar
+) -> None:
+    # Order matters: create the parent asset_type+instance first so the
+    # MR type creation returns the post-everything schema_version.
+    parent_type_id, parent_asset_id, _ = await _create_parent_asset(
+        client, hlc=_VALID_HLC
+    )
+    mr_type_id, mr_field_id, schema_version = await _make_mr_field(client)
+    mr_instance_id = uuid4()
+    event = _mr_created_event(
+        type_id=mr_type_id,
+        instance_id=mr_instance_id,
+        hlc=_LATER_HLC,
+        values={"col:name": "Oil-Change-#1", str(mr_field_id): "120000"},
+        parent={"type_id": str(parent_type_id), "instance_id": str(parent_asset_id)},
+    )
+
+    resp = await client.post(
+        "/events", json={"schema_version": schema_version, "events": [event]}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted"
+
+    with use_tenant("t1"):
+        # event_log gained one row (the parent asset Create added one
+        # earlier — two total).
+        count = (
+            await _query(app, select(func.count()).select_from(EventLog))
+        ).scalar_one()
+        assert count == 2
+
+        # maintenance_record_field_values has both cells under the MR id.
+        rows = (
+            await _query(
+                app,
+                select(
+                    MaintenanceRecordFieldValue.field_id,
+                    MaintenanceRecordFieldValue.value_json,
+                ).where(
+                    MaintenanceRecordFieldValue.maintenance_record_id == mr_instance_id
+                ),
+            )
+        ).all()
+        by_field = {row.field_id: row.value_json for row in rows}
+        assert by_field == {"col:name": "Oil-Change-#1", str(mr_field_id): "120000"}
+
+        # Entity row materialized with the parent FK on asset_id, name
+        # on the column, and the user field in properties.
+        mr = (
+            await _query(
+                app,
+                select(MaintenanceRecord).where(MaintenanceRecord.id == mr_instance_id),
+            )
+        ).scalar_one()
+        assert mr.name == "Oil-Change-#1"
+        assert mr.asset_id == parent_asset_id
+        assert mr.deleted is False
+        assert mr.properties == {str(mr_field_id): "120000"}
+
+
+async def test_mr_created_without_parent_rejected_not_500(
+    client: AsyncTestClient, app: Litestar
+) -> None:
+    # Regression for 907c8ce: an MR Created event with no ``parent``
+    # used to raise a bare ValueError that the controller's per-event
+    # catch did not handle, turning the whole batch into a 500. It must
+    # surface as a per-event ``rejected:invalid_payload_shape`` in a
+    # normal 202 envelope, and the event_log must not gain a row.
+    mr_type_id, _mr_field_id, schema_version = await _make_mr_field(client)
+    event = _mr_created_event(
+        type_id=mr_type_id,
+        instance_id=uuid4(),
+        hlc=_VALID_HLC,
+        values={"col:name": "Orphan-MR"},
+        parent=None,
+    )
+
+    resp = await client.post(
+        "/events", json={"schema_version": schema_version, "events": [event]}
+    )
+    assert resp.status_code == 202, resp.text
+    outcome = resp.json()["outcomes"][0]
+    assert outcome["outcome"] == "rejected:invalid_payload_shape"
+    assert "invalid_payload_shape" in outcome["problem"]["type"]
+
+    with use_tenant("t1"):
+        count = (
+            await _query(app, select(func.count()).select_from(EventLog))
+        ).scalar_one()
+        assert count == 0
+
+
+async def test_mr_delete_then_post_delete_edit_then_restore(
+    client: AsyncTestClient, app: Litestar
+) -> None:
+    # ADR-012 lifecycle on the MR family: deactivate the MR, edit a
+    # field while tombstoned (the cell-value fold runs regardless of
+    # row visibility), then restore the MR and assert the post-delete
+    # value is what surfaces in the entity row.
+    parent_type_id, parent_asset_id, _ = await _create_parent_asset(
+        client, hlc="0000000000000000-00000-client-a"
+    )
+    mr_type_id, mr_field_id, schema_version = await _make_mr_field(client)
+    mr_instance_id = uuid4()
+
+    hlc_create = "0000000000000001-00000-client-a"
+    hlc_delete = "0000000000000002-00000-client-a"
+    hlc_edit = "0000000000000003-00000-client-a"
+    hlc_restore = "0000000000000004-00000-client-a"
+
+    resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                _mr_created_event(
+                    type_id=mr_type_id,
+                    instance_id=mr_instance_id,
+                    hlc=hlc_create,
+                    values={str(mr_field_id): "BEFORE-DELETE"},
+                    parent={
+                        "type_id": str(parent_type_id),
+                        "instance_id": str(parent_asset_id),
+                    },
+                )
+            ],
+        },
+    )
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted", resp.text
+
+    resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                {
+                    "hlc": hlc_delete,
+                    "family": "maintenance_record",
+                    "type_id": str(mr_type_id),
+                    "instance_id": str(mr_instance_id),
+                    "body": {"event": "deactivated"},
+                }
+            ],
+        },
+    )
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted"
+
+    resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                {
+                    "hlc": hlc_edit,
+                    "family": "maintenance_record",
+                    "type_id": str(mr_type_id),
+                    "instance_id": str(mr_instance_id),
+                    "body": {
+                        "event": "updated",
+                        "values": {str(mr_field_id): "POST-DELETE-EDIT"},
+                    },
+                }
+            ],
+        },
+    )
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted"
+
+    resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                {
+                    "hlc": hlc_restore,
+                    "family": "maintenance_record",
+                    "type_id": str(mr_type_id),
+                    "instance_id": str(mr_instance_id),
+                    "body": {"event": "activated"},
+                }
+            ],
+        },
+    )
+    assert resp.json()["outcomes"][0]["outcome"] == "accepted"
+
+    with use_tenant("t1"):
+        mr = (
+            await _query(
+                app,
+                select(MaintenanceRecord).where(MaintenanceRecord.id == mr_instance_id),
+            )
+        ).scalar_one()
+        assert mr.deleted is False
+        assert mr.row_state_hlc == hlc_restore
+        assert mr.properties == {str(mr_field_id): "POST-DELETE-EDIT"}
