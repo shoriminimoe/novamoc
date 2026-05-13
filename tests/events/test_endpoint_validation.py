@@ -262,3 +262,33 @@ async def test_deactivated_or_activated_event_has_no_value_validation(
         },
     )
     assert outcome["outcome"] == "accepted"
+
+
+async def test_mr_created_without_parent_is_invalid_payload_shape(
+    client: AsyncTestClient,
+) -> None:
+    type_id = str(uuid4())
+    resp = await client.post(
+        "/schema",
+        json={
+            "type": "create_maintenance_record_type",
+            "entity_id": type_id,
+            "payload": {"name": f"OilChange-{type_id[:8]}"},
+        },
+    )
+    assert resp.status_code in (200, 201), resp.text
+    schema_version = int(resp.json()["schema_version"])
+
+    outcome = await _post_one(
+        client,
+        schema_version,
+        {
+            "hlc": _VALID_HLC,
+            "family": "maintenance_record",
+            "type_id": type_id,
+            "instance_id": str(uuid4()),
+            "body": {"event": "created", "values": {}},
+        },
+    )
+    assert outcome["outcome"] == "rejected:invalid_payload_shape"
+    assert "invalid_payload_shape" in outcome["problem"]["type"]
