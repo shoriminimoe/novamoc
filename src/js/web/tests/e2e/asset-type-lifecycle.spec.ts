@@ -1,18 +1,17 @@
 /**
- * Full-lifecycle browser e2e for an ``asset_type`` through the M4.3
- * schema browser UI. Drives every accepted verb — create, rename,
- * deactivate, activate (resurrection), delete — and a duplicate-name
- * attempt to exercise the inline ``name_reserved`` rendering path.
+ * Full-lifecycle browser e2e for an ``asset_type`` through the M4.6
+ * master-detail schema management UI. Drives every accepted verb —
+ * create, rename, deactivate (archive), activate (restore), delete —
+ * plus a duplicate-name attempt to exercise the inline
+ * ``name_reserved`` rendering path.
  *
- * Each verb's effect is asserted through the UI's observable
- * surface: the ``Asset types (N)`` counter, the ``version N`` header
- * stamped from the snapshot's ``schema_version``, and the card /
- * action-button presence transitions. ``schema_version`` advances by
- * one on every accepted command including the duplicate-name 409
- * (NO — it should not advance: handlers append a change-log row only
- * on success; the controller rolls back on raise), so the version
- * stays at 1 after the failed second create and reaches 5 after
- * delete (create, rename, deactivate, activate, delete).
+ * Effects are asserted through observable UI surface: row presence /
+ * absence in the rail, the right-pane title block, the
+ * ``v<N> · synced`` footer (replaces the M4.3 ``version N`` header),
+ * and the action-row button transitions. ``schema_version`` advances
+ * by one on every accepted command and does NOT advance on the
+ * duplicate-name 409, so the version stays at 1 after the failed
+ * second create and reaches 5 after delete.
  */
 
 import { expect, test } from '@playwright/test'
@@ -20,74 +19,90 @@ import { expect, test } from '@playwright/test'
 const NAME = 'lifecycle-fixture'
 const RENAMED = `${NAME}-renamed`
 
-test('asset type lifecycle through the schema browser UI', async ({ page }) => {
+test('asset type lifecycle through the master-detail UI', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'novaMOC' })).toBeVisible()
 
-  // Fresh in-memory DB → zero asset types to start.
-  await expect(page.getByText('Asset types (0)')).toBeVisible()
+  // Fresh in-memory DB → empty rail.
+  await expect(page.getByText('No types yet')).toBeVisible()
 
   // -- create
-  await page.getByRole('button', { name: '+ New asset type' }).click()
-  await page.getByRole('textbox', { name: 'Name' }).fill(NAME)
-  await page.getByRole('button', { name: 'Create' }).click()
+  await page.getByRole('button', { name: '+ New ▾' }).click()
+  await page.getByRole('menuitem', { name: 'Asset type' }).click()
+  // Autofocus drops the cursor in the name input — type and Enter.
+  await page.getByRole('textbox', { name: 'New type name' }).fill(NAME)
+  await page.getByRole('textbox', { name: 'New type name' }).press('Enter')
 
-  await expect(page.getByText('Asset types (1)')).toBeVisible()
-  await expect(page.getByText('version 1')).toBeVisible()
+  // Selected row + right pane lights up.
+  await expect(page.getByRole('row', { name: new RegExp(`^A\\s+${NAME}$`) })).toBeVisible()
   await expect(page.getByRole('heading', { name: NAME })).toBeVisible()
+  await expect(page.getByText('v1 · synced')).toBeVisible()
 
-  // -- duplicate name → inline name_reserved, version stays at 1.
-  await page.getByRole('button', { name: '+ New asset type' }).click()
-  await page.getByRole('textbox', { name: 'Name' }).fill(NAME)
-  await page.getByRole('button', { name: 'Create' }).click()
-
-  await expect(page.getByText(/409 · name_reserved/)).toBeVisible()
-  await expect(page.getByText('version 1')).toBeVisible()
-  await expect(page.getByText('Asset types (1)')).toBeVisible()
+  // -- duplicate name → inline name_reserved, version stays at 1
+  await page.getByRole('button', { name: '+ New ▾' }).click()
+  await page.getByRole('menuitem', { name: 'Asset type' }).click()
+  await page.getByRole('textbox', { name: 'New type name' }).fill(NAME)
+  await page.getByRole('textbox', { name: 'New type name' }).press('Enter')
+  await expect(page.getByText('Name is already in use.')).toBeVisible()
+  await expect(page.getByText('v1 · synced')).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  // -- rename (Save disabled when unchanged, enabled after edit)
-  await page.getByRole('button', { name: 'Rename' }).click()
+  // -- rename via the action row
+  await page.getByRole('button', { name: 'Rename', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
-  await page.getByRole('textbox', { name: 'New name' }).fill(RENAMED)
+  await page.getByRole('textbox', { name: 'Rename' }).fill(RENAMED)
   await page.getByRole('button', { name: 'Save' }).click()
 
-  await expect(page.getByText('version 2')).toBeVisible()
+  await expect(page.getByText('v2 · synced')).toBeVisible()
   await expect(page.getByRole('heading', { name: RENAMED })).toBeVisible()
-  await expect(page.getByRole('heading', { name: NAME, exact: true })).toHaveCount(0)
+  await expect(page.getByRole('row', { name: new RegExp(`^A\\s+${RENAMED}$`) })).toBeVisible()
 
-  // -- deactivate (row drops from the active list)
-  await page.getByRole('button', { name: 'Deactivate' }).click()
+  // -- archive (confirm bar appears next to the action row)
+  await page.getByRole('button', { name: 'Archive…' }).click()
+  await expect(page.getByText(`Archive ${RENAMED}?`)).toBeVisible()
+  await page
+    .getByRole('alertdialog', { name: `Archive ${RENAMED}?` })
+    .getByRole('button', { name: 'Archive' })
+    .click()
 
-  await expect(page.getByText('version 3')).toBeVisible()
-  await expect(page.getByText('Asset types (0)')).toBeVisible()
-  await expect(page.getByRole('heading', { name: RENAMED })).toHaveCount(0)
+  // Hidden by default — row drops out of the rail. Selection sticks
+  // (the type still exists in the snapshot, just archived), so the
+  // right pane keeps showing it with Restore… instead of Archive….
+  await expect(page.getByText('v3 · synced')).toBeVisible()
+  await expect(page.getByRole('row', { name: new RegExp(`^A\\s+${RENAMED}`) })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Restore…' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Archive…' })).toHaveCount(0)
 
-  // -- toggle "Show tombstoned" → row reappears with Activate button
-  await page.getByRole('checkbox', { name: 'Show tombstoned' }).check()
+  // -- show archived → row returns muted with an Archived pill
+  await page.getByRole('checkbox', { name: 'Show archived' }).check()
+  await expect(page.getByRole('row', { name: new RegExp(`^A\\s+${RENAMED}$`) })).toBeVisible()
 
-  await expect(page.getByText('Asset types (1)')).toBeVisible()
-  await expect(page.getByRole('heading', { name: RENAMED })).toBeVisible()
-  // "tombstoned" the badge, not "Show tombstoned" the checkbox label.
-  await expect(page.getByText('tombstoned', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Activate' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Deactivate' })).toHaveCount(0)
+  // -- restore (resurrection) — Restore is already on the action row.
+  await page.getByRole('button', { name: 'Restore…' }).click()
+  await expect(page.getByText(`Restore ${RENAMED}?`)).toBeVisible()
+  await page
+    .getByRole('alertdialog', { name: `Restore ${RENAMED}?` })
+    .getByRole('button', { name: 'Restore' })
+    .click()
 
-  // -- activate (resurrection)
-  await page.getByRole('button', { name: 'Activate' }).click()
+  await expect(page.getByText('v4 · synced')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Archive…' })).toBeVisible()
 
-  await expect(page.getByText('version 4')).toBeVisible()
-  await expect(page.getByText('tombstoned', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Deactivate' })).toBeVisible()
+  // -- delete (modal with typed-name confirmation)
+  await page.getByRole('button', { name: 'Delete…' }).click()
+  const dialog = page.getByRole('dialog', { name: new RegExp(`Delete ${RENAMED}?`) })
+  await expect(dialog).toBeVisible()
+  const deleteForever = dialog.getByRole('button', { name: 'Delete forever' })
+  await expect(deleteForever).toBeDisabled()
+  // Mismatched type → button stays disabled.
+  await dialog.getByRole('textbox').fill('something-else')
+  await expect(deleteForever).toBeDisabled()
+  // Matching type → button enables.
+  await dialog.getByRole('textbox').fill(RENAMED)
+  await expect(deleteForever).toBeEnabled()
+  await deleteForever.click()
 
-  // -- delete (two-step confirm)
-  await page.getByRole('button', { name: 'Delete' }).click()
-  await expect(page.getByText(`Delete ${RENAMED}?`)).toBeVisible()
-  // The confirm row replaces the action buttons, so the only remaining
-  // Delete button is the confirmation one.
-  await page.getByRole('button', { name: 'Delete' }).click()
-
-  await expect(page.getByText('version 5')).toBeVisible()
-  await expect(page.getByText('Asset types (0)')).toBeVisible()
-  await expect(page.getByRole('heading', { name: RENAMED })).toHaveCount(0)
+  await expect(page.getByText('v5 · synced')).toBeVisible()
+  await expect(page.getByRole('row', { name: new RegExp(`^A\\s+${RENAMED}`) })).toHaveCount(0)
+  await expect(page.getByText('Pick a type on the left')).toBeVisible()
 })

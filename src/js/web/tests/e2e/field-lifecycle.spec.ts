@@ -1,24 +1,18 @@
 /**
  * Full-lifecycle browser e2e for an ``asset_type_field`` through the
- * M4.4 schema browser UI. Drives every accepted verb — create,
- * rename, deactivate, activate (resurrection), clear, delete — plus a
- * duplicate-name attempt to exercise the inline ``name_reserved``
- * rendering path on the field-level form.
+ * M4.6 master-detail UI. Drives every accepted verb the new UI exposes
+ * — create, edit (rename + change data type), deactivate (archive),
+ * activate (restore), delete — plus a duplicate-name attempt to
+ * exercise the inline ``name_reserved`` rendering path. ``clear`` is
+ * still in the wire layer (``commands.ts``) but the M4.6 redesign
+ * doesn't surface it; rewriting that affordance is a separate concern.
  *
  * The asset-type lifecycle spec runs first under the same in-memory
- * server and leaves zero asset types, but the ``schema_version``
- * counter persists across specs (it tracks ``MAX(seq)`` on
- * ``schema_change_log``, not the current state). This spec therefore
- * does NOT assert absolute version numbers — it relies on positive
- * existence assertions plus the schema browser's reload-on-change
- * pattern.
- *
- * Field-level and type-level action rows share button labels
- * (Rename / Activate / Deactivate / Delete). Field-level actions live
- * inside the field's ``<li>`` element so this spec scopes those
- * selectors through ``page.getByRole('listitem')``; type-level
- * actions hang off the type's ``<article>`` sibling and use the
- * unscoped ``page`` root.
+ * server and leaves zero types, but ``schema_version`` (the
+ * ``v<N> · synced`` footer) persists across specs because
+ * ``schema_change_log.seq`` tracks ``MAX(seq)``, not current state. So
+ * this spec asserts version-advance via *positive* assertions only
+ * (existence after each action), not absolute numbers.
  */
 
 import { expect, test, type Locator } from '@playwright/test'
@@ -27,93 +21,93 @@ const PARENT = 'field-host'
 const FIELD = 'serial_number'
 const FIELD_RENAMED = `${FIELD}_v2`
 
-test('asset_type_field lifecycle through the schema browser UI', async ({ page }) => {
+test('asset_type_field lifecycle through the master-detail UI', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'novaMOC' })).toBeVisible()
 
-  // -- Seed: create the parent asset type so the field form's
-  //    parent dropdown has at least one option.
-  await page.getByRole('button', { name: '+ New asset type' }).click()
-  await page.getByRole('textbox', { name: 'Name' }).fill(PARENT)
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  // -- Seed: create a parent asset type so the fields table has a host.
+  await page.getByRole('button', { name: '+ New ▾' }).click()
+  await page.getByRole('menuitem', { name: 'Asset type' }).click()
+  await page.getByRole('textbox', { name: 'New type name' }).fill(PARENT)
+  await page.getByRole('textbox', { name: 'New type name' }).press('Enter')
   await expect(page.getByRole('heading', { name: PARENT })).toBeVisible()
 
-  // -- create field
-  await page.getByRole('button', { name: '+ New asset-type field' }).click()
-  await expect(
-    page.getByRole('combobox', { name: 'Parent asset type' }),
-  ).toHaveValue(/.+/)
-  await page.getByRole('textbox', { name: 'Name' }).fill(FIELD)
-  await page.getByRole('combobox', { name: 'Data type' }).selectOption('text')
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  // -- create field — open + Add field, fill name, pick Type via the
+  //    combobox (typing "te" + Enter picks "text"), Save.
+  await page.getByRole('button', { name: '+ Add field' }).click()
+  await page.getByLabel('Name', { exact: true }).fill(FIELD)
+  const typeCombo: Locator = page.getByRole('combobox', { name: 'Field data type' })
+  await typeCombo.fill('te')
+  await typeCombo.press('Enter')
+  await expect(typeCombo).toHaveValue('text')
+  await page.getByRole('button', { name: 'Save' }).click()
 
-  // The field appears as a list item under the parent's card; capture it
-  // and use it to scope field-level button selectors that share their
-  // accessible name with type-level buttons.
-  const fieldRow: Locator = page
-    .getByRole('listitem')
-    .filter({ hasText: FIELD })
+  const fieldRow: Locator = page.getByRole('row', { name: new RegExp(`^${FIELD}\\s+text\\s+Active`) })
   await expect(fieldRow).toBeVisible()
-  await expect(fieldRow.getByText('text', { exact: true })).toBeVisible()
 
-  // -- duplicate field name → inline name_reserved
-  await page.getByRole('button', { name: '+ New asset-type field' }).click()
-  await page.getByRole('textbox', { name: 'Name' }).fill(FIELD)
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
-  await expect(page.getByText(/409 · name_reserved/)).toBeVisible()
+  // -- duplicate field name → inline name_reserved error
+  await page.getByRole('button', { name: '+ Add field' }).click()
+  await page.getByLabel('Name', { exact: true }).fill(FIELD)
+  await typeCombo.fill('text')
+  await typeCombo.press('Enter')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Name is already in use on this type.')).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  // -- rename field
-  await fieldRow.getByRole('button', { name: 'Rename' }).click()
-  await expect(fieldRow.getByRole('button', { name: 'Save' })).toBeDisabled()
-  await fieldRow.getByRole('textbox', { name: 'New name' }).fill(FIELD_RENAMED)
-  await fieldRow.getByRole('button', { name: 'Save' }).click()
-  const renamedRow: Locator = page
-    .getByRole('listitem')
-    .filter({ hasText: FIELD_RENAMED })
+  // -- edit field (rename + leave type at text) via ⋯ → Edit
+  await fieldRow.getByRole('button', { name: `Field actions for ${FIELD}` }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await page.getByLabel('Name', { exact: true }).fill(FIELD_RENAMED)
+  await page.getByRole('button', { name: 'Save' }).click()
+  const renamedRow: Locator = page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}\\s+text\\s+Active`) })
   await expect(renamedRow).toBeVisible()
 
-  // -- deactivate field (drops from the active list)
-  await renamedRow.getByRole('button', { name: 'Deactivate' }).click()
+  // -- archive field via ⋯ → Archive… → inline confirm bar (sub-row)
+  await renamedRow.getByRole('button', { name: `Field actions for ${FIELD_RENAMED}` }).click()
+  await page.getByRole('menuitem', { name: 'Archive…' }).click()
+  await expect(page.getByText(`Archive ${FIELD_RENAMED}?`)).toBeVisible()
+  await page
+    .getByRole('alertdialog', { name: `Archive ${FIELD_RENAMED}?` })
+    .getByRole('button', { name: 'Archive' })
+    .click()
+  // Hidden by default — row drops out of the fields table.
+  await expect(page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}`) })).toHaveCount(0)
+
+  // -- show archived → field reappears, status Archived
+  await page.getByRole('checkbox', { name: 'Show archived' }).check()
+  const archivedRow: Locator = page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}\\s+text\\s+Archived`) })
+  await expect(archivedRow).toBeVisible()
+
+  // -- restore via ⋯ → Restore…
+  await archivedRow.getByRole('button', { name: `Field actions for ${FIELD_RENAMED}` }).click()
+  await page.getByRole('menuitem', { name: 'Restore…' }).click()
+  await expect(page.getByText(`Restore ${FIELD_RENAMED}?`)).toBeVisible()
+  await page
+    .getByRole('alertdialog', { name: `Restore ${FIELD_RENAMED}?` })
+    .getByRole('button', { name: 'Restore' })
+    .click()
   await expect(
-    page.getByRole('listitem').filter({ hasText: FIELD_RENAMED }),
-  ).toHaveCount(0)
-
-  // -- show tombstoned → field reappears with Activate button
-  await page.getByRole('checkbox', { name: 'Show tombstoned' }).check()
-  const tombstonedRow: Locator = page
-    .getByRole('listitem')
-    .filter({ hasText: FIELD_RENAMED })
-  await expect(tombstonedRow).toBeVisible()
-  await expect(tombstonedRow.getByRole('button', { name: 'Activate' })).toBeVisible()
-
-  // -- activate (resurrection)
-  await tombstonedRow.getByRole('button', { name: 'Activate' }).click()
-  await expect(tombstonedRow.getByRole('button', { name: 'Deactivate' })).toBeVisible()
-
-  // -- clear (one-step confirm)
-  await tombstonedRow.getByRole('button', { name: 'Clear' }).click()
-  await expect(
-    page.getByText(`Clear values for ${FIELD_RENAMED}?`),
+    page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}\\s+text\\s+Active`) }),
   ).toBeVisible()
-  await tombstonedRow.getByRole('button', { name: 'Clear', exact: true }).click()
-  // After clear, the field is still present (clear wipes values, not the
-  // definition). The action buttons return.
-  await expect(tombstonedRow.getByRole('button', { name: 'Rename' })).toBeVisible()
 
-  // -- delete field (two-step confirm)
-  await tombstonedRow.getByRole('button', { name: 'Delete' }).click()
-  await expect(page.getByText(`Delete field ${FIELD_RENAMED}?`)).toBeVisible()
-  await tombstonedRow.getByRole('button', { name: 'Delete' }).click()
-  await expect(
-    page.getByRole('listitem').filter({ hasText: FIELD_RENAMED }),
-  ).toHaveCount(0)
+  // -- delete field via ⋯ → Delete… → modal + typed name confirm
+  await page.getByRole('checkbox', { name: 'Show archived' }).uncheck()
+  const liveRow: Locator = page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}\\s+text\\s+Active`) })
+  await liveRow.getByRole('button', { name: `Field actions for ${FIELD_RENAMED}` }).click()
+  await page.getByRole('menuitem', { name: 'Delete…' }).click()
+  const dialog = page.getByRole('dialog', { name: new RegExp(`Delete ${FIELD_RENAMED}?`) })
+  await expect(dialog).toBeVisible()
+  const deleteForever = dialog.getByRole('button', { name: 'Delete forever' })
+  await expect(deleteForever).toBeDisabled()
+  await dialog.getByRole('textbox').fill(FIELD_RENAMED)
+  await expect(deleteForever).toBeEnabled()
+  await deleteForever.click()
+  await expect(page.getByRole('row', { name: new RegExp(`^${FIELD_RENAMED}`) })).toHaveCount(0)
 
-  // -- teardown: delete the parent asset type (two-step confirm on the
-  //    type-level action row).
-  await page.getByRole('checkbox', { name: 'Show tombstoned' }).uncheck()
-  await page.getByRole('button', { name: 'Delete' }).click()
-  await expect(page.getByText(`Delete ${PARENT}?`)).toBeVisible()
-  await page.getByRole('button', { name: 'Delete' }).click()
-  await expect(page.getByRole('heading', { name: PARENT })).toHaveCount(0)
+  // -- teardown: delete the parent asset type
+  await page.getByRole('button', { name: 'Delete…' }).click()
+  const typeDialog = page.getByRole('dialog', { name: new RegExp(`Delete ${PARENT}?`) })
+  await typeDialog.getByRole('textbox').fill(PARENT)
+  await typeDialog.getByRole('button', { name: 'Delete forever' }).click()
+  await expect(page.getByText('Pick a type on the left')).toBeVisible()
 })
