@@ -52,8 +52,15 @@ typecheck-py:
 test-py:
 	uv run pytest
 
-# Test javascript (Playwright browser e2e)
-test-js:
+# Test javascript (Vitest component tests + Playwright browser e2e)
+test-js: test-js-unit test-js-e2e
+
+# Vitest component tests in jsdom
+test-js-unit:
+	cd src/js/web && npm run test
+
+# Playwright browser e2e tests
+test-js-e2e:
 	cd src/js/web && npm run test:e2e
 
 # Check ruff violation counts against the committed ratchet baseline

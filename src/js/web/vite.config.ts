@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
@@ -17,9 +18,25 @@ const API_PROXY_PATHS = ['/schema', '/events', '/problems', '/openapi']
 // visit prompts the user to accept the self-signed warning.
 export default defineConfig({
   plugins: [basicSsl(), svelte(), tailwindcss()],
+  // Under Vitest, force Svelte's ``browser`` export condition so we get
+  // the client build rather than the SSR build (which throws
+  // ``lifecycle_function_unavailable`` on ``mount``). Set conditionally so
+  // we don't override Vite's defaults outside test runs — passing an
+  // empty array would replace the default ``['module', 'browser', …]``
+  // and break ``vite dev``.
+  ...(process.env.VITEST
+    ? { resolve: { conditions: ['browser'] } }
+    : {}),
   server: {
     proxy: Object.fromEntries(
       API_PROXY_PATHS.map((p) => [p, { target: API_PROXY_TARGET, changeOrigin: false }]),
     ),
+  },
+  test: {
+    // Component tests run in jsdom; Playwright e2e is a separate suite under tests/e2e/.
+    environment: 'jsdom',
+    globals: true,
+    include: ['tests/component/**/*.test.ts'],
+    setupFiles: ['./tests/component/setup.ts'],
   },
 })
