@@ -121,6 +121,7 @@ yarn-error.log*
 .worktrees/
 .claude/worktrees/
 .claude/settings.local.json
+.superpowers/
 CLAUDE.local.md
 
 # Artifacts
