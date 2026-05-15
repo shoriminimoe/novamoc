@@ -12,16 +12,16 @@ The dispatch contract ADR-017 fixed (handlers see `auth: RequestAuth`; storage-l
 
 In scope:
 
-- A real **tenants** table (the registry issue #19 tracks). Per-row PK is a slug-shaped string so the existing `tenant_id: str` columns and the `"t1"` scenario fixtures keep working.
+- A real **tenants** table (the registry issue #19 tracks). PK is a `uuid.UUID` (UUIDv7 from `UUIDAuditBase`, no override). All existing `tenant_id: Mapped[str]` columns on tenant-scoped tables migrate to `Mapped[uuid.UUID]` in lockstep — `TenantScopedMixin`, every projection table, `event_log`, `schema_change_log`. The handler-facing `RequestAuth.tenant_id` and the `current_tenant_id` ContextVar shift to `uuid.UUID` together. Scenarios and the conftest's `"t1"` literal are replaced by fixed UUID constants. Pre-release: doing this once now is cheaper than doing it later with more call sites.
 - A **users** table with hashed passwords (argon2id via `argon2-cffi`).
-- A **user_tenant_memberships** join table (N-to-N from day one; v1 enforces a one-membership-per-user invariant at the handler level so "switch active tenant" is a later data change, not a schema change).
+- A **user_tenant_memberships** join table. **v1 invariant: one membership per user, enforced at write time.** `UserTenantMembershipService.create` rejects a second membership for a `user_id` that already has one with `user_already_has_tenant` (409). Login itself does not count — it reads the single membership and proceeds, or fails `login_failed` if absent. The schema stays N-to-N from day one so v2's "switch active tenant" feature relaxes the service-layer rejection, not the column shape.
 - A **sessions** table backed by `advanced_alchemy.extensions.litestar.SQLAlchemyAsyncSessionBackend` (server-side, single-DB story, immediate revocation).
 - **`POST /auth/login`**, **`POST /auth/logout`**, **`GET /auth/me`** — three minimal HTTP endpoints; everything else stays where it is.
 - A rewrite of `domain/accounts/_resolver.py` from "match bearer constant" to "read session, load user, return `(Principal, RequestAuth)`". The middleware and `RequestAuth.tenant_id` consumer surface do not change.
-- **Dev-mode seeding** gated by `NOVAMOC_DEV_SEED_DEFAULT_ADMIN=true`: on startup, idempotently create tenant `dev`, user `admin` with password `admin`, and one membership linking them. Default off. Production deployments leave it off.
-- **CLI commands** for the production path: `novamoc tenant create <slug>`, `novamoc user create <username>`, `novamoc user set-password <username>`, `novamoc user add-to-tenant <username> <tenant>`. The dev seeder is a thin caller of these.
+- **CLI commands** as the only bootstrap path: `novamoc tenant create --display-name <name>`, `novamoc user create <username>`, `novamoc user set-password <username>`, `novamoc user add-to-tenant <username> <tenant_id>`, `novamoc auth gc-sessions`. The CLI is the production write path AND the dev bootstrap path — no `_seed.py`, no `before_startup` hook, no `dev_seed_default_admin` setting. There are no dev-only code branches in the server.
+- A `just bootstrap-dev` recipe wrapping the three-command sequence (`tenant create` → `user create admin --password admin` → `user add-to-tenant admin <id>`) so local-dev is a one-liner. Production deployments run the equivalent in an init container.
 - A minimal Svelte 5 login page at `/login` (the SPA scaffolding from CLAUDE.md is currently empty — a single route is the right milestone-sized addition; full SPA shell is a separate milestone).
-- Test fixture migration: the `client` fixture stops attaching a bearer header and instead starts an authenticated session against a seeded `admin` user.
+- Test fixture migration: the `client` fixture stops attaching a bearer header. A new `dev_admin` fixture creates the dev tenant + `admin` user + membership via direct service calls (matching what `just bootstrap-dev` does on the CLI), and `client` logs in once at fixture setup.
 
 Out of scope:
 
@@ -70,8 +70,9 @@ Failure modes, all rendered as RFC 9457 problem-details:
 | Status | `type` URI leaf | Trigger |
 |--------|-----------------|---------|
 | 400 | `invalid_payload_shape` | Body is missing `username` or `password`, or has extra fields (`forbid_unknown_fields=True`). |
-| 401 | `login_failed` | Username does not exist, password mismatches, user is disabled, or user has zero tenant memberships. The four sub-cases share one wire response so an attacker probing for valid usernames cannot distinguish them (anti-enumeration). |
-| 409 | `multiple_memberships_unsupported` | The user has more than one tenant membership. v1 cannot pick an active tenant on the user's behalf; tracked as a followup. The 409 specifies the constraint without leaking which tenants exist. |
+| 401 | `login_failed` | Username does not exist, password mismatches, user is disabled, or user has no tenant membership. The sub-cases share one wire response so an attacker probing for valid usernames cannot distinguish them (anti-enumeration). |
+
+(The "user has multiple memberships" case cannot arise at login: the N:1 invariant is enforced at the membership-creation service. A second 409 path lives on the CLI / membership-write surface — see "Recorded tech debt" for the v2 relaxation plan.)
 
 `POST /auth/login` is in the middleware's `exclude` regex so an unauthenticated request can reach the handler. Otherwise the chicken-and-egg breaks.
 
@@ -138,22 +139,27 @@ The `AuthenticationMiddleware`'s `exclude` regex grows from `^/(openapi|problems
 class Tenant(UUIDAuditBase):
     __tablename__ = "tenants"
 
-    # Override the inherited UUID PK: tenant ids are short human-readable
-    # slugs (e.g. "t1", "dev", "acme"). The slug *is* the PK so every
-    # existing tenant_id reference (TenantScopedMixin columns, scenario
-    # fixtures, ContextVar value) remains valid by construction.
-    id: Mapped[str] = mapped_column(primary_key=True)
+    # PK is the inherited UUIDv7 from UUIDAuditBase — no override.
     display_name: Mapped[str]
     disabled_at: Mapped[datetime | None] = mapped_column(default=None)
 ```
 
-Constraint: `id ~ '^[a-z][a-z0-9_-]{0,30}$'` enforced at the service layer (a CHECK constraint is possible but advanced-alchemy services are the canonical write path; doubling up adds noise).
-
 `tenants` is **not** tenant-scoped — it has no `tenant_id` column because rows in it *are* the tenants. The three tenant-scoping listeners short-circuit naturally (`tenant_id` column absent → no auto-injection, no fail-closed check).
 
-`UUIDAuditBase` is overridden for the PK only; the `created_at` / `updated_at` columns it provides land unchanged.
-
 `disabled_at` instead of a boolean `active` flag: timestamp is strictly more information at zero extra cost and matches what schema entities will eventually want when soft-disable lands there too. Login refuses users whose active tenant has `disabled_at IS NOT NULL`.
+
+### `tenant_id` column-type migration (cross-cutting)
+
+Every existing `tenant_id` column flips from `Mapped[str]` to `Mapped[uuid.UUID]` in lockstep with the new `tenants` table:
+
+- `TenantScopedMixin.tenant_id` (the seed for every projection table).
+- The hand-declared `event_log.tenant_id` (the lone exception per CLAUDE.md — `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PK so `tenant_id` is non-PK here, but the type still moves).
+- `schema_change_log.tenant_id` (composite PK leading column).
+- `RequestAuth.tenant_id` and the `current_tenant_id` ContextVar.
+- `use_tenant(tenant_id)` and the autouse `tenant` fixture.
+- Scenario fixtures under `tests/data/scenarios.py` (the `"t1"` literal becomes a module-level UUID constant; `"t-a"` / `"t-b"` for cross-tenant tests likewise).
+
+The listener machinery in `db/_listeners.py` is structurally insensitive to the type — it does column-presence checks and predicate injection — so no listener changes are needed beyond the `_AUTH_LAYER_TABLE_NAMES` allow-list (see Code surface below). The migration is a single seam: do it all in one commit so the working tree stays green at the boundary.
 
 ### `users`
 
@@ -170,7 +176,7 @@ Like `tenants`, `users` is **not** tenant-scoped — a user account is a global 
 
 `username` is the human-supplied login identifier; case-folded to `NFKC` + lowercase at write time so `Admin` and `admin` are the same row. `password_hash` carries the full argon2id encoded string (`$argon2id$v=19$m=...$t=...$p=...$<salt>$<hash>`); rotation of cost parameters is a `PasswordHasher.check_needs_rehash` + rehash on next successful login (free upgrade for active users; dormant accounts upgrade on their next login).
 
-`UUIDAuditBase`'s `id` (UUIDv7) is the PK. UUIDv7 (not the slug we used for tenants) because usernames change (rename support), so the stable identity is the surrogate.
+`UUIDAuditBase`'s `id` (UUIDv7) is the PK. Username is mutable in principle (rename support), so the stable identity is the surrogate UUID, not the login string.
 
 ### `user_tenant_memberships`
 
@@ -181,30 +187,34 @@ class UserTenantMembership(DefaultBase):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id"), primary_key=True
     )
-    tenant_id: Mapped[str] = mapped_column(
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id"), primary_key=True
     )
 ```
 
 Composite PK `(user_id, tenant_id)` doubles as the uniqueness constraint. `DefaultBase` (not `UUIDAuditBase`) because the membership is a relation, not an entity — its identity is the pair, not an opaque id. No audit columns: a membership is either there or it isn't.
 
-v1 invariant — enforced at login, not at the schema level: a user with `count(memberships) != 1` cannot log in. The 409 `multiple_memberships_unsupported` failure exposes the limit; the zero-membership case is folded into the generic `login_failed` 401 (anti-enumeration).
+**v1 invariant — enforced at write time, not at login.** `UserTenantMembershipService.create` checks for any existing membership keyed by `user_id` and rejects with `UserAlreadyHasTenantError` (409 `user_already_has_tenant`) before the INSERT. The check is service-layer, not a database constraint, because the constraint *relaxes* in v2 (switch-tenant) — moving the check to the service keeps the schema forward-compatible.
+
+The 409 surface is the membership-write path (CLI's `novamoc user add-to-tenant`, and any future "add member" admin API). It does not appear on `POST /auth/login`: by the time login runs, the invariant has already been enforced, so login sees either zero memberships (→ `login_failed` 401, folded with the other anti-enumeration cases) or exactly one (→ resolve to it).
 
 ### `sessions`
 
 Provided by `advanced_alchemy.extensions.litestar.SQLAlchemyAsyncSessionBackend` — we register its mixin against our metadata; the columns (`id` UUIDv7, `session_id` str, `data` LargeBinary, `expires_at` datetime, `created_at` / `updated_at`) match its conventions. The session payload we write is small:
 
 ```python
-{"user_id": "01HXYZ...", "active_tenant_id": "dev"}
+{"user_id": "01HXYZ...", "active_tenant_id": "01HXAB..."}
 ```
 
-That is the entire payload. Anything richer (cached display name, last access time, scopes) lives on the user/membership rows; the session is a pointer.
+Both values are UUIDv7s rendered as strings (msgspec / JSON-friendly). That is the entire payload. Anything richer (cached display name, last access time, scopes) lives on the user/membership rows; the session is a pointer.
 
 Session TTL: `NOVAMOC_AUTH_SESSION_TTL_SECONDS`, default `86400` (24 hours). Inactive sessions past `expires_at` are deleted by a scheduled task; v1 has no scheduler yet, so cleanup is opportunistic — the backend prunes on the next access of an expired row, and a `novamoc auth gc-sessions` CLI command exists for operators. Tracked as a followup.
 
 ### Migration / schema-version implications
 
-The new tables (`tenants`, `users`, `user_tenant_memberships`, `sessions`) are **not** tenant-scoped synced tables — they are auth-layer infrastructure. They do not appear in `schema_change_log`, do not get tenant-scoping listener treatment, and their existence is invisible to the sync protocol. Adding them does not bump `schema_version` for any tenant. (`tenant_id`'s value space is now constrained by the FK from `user_tenant_memberships`, but the listener machinery's behaviour is unchanged.)
+The new tables (`tenants`, `users`, `user_tenant_memberships`, `sessions`) are **not** tenant-scoped synced tables — they are auth-layer infrastructure. They do not appear in `schema_change_log`, do not get tenant-scoping listener treatment, and their existence is invisible to the sync protocol. Adding them does not bump `schema_version` for any tenant.
+
+The `tenant_id` column-type migration (`str` → `uuid.UUID`) touches every tenant-scoped table but is a typed-only change at the SQLAlchemy level — SQLite stores both as TEXT under the hood, so existing pre-release SQLite databases are not invalidated by the type change at the DB layer. ORM round-tripping does the conversion. Listener behaviour is unchanged (column-presence heuristic is type-agnostic).
 
 ## Tenant & user resolution mechanism
 
@@ -217,7 +227,7 @@ ADR-017's `RequestAuth(tenant_id: str)` shape is preserved verbatim — handlers
 import msgspec
 
 class Principal(msgspec.Struct, frozen=True):
-    user_id: str  # str repr of the UUIDv7 (handlers don't need uuid semantics)
+    id: str  # str repr of the UUIDv7 (handlers don't need uuid semantics)
     username: str
 ```
 
@@ -255,7 +265,7 @@ async def resolve_principal(
     if membership is None:
         raise TenantResolutionError
     return (
-        Principal(user_id=str(user.id), username=user.username),
+        Principal(id=str(user.id), username=user.username),
         RequestAuth(tenant_id=active_tenant_id),
     )
 ```
@@ -317,12 +327,12 @@ The session middleware does not exclude `/auth/login` — login *writes* the ses
 - `src/py/novamoc/domain/accounts/_services.py` — `TenantService`, `UserService`, `UserTenantMembershipService` — advanced-alchemy `SQLAlchemyAsyncRepositoryService` wrappers. One file because each is ≤15 lines.
 - `src/py/novamoc/domain/accounts/_payloads.py` — `LoginRequest`, `MeResponse`, `MePrincipal`, `MeTenant` msgspec Structs.
 - `src/py/novamoc/domain/accounts/_handlers.py` — `login`, `logout`, `me` handlers. Single file (3 handlers, each ≤30 lines).
-- `src/py/novamoc/domain/accounts/_errors.py` — gains `LoginFailedError`, `MultipleMembershipsUnsupportedError`. The existing `TenantResolutionError` stays as the umbrella for "session can't be resolved" (its 401 wire shape is reused).
+- `src/py/novamoc/domain/accounts/_errors.py` — gains `LoginFailedError`, `UserAlreadyHasTenantError`. The existing `TenantResolutionError` stays as the umbrella for "session can't be resolved" (its 401 wire shape is reused).
 - `src/py/novamoc/domain/accounts/controllers/__init__.py`, `controllers/_auth.py` — `AuthController` mounting `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`.
-- `src/py/novamoc/domain/accounts/_seed.py` — `seed_default_admin(settings, session)` async function. Idempotent: skips if the `admin` user already exists. Called from `create_app` only when `NOVAMOC_DEV_SEED_DEFAULT_ADMIN=true`.
-- `src/py/novamoc/cli.py` — Click-based CLI (`novamoc tenant ...`, `novamoc user ...`, `novamoc auth gc-sessions`). The dev seeder calls into the same service code as the CLI so there's one canonical write path.
+- `src/py/novamoc/cli.py` — Click-based CLI (`novamoc tenant ...`, `novamoc user ...`, `novamoc auth gc-sessions`). The single canonical write path for tenants and users in every environment.
 - `src/js/web/src/routes/login/+page.svelte` — the SPA's first non-scaffolding component. Minimal form, POSTs to `/auth/login`, redirects on success. Uses Svelte 5 runes per repo conventions.
-- `tests/accounts/test_password.py`, `tests/accounts/test_seed.py`, `tests/accounts/test_login_e2e.py`, `tests/accounts/test_logout_e2e.py`, `tests/accounts/test_me_e2e.py`, `tests/accounts/test_resolver_session.py`, `tests/accounts/test_cli.py` — unit + e2e coverage for the new surface.
+- `justfile` — new `bootstrap-dev` recipe wrapping the three CLI commands a fresh checkout needs (`tenant create`, `user create admin`, `user add-to-tenant admin <tenant_id>`).
+- `tests/accounts/test_password.py`, `tests/accounts/test_login_e2e.py`, `tests/accounts/test_logout_e2e.py`, `tests/accounts/test_me_e2e.py`, `tests/accounts/test_resolver_session.py`, `tests/accounts/test_cli.py` — unit + e2e coverage for the new surface.
 - `docs/adr/020-authentication-and-tenant-registry.md` — the ADR for this milestone. (ADR-019 is taken by the properties-mirrors-full-schema-state decision per `docs/adr/`'s current list.)
 
 **Modified:**
@@ -330,13 +340,13 @@ The session middleware does not exclude `/auth/login` — login *writes* the ses
 - `src/py/novamoc/domain/accounts/_auth.py` — `RequestAuth` shape is unchanged; the file gets a docstring note that the v2 resolver now populates the principal too.
 - `src/py/novamoc/domain/accounts/_resolver.py` — full rewrite: dev bearer constant deleted; new `resolve_principal(connection, users, memberships) -> (Principal, RequestAuth)` async function. This is the swap point ADR-017 designed for.
 - `src/py/novamoc/domain/accounts/_middleware.py` — `AuthenticationMiddleware.authenticate_request` becomes async-with-DB-access; reads the request-scoped SQLAlchemy session, builds the two services, calls `resolve_principal`. `TenantContextMiddleware` is untouched.
-- `src/py/novamoc/domain/accounts/__init__.py` — re-export `AuthController`, `Principal`, `seed_default_admin`; drop the (now-deleted) `_TENANT_T1_DEV_TOKEN` import path.
-- `src/py/novamoc/asgi.py` — register `ServerSideSessionConfig.middleware` upstream of auth; register `AuthController` alongside `SchemaController` and `EventsController`; register `LoginFailedError` and `MultipleMembershipsUnsupportedError` in the problem-details map; call `seed_default_admin` from a `before_startup` hook when the setting is on; build the password hasher once and stash on `app.state.password_hasher`.
-- `src/py/novamoc/config.py` — gains `AuthSettings` (slots dataclass) with `session_ttl_seconds`, `session_cookie_name`, `session_cookie_secure`, `dev_seed_default_admin`, plus the argon2 cost parameters; `Settings.auth` field.
-- `src/py/novamoc/api/_problem_details.py` — add `LOGIN_FAILED` (401) and `MULTIPLE_MEMBERSHIPS_UNSUPPORTED` (409) to `_TITLES` / `_STATUS_CODES` / the domain-error converter's enum membership.
+- `src/py/novamoc/domain/accounts/__init__.py` — re-export `AuthController`, `Principal`; drop the (now-deleted) `_TENANT_T1_DEV_TOKEN` import path.
+- `src/py/novamoc/asgi.py` — register `ServerSideSessionConfig.middleware` upstream of auth; register `AuthController` alongside `SchemaController` and `EventsController`; register `LoginFailedError` and `UserAlreadyHasTenantError` in the problem-details map; build the password hasher once and stash on `app.state.password_hasher`. **No seed hook — the server has no environment-conditional code.**
+- `src/py/novamoc/config.py` — gains `AuthSettings` (slots dataclass) with `session_ttl_seconds`, `session_cookie_name`, `session_cookie_secure`, plus the argon2 cost parameters; `Settings.auth` field.
+- `src/py/novamoc/api/_problem_details.py` — add `LOGIN_FAILED` (401) and `USER_ALREADY_HAS_TENANT` (409) to `_TITLES` / `_STATUS_CODES` / the domain-error converter's enum membership.
 - `src/py/novamoc/domain/_errors.py` — register the two new error codes in `ErrorCode`.
 - `src/py/novamoc/db/_listeners.py` — no changes to the listener logic, but a one-line addition to the "always-unscoped tables" allow-list (a private constant) so `tenants`, `users`, `user_tenant_memberships`, `sessions` are explicitly excluded from the column-presence heuristic. (The heuristic already does the right thing for tables without a `tenant_id` column, but pinning the intent in code prevents accidental future regressions.)
-- `tests/conftest.py` — drop the `_TENANT_T1_DEV_TOKEN` import and the bearer-header default. Replace with: a session-wide `dev_admin` fixture that runs `seed_default_admin` against the per-test engine; an authenticated `client` fixture that calls `POST /auth/login` once at startup; and an `unauth_client` fixture for the rejection-path tests. The autouse `tenant` fixture keeps its current shape but now defaults to seeding a real `tenants` row with id `"t1"` so the storage-layer tests continue to pass under the FK constraint that `user_tenant_memberships` creates against `tenants.id`.
+- `tests/conftest.py` — drop the `_TENANT_T1_DEV_TOKEN` import and the bearer-header default. Replace with: a session-wide `dev_admin` fixture that creates the dev tenant + `admin` user + membership via direct `TenantService` / `UserService` / `UserTenantMembershipService` calls (matching what `just bootstrap-dev` does on the CLI); an authenticated `client` fixture that calls `POST /auth/login` once at startup; and an `unauth_client` fixture for the rejection-path tests. The autouse `tenant` fixture flips from defaulting to the string `"t1"` to defaulting to a module-level UUID constant (`DEV_TENANT_ID = uuid.UUID("...")`); test scenarios under `tests/data/scenarios.py` use the same constant so the storage-layer tests continue to pass under the FK that `user_tenant_memberships` creates against `tenants.id`.
 - `tests/schema/test_endpoint_e2e.py`, `tests/schema/test_read_endpoint_e2e.py`, `tests/events/test_endpoint_e2e.py`, `tests/events/test_endpoint_lifecycle_e2e.py` — no functional changes; the migrated `client` fixture means tests get an authenticated session by default. The 401 cases on these endpoints already exist (from the ADR-017 work); their wire shape doesn't change.
 - `README.md` — replace the "Development credentials" section with the new flow (login at `/login`, or curl with `-c cookies.txt -X POST /auth/login`; admin / admin default; the env var that enables seeding).
 
@@ -352,15 +362,14 @@ Repo conventions apply: real in-memory aiosqlite, no DB mocks, asyncio auto mode
 
 **`tests/accounts/test_password.py`** — unit tests against `_password.PasswordHasher`. Hash a password, verify the same password, verify a wrong password returns false, `check_needs_rehash` returns true when cost params change, `hash()` produces distinct outputs for the same input (salting).
 
-**`tests/accounts/test_seed.py`** — unit tests for `seed_default_admin`. Fresh DB → creates tenant + user + membership; running twice is a no-op (idempotent); running with a pre-existing `admin` user with a different password leaves the existing user alone (no clobber).
+**`tests/accounts/test_membership_service.py`** — unit tests for the N:1 write-time invariant. `UserTenantMembershipService.create` for a user with no existing membership succeeds; a second `create` for the same `user_id` raises `UserAlreadyHasTenantError` (mapped to 409 `user_already_has_tenant`); deleting the membership and re-creating succeeds (the invariant cares about live state, not history).
 
 **`tests/accounts/test_login_e2e.py`** — wire-level tests against the `app` fixture, against a seeded admin user:
 - Valid credentials → 204, `Set-Cookie: novamoc_session=...` present, cookie is HttpOnly + SameSite=Lax.
 - Wrong password → 401 `login_failed` (problem-details).
 - Unknown username → 401 `login_failed` (same wire shape — anti-enumeration check; the test asserts the response body is byte-identical to the wrong-password case).
 - Disabled user → 401 `login_failed`.
-- User with 0 memberships → 401 `login_failed`.
-- User with 2 memberships → 409 `multiple_memberships_unsupported`.
+- User with 0 memberships → 401 `login_failed` (same wire shape as the other anti-enumeration cases — possible only as a transient state if a membership was deleted between user creation and login).
 - Missing `username` or `password` field → 400 `invalid_payload_shape`.
 - Extra field → 400 `invalid_payload_shape` (forbid_unknown_fields).
 
@@ -390,7 +399,8 @@ Repo conventions apply: real in-memory aiosqlite, no DB mocks, asyncio auto mode
 
 **Existing tests** — mechanical edits via the fixture migration:
 - All schema/events e2e tests pick up an authenticated session via the migrated `client` fixture; no per-test edits needed.
-- The cross-tenant isolation test (`tests/schema/test_cross_tenant_isolation.py`) seeds two real `tenants` rows (`t-a`, `t-b`), two users, two memberships, and either logs in twice (one client per user) or — more efficient — calls `resolve_principal` directly to construct the per-tenant contexts without HTTP. Either is fine; the plan picks the simpler.
+- The cross-tenant isolation test (`tests/schema/test_cross_tenant_isolation.py`) seeds two real `tenants` rows (two distinct UUID constants `DEV_TENANT_ID_A` / `DEV_TENANT_ID_B`), two users with one membership each (so the N:1 invariant is satisfied per-user), and either logs in twice (one client per user) or — more efficient — calls `resolve_principal_from_session` directly to construct the per-tenant contexts without HTTP. Either is fine; the plan picks the simpler.
+- Every test that currently writes `tenant_id="t1"` (or constructs a struct/scope with that string literal) updates to import `DEV_TENANT_ID` from a single test-data module. This is the bulk of the migration's test-side churn; the plan handles it in one commit so the working tree stays green.
 
 **Cross-cutting** — confirm the 401 wire shape on existing endpoints stays byte-identical to what e2e tests already assert. The trigger changes; the wire shape does not.
 
@@ -402,9 +412,9 @@ Substantive decisions ADR-020 records:
 
 1. **Credential format.** Server-side session cookie via advanced-alchemy's `SQLAlchemyAsyncSessionBackend`. Considered options: stateless JWT in `Authorization`, JWT in cookie, session cookie. Choice: session cookie. Rationale: HttpOnly+SameSite cookie avoids XSS-readable token; same-origin SPA does not need stateless tokens; instant revocation; one DB, no Redis dependency.
 2. **Principal/scope split inherits from ADR-017.** `Principal` lands on `request.user`; `RequestAuth(tenant_id)` shape preserved on `request.auth`. The struct extension story (future fields on Principal/RequestAuth) is unchanged.
-3. **Tenant id is a slug (not a UUID).** Existing `tenant_id: str` columns and `"t1"` test fixtures stay valid; the `tenants` table's PK matches. Trade-off: tenants cannot be renamed in place; tenant rename is a data migration, not a column update. Accepted because (a) tenant ids are rarely renamed in practice and (b) immutable PKs prevent FK churn.
-4. **N-to-N membership table with a v1 one-membership invariant.** Schema is forward-compatible; v1 behaviour is constrained to keep "switch active tenant" out of this milestone.
-5. **Dev seeding gated by `NOVAMOC_DEV_SEED_DEFAULT_ADMIN`.** Default off. Idempotent. Loud warning on startup when on. The setting documents itself as dev-only; we do not attempt to detect "production" structurally (the operator's deployment config is the gate).
+3. **Tenant id is a UUIDv7.** Every existing `tenant_id: Mapped[str]` column on tenant-scoped tables (`TenantScopedMixin`, the projection tables, `event_log`, `schema_change_log`) migrates to `Mapped[uuid.UUID]` in lockstep; `RequestAuth.tenant_id` and the `current_tenant_id` ContextVar move with them; scenario fixtures and the conftest's `"t1"` literal are replaced by a fixed UUID constant. Pre-release: one-time migration with a small surface today is cheaper than the same migration with more call sites later. The alternative (mixed typing — UUIDs in the registry, strings everywhere else) was rejected as a footgun.
+4. **N-to-N membership table with a v1 one-membership invariant enforced at write time.** `UserTenantMembershipService.create` rejects a second membership for an existing `user_id` with `user_already_has_tenant` (409). Login does not count — it reads the single membership and uses it. v2's switch-tenant feature relaxes the service-layer check; the table shape is forward-compatible.
+5. **No dev-only code in the server.** No seed function, no startup hook, no `dev_seed_default_admin` setting. Bootstrap is via CLI in every environment — `just bootstrap-dev` for local development; an init container running the same commands for production. This keeps the server's behaviour environment-independent and means there is no "did someone forget to flip the flag in prod" failure mode.
 6. **No registration / no email reset in v1.** Operator-managed via CLI. Each deferred concern is enumerated as recorded tech debt.
 
 ADR-020 does **not** supersede ADR-017 — ADR-017's structural decisions (resolver as the swap point, the principal/scope split, the 401 wire shape, the OpenAPI bypass) hold; ADR-020 fills in their v2 details. ADR-020's `More Information` cites ADR-017, ADR-014 (superseded by 017), ADR-008 (schema-as-data; where future authorization Guards will plug in), ADR-016 (problem-details), and issue #19 (closed by this milestone).
@@ -418,16 +428,15 @@ ADR-020 does **not** supersede ADR-017 — ADR-017's structural decisions (resol
 - **No "switch active tenant" UX.** The membership table allows N-to-N from day one but the login handler refuses users with >1 membership (409). Tracked as M-next.
 - **No session inactivity timeout, only absolute TTL.** A long-lived session does not refresh on activity; it just expires after the configured TTL. Tracked.
 - **Opportunistic session cleanup.** No scheduled GC; the `novamoc auth gc-sessions` CLI command is the operator escape hatch. Tracked when the scheduler infra lands.
-- **The dev `admin`/`admin` credential is in source.** Anyone with checkout access can read it; the same trust model ADR-017 articulated. The seeder logs a loud warning at startup. Production deployments leave the env var off.
 - **No API tokens for CLI/automation.** Cookie-only for v1. A future "personal access token" model is its own spec.
 
 ## Notable non-changes
 
-- **The dispatch contract ADR-017 fixed.** Handlers still take `auth: RequestAuth` (or `request.auth.tenant_id` directly); `TenantContextMiddleware` still reads `scope["auth"].tenant_id` and sets the `current_tenant_id` ContextVar; the three storage-layer listeners are untouched; the `current_tenant_id` ContextVar value is still the per-request tenant slug.
+- **The dispatch contract ADR-017 fixed.** Handlers still take `auth: RequestAuth` (or `request.auth.tenant_id` directly); `TenantContextMiddleware` still reads `scope["auth"].tenant_id` and sets the `current_tenant_id` ContextVar; the three storage-layer listeners are untouched. The only field-level change is `RequestAuth.tenant_id: str` → `RequestAuth.tenant_id: uuid.UUID` (the ContextVar value type flips with it).
 - **The 401 wire shape.** `urn:novamoc:problems:tenant_not_resolved` keeps its leaf and status code. Only the trigger changes from "wrong bearer token" to "session missing/expired/invalid."
 - **The OpenAPI mount, the problem-details rendering pipeline, the schema-change-log shape, the event-log shape, the HLC ordering, the LWW fold.** Untouched.
 - **The `SchemaController` and `EventsController` route tables.** No route paths change; no payload shapes change; no response shapes change.
-- **The autouse `tenant` fixture's contract** to test code that doesn't care: it still sets `current_tenant_id` to `"t1"` (or whatever the test parametrizes). The fixture's implementation gains a small step (seed a real `tenants` row before yielding) so the FK constraint from `user_tenant_memberships` doesn't trip in the rare test that exercises both.
+- **The autouse `tenant` fixture's contract** to test code that doesn't care: it still sets `current_tenant_id` to a single default value (or whatever the test parametrizes). What changes: the default flips from the string `"t1"` to a module-level `DEV_TENANT_ID = uuid.UUID(...)` constant, and the fixture's implementation gains a small step (seed a real `tenants` row with that UUID before yielding) so the FK constraint from `user_tenant_memberships` doesn't trip in the rare test that exercises both.
 
 ## Open design questions
 

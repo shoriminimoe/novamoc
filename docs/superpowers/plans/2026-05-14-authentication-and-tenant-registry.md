@@ -2,9 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the design at `docs/superpowers/specs/2026-05-14-authentication-and-tenant-registry-design.md` — the v2 credential machinery ADR-017 deferred. Real `tenants` / `users` / `user_tenant_memberships` / `sessions` tables, argon2id password hashing, server-side session cookies via advanced-alchemy, `POST /auth/login` + `POST /auth/logout` + `GET /auth/me`, a dev-mode seeder that idempotently creates `admin`/`admin`, and a CLI for the production operator path. Closes issue #19.
+**Goal:** Implement the design at `docs/superpowers/specs/2026-05-14-authentication-and-tenant-registry-design.md` — the v2 credential machinery ADR-017 deferred. Real `tenants` / `users` / `user_tenant_memberships` / `sessions` tables with UUIDv7 tenant identity, argon2id password hashing, server-side session cookies via advanced-alchemy, `POST /auth/login` + `POST /auth/logout` + `GET /auth/me`, and a CLI as the single bootstrap path (dev via `just bootstrap-dev`; production via the same commands in an init container). The N:1 invariant (one tenant per user) is enforced at the `UserTenantMembershipService.create` write path with a 409 `user_already_has_tenant`. Closes issue #19.
 
-**Architecture:** The resolver-as-swap-point structure from ADR-017 is preserved. `domain/accounts/_resolver.py` is rewritten from "header → constant match → tenant slug" into "session → user + active tenant lookup → `(Principal, RequestAuth)`". `AuthenticationMiddleware.authenticate_request` becomes async-with-DB-access; `TenantContextMiddleware` and the three storage-layer listeners are untouched. The new auth-layer tables live under `db/models/_auth/` and are NOT tenant-scoped — they short-circuit the listener's column-presence heuristic naturally. `SQLAlchemyAsyncSessionBackend` from advanced-alchemy stores sessions in the same DB.
+**Architecture:** The resolver-as-swap-point structure from ADR-017 is preserved. `domain/accounts/_resolver.py` is rewritten from "header → constant match → tenant string" into "session → user + active tenant lookup → `(Principal, RequestAuth)`". `AuthenticationMiddleware.authenticate_request` becomes async-with-DB-access; `TenantContextMiddleware` and the three storage-layer listeners are untouched. Every existing `tenant_id: Mapped[str]` column migrates to `Mapped[uuid.UUID]` (TenantScopedMixin, projection tables, event_log, schema_change_log, RequestAuth, the ContextVar, scenarios) in one commit so the boundary stays green. The new auth-layer tables live under `db/models/_auth/` and are NOT tenant-scoped — they short-circuit the listener's column-presence heuristic naturally. `SQLAlchemyAsyncSessionBackend` from advanced-alchemy stores sessions in the same DB. No environment-conditional code in the server: there is no seed function, no startup hook, no `dev_seed_default_admin` setting.
+
+**Revision history:** This is revision 2 of the plan. Changes from revision 1, surfaced for reviewer convenience:
+- Tenant ID is `uuid.UUID` (was a slug `str`). Cascading `tenant_id` column-type migration folded into Task 2.
+- `_seed.py` / `seed_default_admin` / `dev_seed_default_admin` / `NOVAMOC_DEV_SEED_DEFAULT_ADMIN` all dropped. Task 9 removed. Bootstrap is via CLI (`just bootstrap-dev` recipe).
+- N:1 invariant enforced at `UserTenantMembershipService.create`, not at login. `MultipleMembershipsUnsupportedError` renamed to `UserAlreadyHasTenantError`; the 409 surface moves from `POST /auth/login` to the membership-write path (CLI).
+- `Principal.user_id` renamed to `Principal.id`.
 
 **Tech Stack:** Python 3.14, Litestar 2.21.1, msgspec, advanced-alchemy + SQLAlchemy 2 (async), aiosqlite, argon2-cffi, Click (CLI), Svelte 5 + Vite (login page), pytest (asyncio auto mode), uv, ruff, ty.
 
@@ -17,39 +23,47 @@
 **Created:**
 - `docs/adr/020-authentication-and-tenant-registry.md` — the milestone ADR.
 - `src/py/novamoc/db/models/_auth/__init__.py`
-- `src/py/novamoc/db/models/_auth/_tenant.py` — `Tenant` model.
+- `src/py/novamoc/db/models/_auth/_tenant.py` — `Tenant` model (UUIDv7 PK from `UUIDAuditBase`).
 - `src/py/novamoc/db/models/_auth/_user.py` — `User` model.
 - `src/py/novamoc/db/models/_auth/_membership.py` — `UserTenantMembership` model.
 - `src/py/novamoc/db/models/_auth/_session.py` — `Session` model via advanced-alchemy's mixin.
-- `src/py/novamoc/domain/accounts/_principal.py` — `Principal` frozen `msgspec.Struct`.
+- `src/py/novamoc/domain/accounts/_principal.py` — `Principal` frozen `msgspec.Struct` with `id` + `username`.
 - `src/py/novamoc/domain/accounts/_password.py` — `PasswordHasher` accessor.
-- `src/py/novamoc/domain/accounts/_services.py` — `TenantService`, `UserService`, `UserTenantMembershipService`.
+- `src/py/novamoc/domain/accounts/_services.py` — `TenantService`, `UserService`, `UserTenantMembershipService` (the last enforces the N:1 invariant on `create`).
 - `src/py/novamoc/domain/accounts/_payloads.py` — `LoginRequest`, `MeResponse`, `MePrincipal`, `MeTenant`.
 - `src/py/novamoc/domain/accounts/_handlers.py` — `login`, `logout`, `me` handler functions.
-- `src/py/novamoc/domain/accounts/_seed.py` — `seed_default_admin`.
 - `src/py/novamoc/domain/accounts/controllers/__init__.py`, `controllers/_auth.py` — `AuthController`.
 - `src/py/novamoc/cli.py` — Click CLI entry point + sub-commands.
 - `src/js/web/src/routes/login/+page.svelte` — the SPA login page.
-- `tests/accounts/test_password.py`, `test_seed.py`, `test_resolver_session.py`, `test_login_e2e.py`, `test_logout_e2e.py`, `test_me_e2e.py`, `test_cli.py`.
+- `tests/_constants.py` — `DEV_TENANT_ID` UUID constant used by scenarios + fixtures (replaces every `"t1"` literal).
+- `tests/accounts/test_password.py`, `test_membership_service.py`, `test_resolver_session.py`, `test_login_e2e.py`, `test_logout_e2e.py`, `test_me_e2e.py`, `test_cli.py`.
 
 **Modified:**
-- `src/py/novamoc/asgi.py` — session middleware, `AuthController`, new problem-details mappers, dev-seed hook, hasher on `app.state`.
-- `src/py/novamoc/config.py` — `AuthSettings` field on `Settings`.
-- `src/py/novamoc/api/_problem_details.py` — add `LOGIN_FAILED` and `MULTIPLE_MEMBERSHIPS_UNSUPPORTED`.
+- `src/py/novamoc/db/models/_mixins.py` — `TenantScopedMixin.tenant_id` flips from `Mapped[str]` to `Mapped[uuid.UUID]`.
+- Every projection table under `src/py/novamoc/db/models/data/` and schema table under `src/py/novamoc/db/models/schema/` — picks up the type change transitively via the mixin (no per-file edit needed unless a model declares `tenant_id` directly).
+- `src/py/novamoc/db/models/data/_event.py` (event_log) and `src/py/novamoc/db/models/schema/_change_log.py` — the hand-declared `tenant_id` columns flip to `uuid.UUID` too.
+- `src/py/novamoc/db/_tenant_context.py` — `current_tenant_id: ContextVar[uuid.UUID | None]`; `use_tenant(tenant_id: uuid.UUID)`.
+- `src/py/novamoc/domain/accounts/_auth.py` — `RequestAuth.tenant_id: uuid.UUID`.
+- `src/py/novamoc/asgi.py` — session middleware, `AuthController`, new problem-details mappers, hasher on `app.state`. **No seed hook.**
+- `src/py/novamoc/config.py` — `AuthSettings` field on `Settings` (no `dev_seed_default_admin`).
+- `src/py/novamoc/api/_problem_details.py` — add `LOGIN_FAILED` and `USER_ALREADY_HAS_TENANT`.
 - `src/py/novamoc/domain/_errors.py` — register the two new error codes on `ErrorCode`.
 - `src/py/novamoc/domain/accounts/_resolver.py` — full rewrite.
 - `src/py/novamoc/domain/accounts/_middleware.py` — async authenticate_request that reads session + DB.
-- `src/py/novamoc/domain/accounts/_errors.py` — `LoginFailedError`, `MultipleMembershipsUnsupportedError`.
+- `src/py/novamoc/domain/accounts/_errors.py` — `LoginFailedError`, `UserAlreadyHasTenantError`.
 - `src/py/novamoc/domain/accounts/__init__.py` — re-exports.
 - `src/py/novamoc/db/_listeners.py` — small allow-list pin (defensive).
 - `src/py/novamoc/db/models/__init__.py` — import the new `_auth` sub-package so its tables register on the shared metadata.
-- `tests/conftest.py` — drop the bearer header; add `dev_admin`, `authenticated_client`, `unauth_client`; tweak `tenant` fixture to seed a real `tenants` row.
+- `tests/conftest.py` — drop the bearer header; add `dev_admin`, `authenticated_client`, `unauth_client`; switch the autouse `tenant` fixture default to `DEV_TENANT_ID`.
+- `tests/data/scenarios.py` and any `tests/data/*.json` carrying `"t1"` — replace with `DEV_TENANT_ID`.
 - `pyproject.toml` — add `argon2-cffi` and `click` dependencies; declare the `novamoc` CLI entry point under `[project.scripts]`.
-- `README.md` — document the new login flow.
+- `justfile` — add `bootstrap-dev` recipe.
+- `README.md` — document the new login flow and the bootstrap recipe.
 
 **Deleted:**
 - `_TENANT_T1_DEV_TOKEN` constant and the bearer-matching code in `_resolver.py`.
 - Bearer-header default in `tests/conftest.py::client`.
+- The string `"t1"` everywhere it appeared as a tenant identifier (replaced by `DEV_TENANT_ID`).
 
 ---
 
@@ -83,7 +97,7 @@ Use `docs/adr/_template.md` as the starting point (post-template MADR shape). Re
 - **Context:** ADR-017 deferred the credential format ("v1 hardcodes a single token in source. No rotation, expiry, or revocation. Acceptable for the dev period only"). The bearer constant must now be replaced with a real registry; the principal slot (`RequestAuth.user`) must be populated; issue #19 must close.
 - **Decision drivers:** preserve ADR-017's dispatch contract; reuse the existing 401 wire shape; pick a session story that does not introduce a new datastore; expose a real rejection path for production deployment hygiene.
 - **Considered options:** stateless JWT in `Authorization`; JWT in cookie; session cookie with server-side store. List the chosen option first.
-- **Decision outcome:** session cookie via advanced-alchemy's `SQLAlchemyAsyncSessionBackend`. The principal/scope split inherits from ADR-017. The `tenants.id` PK is a slug (not UUID) so existing `tenant_id: str` columns and scenario fixtures remain valid. The membership table is N-to-N from day one with a v1 invariant of exactly-one-membership enforced at login. Dev seeding is gated by `NOVAMOC_DEV_SEED_DEFAULT_ADMIN`.
+- **Decision outcome:** session cookie via advanced-alchemy's `SQLAlchemyAsyncSessionBackend`. The principal/scope split inherits from ADR-017. The `tenants.id` PK is a UUIDv7 (from `UUIDAuditBase`); every existing `tenant_id: Mapped[str]` column migrates to `Mapped[uuid.UUID]` in lockstep. The membership table is N-to-N from day one with a v1 invariant of exactly-one-membership enforced at the service-layer write path (`UserTenantMembershipService.create` raises `UserAlreadyHasTenantError` → 409). No dev-only code in the server — bootstrap is via the CLI in every environment, wrapped locally by `just bootstrap-dev`.
 - **Consequences:** Good — instant revocation; one DB; structurally same 401 wire shape; principal/scope split is forward-compatible. Bad — long sessions only refresh on expiry (no inactivity timeout in v1); the dev `admin`/`admin` credential is in source (same trust model as ADR-017's bearer constant); no API tokens for CLI/automation.
 - **Confirmation:** unit tests in `tests/accounts/test_resolver_session.py` pin the resolver's accept/reject behaviour; e2e tests in `test_login_e2e.py` / `test_logout_e2e.py` / `test_me_e2e.py` pin the wire contract; cross-tenant isolation tests under the new auth stack confirm the existing tenant-scoping listener machinery still does the right thing.
 - **More information:** cite ADR-017 (defers this work; its dispatch contract holds), ADR-014 (superseded by 017), ADR-008 (where future authorization Guards plug in), ADR-016 (problem-details rendering this depends on). Link to issue #19 (closed by this milestone) and to the spec at `docs/superpowers/specs/2026-05-14-authentication-and-tenant-registry-design.md`.
@@ -107,17 +121,25 @@ git commit -m "docs(adr): ADR-020 authentication and tenant registry"
 
 ---
 
-## Task 2: Add `argon2-cffi` + `click`; wire `Tenant` model and service
+## Task 2: Migrate `tenant_id` columns to `uuid.UUID`; add `Tenant` model + service
 
-**Files:**
-- Modify: `pyproject.toml`
-- Create: `src/py/novamoc/db/models/_auth/__init__.py`
-- Create: `src/py/novamoc/db/models/_auth/_tenant.py`
-- Modify: `src/py/novamoc/db/models/__init__.py`
-- Create: `src/py/novamoc/domain/accounts/_services.py`
-- Create: `tests/accounts/test_tenant_model.py`
+**Files (12 — exceeds the per-task heuristic):**
+- Modify: `pyproject.toml` — add `argon2-cffi` and `click` dependencies.
+- Modify: `src/py/novamoc/db/models/_mixins.py` — `TenantScopedMixin.tenant_id: Mapped[uuid.UUID]`.
+- Modify: `src/py/novamoc/db/models/data/_event.py` — hand-declared `tenant_id` flips to `uuid.UUID`.
+- Modify: `src/py/novamoc/db/models/schema/_change_log.py` — same.
+- Modify: `src/py/novamoc/db/_tenant_context.py` — `ContextVar[uuid.UUID | None]`, `use_tenant(tenant_id: uuid.UUID)`.
+- Modify: `src/py/novamoc/domain/accounts/_auth.py` — `RequestAuth.tenant_id: uuid.UUID`.
+- Modify: `src/py/novamoc/domain/accounts/_resolver.py` — current bearer-matcher returns `uuid.UUID` (the constant changes from `"t1"` to a UUID literal — this is interim; Task 11 replaces this whole module).
+- Create: `tests/_constants.py` — `DEV_TENANT_ID: uuid.UUID = uuid.UUID("...")`, a fixed UUIDv7 literal; `DEV_TENANT_ID_A` / `DEV_TENANT_ID_B` for cross-tenant tests.
+- Modify: `tests/conftest.py` — autouse `tenant` fixture default flips from `"t1"` to `DEV_TENANT_ID`.
+- Modify: `tests/data/scenarios.py` (and any JSON under `tests/data/`) — replace `"t1"` with `DEV_TENANT_ID`.
+- Create: `src/py/novamoc/db/models/_auth/__init__.py`, `_tenant.py`.
+- Modify: `src/py/novamoc/db/models/__init__.py` — import the `_auth` sub-package.
+- Create: `src/py/novamoc/domain/accounts/_services.py` — `TenantService` (no slug validator; the inherited UUIDv7 PK is the constraint).
+- Create: `tests/accounts/test_tenant_model.py`.
 
-Tenants land first — they're the registry issue #19 actually tracks, and all the other auth tables FK to `tenants.id`. The dependency adds happen here so subsequent tasks can use them.
+**Rationale for the file count:** the tenant-identity type migration is one conceptual seam — column type, ContextVar type, `RequestAuth` shape, and every test scenario flip together. Splitting them leaves intermediate states where the columns disagree with the ContextVar (or `RequestAuth`) and the existing schema-endpoint tests fail because a `uuid.UUID` `tenant_id` won't match a string-typed predicate. The single-task migration keeps the boundary green. Adding the `Tenant` model in the same commit folds in cleanly because it's the table the new types FK to.
 
 - [ ] **Step 1: Add dependencies**
 
@@ -130,12 +152,31 @@ Edit `pyproject.toml`. Append to `[project.dependencies]`:
 
 Run `uv sync` to update the lock file.
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write the failing tests**
+
+Create `tests/_constants.py`:
+
+```python
+"""Shared test constants. Imported by scenarios + fixtures + tests."""
+
+from __future__ import annotations
+
+import uuid
+
+# A fixed UUIDv7 — picked once and inlined here so scenarios and fixtures
+# all reference the same value. Don't reuse uuid.uuid4() at import time:
+# tests would lose determinism.
+DEV_TENANT_ID = uuid.UUID("01900000-0000-7000-8000-000000000001")
+DEV_TENANT_ID_A = uuid.UUID("01900000-0000-7000-8000-00000000000a")
+DEV_TENANT_ID_B = uuid.UUID("01900000-0000-7000-8000-00000000000b")
+```
 
 Create `tests/accounts/test_tenant_model.py`:
 
 ```python
 from __future__ import annotations
+
+import uuid
 
 import pytest
 
@@ -145,26 +186,28 @@ pytestmark = pytest.mark.no_tenant
 async def test_tenant_row_inserts_and_reads(session) -> None:
     from novamoc.db.models._auth import Tenant
 
-    session.add(Tenant(id="dev", display_name="Development"))
+    tenant = Tenant(display_name="Development")
+    session.add(tenant)
     await session.flush()
-    result = await session.get(Tenant, "dev")
+
+    assert isinstance(tenant.id, uuid.UUID)
+    result = await session.get(Tenant, tenant.id)
     assert result is not None
     assert result.display_name == "Development"
     assert result.disabled_at is None
 
 
-async def test_tenant_id_must_be_slug_shaped(session) -> None:
-    """Service-layer validator rejects non-slug ids."""
+async def test_tenant_service_create_returns_uuid_id(session) -> None:
     from novamoc.domain.accounts._services import TenantService
 
     service = TenantService(session=session)
-    with pytest.raises(ValueError, match="slug"):
-        await service.create({"id": "Invalid Slug!", "display_name": "x"})
+    tenant = await service.create({"display_name": "Acme"})
+    assert isinstance(tenant.id, uuid.UUID)
 ```
 
-Note the `no_tenant` marker — the `tenants` table is not tenant-scoped, so the autouse `tenant` fixture's auto-injection would be a false signal. The marker is the documented opt-out per CLAUDE.md.
+Note the `no_tenant` marker — the `tenants` table is not tenant-scoped, so the autouse `tenant` fixture's auto-injection would be a false signal.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [ ] **Step 3: Run the tests to verify they fail**
 
 ```bash
 uv run pytest tests/accounts/test_tenant_model.py -v
@@ -172,7 +215,82 @@ uv run pytest tests/accounts/test_tenant_model.py -v
 
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 4: Implement `Tenant`**
+- [ ] **Step 4: Flip the column types**
+
+In `src/py/novamoc/db/models/_mixins.py`:
+
+```python
+import uuid
+from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
+
+
+@declarative_mixin
+class TenantScopedMixin:
+    tenant_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, sort_order=-200)
+```
+
+In `src/py/novamoc/db/models/data/_event.py` (event_log): the hand-declared `tenant_id` column flips to `Mapped[uuid.UUID]`. Same in `src/py/novamoc/db/models/schema/_change_log.py`.
+
+In `src/py/novamoc/db/_tenant_context.py`:
+
+```python
+from contextlib import contextmanager
+from contextvars import ContextVar
+from collections.abc import Iterator
+import uuid
+
+current_tenant_id: ContextVar[uuid.UUID | None] = ContextVar(
+    "novamoc_current_tenant_id", default=None
+)
+
+
+@contextmanager
+def use_tenant(tenant_id: uuid.UUID) -> Iterator[None]:
+    token = current_tenant_id.set(tenant_id)
+    try:
+        yield
+    finally:
+        current_tenant_id.reset(token)
+```
+
+In `src/py/novamoc/domain/accounts/_auth.py`:
+
+```python
+import uuid
+import msgspec
+
+
+class RequestAuth(msgspec.Struct, frozen=True):
+    tenant_id: uuid.UUID
+```
+
+In `src/py/novamoc/domain/accounts/_resolver.py` (the v1 module that Task 11 will rewrite — for now just update the constant + return type):
+
+```python
+import uuid
+
+_TENANT_T1_DEV_TOKEN = "t1-dev-token"  # noqa: S105
+_TENANT_T1: uuid.UUID = uuid.UUID("01900000-0000-7000-8000-000000000001")  # matches DEV_TENANT_ID
+
+def resolve_tenant(headers) -> uuid.UUID:
+    # ...existing body, returning _TENANT_T1 instead of "t1"
+```
+
+- [ ] **Step 5: Update the test data + conftest**
+
+In `tests/conftest.py`:
+- Import `DEV_TENANT_ID` from `tests._constants`.
+- Change the autouse `tenant` fixture's default from `"t1"` to `DEV_TENANT_ID`.
+- Update the parametrize examples in the docstring (`["t-a", "t-b"]` → `[DEV_TENANT_ID_A, DEV_TENANT_ID_B]`).
+
+In `tests/data/scenarios.py`:
+- Replace `tenant_id: "t1"` (or whatever the literal currently is) with `DEV_TENANT_ID`.
+- If scenarios live as JSON, either convert to Python literals so they can reference the constant, or write a small loader pass that swaps the string for the UUID.
+
+In `tests/schema/test_cross_tenant_isolation.py`:
+- Replace `"t-a"` / `"t-b"` with `DEV_TENANT_ID_A` / `DEV_TENANT_ID_B`.
+
+- [ ] **Step 6: Implement `Tenant` and `TenantService`**
 
 Create `src/py/novamoc/db/models/_auth/__init__.py`:
 
@@ -197,10 +315,9 @@ Create `src/py/novamoc/db/models/_auth/_tenant.py`:
 ```python
 """Tenant registry model (ADR-020).
 
-PK is a short human-readable slug, not a UUID, so existing ``tenant_id``
-columns on synced tables (and the ``"t1"`` value baked into scenario
-fixtures) remain valid by construction. Slug validation lives at the
-service layer.
+PK is the inherited UUIDv7 from ``UUIDAuditBase`` — no override. The
+tenant identity is a UUID across the whole codebase; the registry row
+is just one place that identity is anchored.
 """
 
 from __future__ import annotations
@@ -214,33 +331,29 @@ from sqlalchemy.orm import Mapped, mapped_column
 class Tenant(UUIDAuditBase):
     __tablename__ = "tenants"
 
-    # Override the inherited UUID PK with a string slug.
-    id: Mapped[str] = mapped_column(primary_key=True)
     display_name: Mapped[str]
     disabled_at: Mapped[datetime | None] = mapped_column(default=None)
 ```
 
-Update `src/py/novamoc/db/models/__init__.py` to import the sub-package so its tables register on the shared metadata:
+Update `src/py/novamoc/db/models/__init__.py`:
 
 ```python
 import novamoc.db.models._auth  # noqa: F401
 ```
-
-- [ ] **Step 5: Implement `TenantService`**
 
 Create `src/py/novamoc/domain/accounts/_services.py`:
 
 ```python
 """Advanced-alchemy services for the auth-layer tables.
 
-Thin ``SQLAlchemyAsyncRepositoryService`` wrappers; the only business
-rule is the tenant-id slug validator. Other validation (uniqueness,
-foreign-key existence) is enforced at the database level.
+Thin ``SQLAlchemyAsyncRepositoryService`` wrappers. Validation
+(uniqueness, foreign-key existence) is enforced at the database level;
+the only service-level rule lives on ``UserTenantMembershipService``
+(Task 4) which enforces the v1 one-membership-per-user invariant.
 """
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncRepositoryService
@@ -250,53 +363,48 @@ from novamoc.db.models._auth import Tenant
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-_TENANT_SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
-
 
 class TenantService(SQLAlchemyAsyncRepositoryService[Tenant]):
     class Repo(SQLAlchemyAsyncRepositoryService[Tenant].repository_type):
         model_type = Tenant
 
     repository_type = Repo
-
-    async def create(self, data: Mapping[str, Any] | Tenant, **kwargs: Any) -> Tenant:
-        if isinstance(data, Mapping):
-            tenant_id = data.get("id")
-            if not isinstance(tenant_id, str) or not _TENANT_SLUG_PATTERN.fullmatch(tenant_id):
-                msg = f"tenant id must be a slug matching {_TENANT_SLUG_PATTERN.pattern}; got {tenant_id!r}"
-                raise ValueError(msg)
-        return await super().create(data=data, **kwargs)
 ```
 
 (The exact `SQLAlchemyAsyncRepositoryService` boilerplate may need adjustment to match advanced-alchemy's current API; the existing services under `domain/schema/services/` are the reference shape.)
 
-- [ ] **Step 6: Run the tests**
+- [ ] **Step 7: Run the tests**
 
 ```bash
 uv run pytest tests/accounts/test_tenant_model.py -v
+uv run pytest
 ```
 
-Expected: 2 passed.
+Expected: the new tenant tests pass; the full suite still passes after the type migration. If existing tests fail, they're almost certainly cases where a string `"t1"` slipped through — `rg '"t1"' tests/` to find stragglers.
 
-- [ ] **Step 7: Run the full suite + lint + type-check**
+- [ ] **Step 8: Lint and type-check**
 
 ```bash
-uv run pytest
 uv run ruff check src tests
+uv run ruff format --check src tests
 uv run ty check
+just ratchet
 ```
 
-Expected: all green. The new metadata import in `db/models/__init__.py` means the test in-memory engine now creates the `tenants` table — existing tests under `tests/` should be unaffected (no other code references `tenants` yet).
+Expected: all green.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add pyproject.toml uv.lock \
-        src/py/novamoc/db/models/_auth/ \
-        src/py/novamoc/db/models/__init__.py \
-        src/py/novamoc/domain/accounts/_services.py \
+        src/py/novamoc/db/ \
+        src/py/novamoc/domain/accounts/ \
+        tests/_constants.py \
+        tests/conftest.py \
+        tests/data/ \
+        tests/schema/test_cross_tenant_isolation.py \
         tests/accounts/test_tenant_model.py
-git commit -m "feat(accounts): Tenant model + service; slug-validated PK"
+git commit -m "feat(accounts): migrate tenant_id to uuid.UUID; add Tenant model"
 ```
 
 ---
@@ -464,13 +572,17 @@ git commit -m "feat(accounts): User model + case-folded username service"
 
 ---
 
-## Task 4: `UserTenantMembership` model + service
+## Task 4: `UserTenantMembership` model + service with N:1 write-time invariant
 
 **Files:**
 - Create: `src/py/novamoc/db/models/_auth/_membership.py`
 - Modify: `src/py/novamoc/db/models/_auth/__init__.py`
-- Modify: `src/py/novamoc/domain/accounts/_services.py` — add `UserTenantMembershipService`.
+- Modify: `src/py/novamoc/domain/accounts/_services.py` — add `UserTenantMembershipService` with the N:1 invariant on `create`.
+- Modify: `src/py/novamoc/domain/accounts/_errors.py` — `UserAlreadyHasTenantError` (lands here so the service can raise it).
 - Create: `tests/accounts/test_membership_model.py`
+- Create: `tests/accounts/test_membership_service.py`
+
+The model is N-to-N at the schema level; the service-layer write check enforces the v1 invariant. v2's switch-tenant work relaxes the service check; the table doesn't move.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -489,7 +601,7 @@ pytestmark = pytest.mark.no_tenant
 async def test_membership_inserts_with_real_fks(session) -> None:
     from novamoc.db.models._auth import Tenant, User, UserTenantMembership
 
-    tenant = Tenant(id="dev", display_name="Development")
+    tenant = Tenant(display_name="Development")
     user = User(username="alice", password_hash="x")
     session.add_all([tenant, user])
     await session.flush()
@@ -507,7 +619,7 @@ async def test_membership_pk_is_unique_pair(session) -> None:
 
     from novamoc.db.models._auth import Tenant, User, UserTenantMembership
 
-    tenant = Tenant(id="dev", display_name="d")
+    tenant = Tenant(display_name="d")
     user = User(username="alice", password_hash="x")
     session.add_all([tenant, user])
     await session.flush()
@@ -526,12 +638,73 @@ async def test_orphan_membership_rejected_by_fk(session) -> None:
 
     session.add(
         UserTenantMembership(
-            user_id=uuid.uuid4(), tenant_id="nonexistent"
+            user_id=uuid.uuid4(), tenant_id=uuid.uuid4()
         )
     )
     with pytest.raises(IntegrityError):
         await session.flush()
 ```
+
+Create `tests/accounts/test_membership_service.py` — exercises the N:1 invariant:
+
+```python
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.no_tenant
+
+
+async def _make_user_and_two_tenants(session):
+    from novamoc.db.models._auth import Tenant, User
+
+    user = User(username="alice", password_hash="x")
+    tenant_a = Tenant(display_name="A")
+    tenant_b = Tenant(display_name="B")
+    session.add_all([user, tenant_a, tenant_b])
+    await session.flush()
+    return user, tenant_a, tenant_b
+
+
+async def test_first_membership_succeeds(session) -> None:
+    from novamoc.domain.accounts._services import UserTenantMembershipService
+
+    user, tenant_a, _ = await _make_user_and_two_tenants(session)
+    service = UserTenantMembershipService(session=session)
+    membership = await service.create(
+        {"user_id": user.id, "tenant_id": tenant_a.id}
+    )
+    assert membership.tenant_id == tenant_a.id
+
+
+async def test_second_membership_for_same_user_rejected(session) -> None:
+    from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
+    from novamoc.domain.accounts._services import UserTenantMembershipService
+
+    user, tenant_a, tenant_b = await _make_user_and_two_tenants(session)
+    service = UserTenantMembershipService(session=session)
+    await service.create({"user_id": user.id, "tenant_id": tenant_a.id})
+    with pytest.raises(UserAlreadyHasTenantError):
+        await service.create({"user_id": user.id, "tenant_id": tenant_b.id})
+
+
+async def test_membership_redo_after_delete_succeeds(session) -> None:
+    """The invariant cares about live state, not history."""
+    from novamoc.domain.accounts._services import UserTenantMembershipService
+
+    user, tenant_a, _ = await _make_user_and_two_tenants(session)
+    service = UserTenantMembershipService(session=session)
+    membership = await service.create(
+        {"user_id": user.id, "tenant_id": tenant_a.id}
+    )
+    await service.delete(item_id=(user.id, tenant_a.id))
+    re_added = await service.create(
+        {"user_id": user.id, "tenant_id": tenant_a.id}
+    )
+    assert re_added.user_id == user.id
+```
+
+(`UserAlreadyHasTenantError` is added in Step 4 below; Task 6 wires the corresponding `ErrorCode.USER_ALREADY_HAS_TENANT` and the problem-details mapper.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -547,22 +720,19 @@ Create `src/py/novamoc/db/models/_auth/_membership.py`:
 Composite PK ``(user_id, tenant_id)`` doubles as the uniqueness
 constraint. ``DefaultBase`` (not ``UUIDAuditBase``) because the
 membership is a relation; its identity is the pair, not an opaque id.
-v1 enforces one-membership-per-user at the login handler, NOT at the
-schema level — the table allows N-to-N from day one so future "switch
-active tenant" is a data change, not a schema change.
+v1 enforces one-membership-per-user at the service-layer write path
+(see ``UserTenantMembershipService.create``) — the table allows N-to-N
+from day one so future "switch active tenant" is a relaxation of the
+service check, not a schema migration.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
 
 from advanced_alchemy.base import DefaultBase
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
-
-if TYPE_CHECKING:
-    pass
 
 
 class UserTenantMembership(DefaultBase):
@@ -571,19 +741,39 @@ class UserTenantMembership(DefaultBase):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id"), primary_key=True
     )
-    tenant_id: Mapped[str] = mapped_column(
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id"), primary_key=True
     )
 ```
 
 Update `_auth/__init__.py` to re-export.
 
-- [ ] **Step 4: Implement `UserTenantMembershipService`**
+- [ ] **Step 4: Add `UserAlreadyHasTenantError`**
+
+Append to `src/py/novamoc/domain/accounts/_errors.py`:
+
+```python
+class UserAlreadyHasTenantError(Exception):
+    """Raised by UserTenantMembershipService.create when the user already
+    has a membership. Maps to 409 ``user_already_has_tenant``.
+
+    Lands here in Task 4 as a bare Exception so the service can raise it;
+    Task 6 promotes it to a ``DomainError`` subclass with the ``ErrorCode``
+    plumbing and the problem-details mapper.
+    """
+```
+
+(The bare-Exception → DomainError promotion in Task 6 is a minor refactor; the tests in this task only depend on the type identity.)
+
+- [ ] **Step 5: Implement `UserTenantMembershipService`**
 
 Append to `_services.py`:
 
 ```python
+import uuid
+
 from novamoc.db.models._auth import UserTenantMembership
+from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
 
 
 class UserTenantMembershipService(SQLAlchemyAsyncRepositoryService[UserTenantMembership]):
@@ -594,19 +784,40 @@ class UserTenantMembershipService(SQLAlchemyAsyncRepositoryService[UserTenantMem
 
     async def list_for_user(self, user_id: uuid.UUID) -> list[UserTenantMembership]:
         return await self.list(user_id=user_id)
+
+    async def get_for_user(self, user_id: uuid.UUID) -> UserTenantMembership | None:
+        """Return the single membership for ``user_id`` or None.
+
+        Relies on the v1 N:1 invariant — if more than one row exists,
+        that's a precondition violation and this method returns the
+        first row deterministically; the alternative would be to raise,
+        which complicates callers for an invariant that's already
+        write-time-enforced.
+        """
+        rows = await self.list_for_user(user_id)
+        return rows[0] if rows else None
+
+    async def create(self, data, **kwargs):
+        if isinstance(data, dict):
+            user_id = data.get("user_id")
+            if user_id is not None and await self.list_for_user(user_id):
+                raise UserAlreadyHasTenantError
+        return await super().create(data=data, **kwargs)
 ```
 
-- [ ] **Step 5: Run the tests + full suite + lint + type-check**
+- [ ] **Step 6: Run the tests + full suite + lint + type-check**
 
-Expected: all green. Note: SQLite enforces FK constraints only when `PRAGMA foreign_keys=ON`; the third test (orphan rejection) confirms the test harness has FK enforcement on. If it doesn't, add a `PRAGMA foreign_keys=ON` to the test engine factory in `tests/conftest.py` — but this is a one-line addition and should already be the case under aiosqlite's defaults.
+Expected: all green. Note: SQLite enforces FK constraints only when `PRAGMA foreign_keys=ON`; the orphan-rejection test confirms the test harness has FK enforcement on.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/py/novamoc/db/models/_auth/ \
         src/py/novamoc/domain/accounts/_services.py \
-        tests/accounts/test_membership_model.py
-git commit -m "feat(accounts): UserTenantMembership model + service"
+        src/py/novamoc/domain/accounts/_errors.py \
+        tests/accounts/test_membership_model.py \
+        tests/accounts/test_membership_service.py
+git commit -m "feat(accounts): UserTenantMembership model + service; N:1 invariant at write time"
 ```
 
 ---
@@ -754,16 +965,16 @@ git commit -m "feat(accounts): PasswordHasher wraps argon2-cffi with settings-dr
 
 ---
 
-## Task 6: `AuthSettings`, `AuthError` codes, and problem-details mappers
+## Task 6: `AuthSettings` (no dev-seed), error code promotions, problem-details mappers
 
 **Files:**
 - Modify: `src/py/novamoc/config.py`
 - Modify: `src/py/novamoc/domain/_errors.py`
-- Modify: `src/py/novamoc/domain/accounts/_errors.py`
+- Modify: `src/py/novamoc/domain/accounts/_errors.py` — promote `UserAlreadyHasTenantError` from bare Exception to a `DomainError` subclass; add `LoginFailedError`.
 - Modify: `src/py/novamoc/api/_problem_details.py`
 - Modify: `tests/api/test_problem_details.py`
 
-The error codes + their wire-shape mappers land before the handlers so the handlers have somewhere to raise into.
+The error codes + their wire-shape mappers land before the handlers (Task 10) so the handlers have somewhere to raise into.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -784,19 +995,19 @@ def test_login_failed_renders_401() -> None:
     assert "username" not in pd.detail.lower()
 
 
-def test_multiple_memberships_unsupported_renders_409() -> None:
+def test_user_already_has_tenant_renders_409() -> None:
     from novamoc.api._problem_details import schema_error_to_problem_details
-    from novamoc.domain.accounts._errors import MultipleMembershipsUnsupportedError
+    from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
 
-    exc = MultipleMembershipsUnsupportedError()
+    exc = UserAlreadyHasTenantError()
     pd = schema_error_to_problem_details(exc)
     assert pd.status_code == 409
-    assert pd.type_ == "urn:novamoc:problems:multiple_memberships_unsupported"
+    assert pd.type_ == "urn:novamoc:problems:user_already_has_tenant"
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Expected: FAIL with `ImportError`.
+Expected: FAIL with `ImportError` / `AttributeError` (Task 4 added `UserAlreadyHasTenantError` as a bare Exception; it doesn't have the `DomainError` shape yet).
 
 - [ ] **Step 3: Add the error codes**
 
@@ -804,10 +1015,10 @@ Edit `src/py/novamoc/domain/_errors.py` (or wherever `ErrorCode` lives — see e
 
 ```python
 LOGIN_FAILED = "login_failed"
-MULTIPLE_MEMBERSHIPS_UNSUPPORTED = "multiple_memberships_unsupported"
+USER_ALREADY_HAS_TENANT = "user_already_has_tenant"
 ```
 
-Edit `src/py/novamoc/domain/accounts/_errors.py`. Append:
+Edit `src/py/novamoc/domain/accounts/_errors.py`. Replace the bare-Exception `UserAlreadyHasTenantError` from Task 4 with the DomainError version; add `LoginFailedError`:
 
 ```python
 from novamoc.domain._errors import DomainError, ErrorCode
@@ -819,12 +1030,12 @@ class LoginFailedError(DomainError):
     default_message = "The provided credentials were not accepted."
 
 
-class MultipleMembershipsUnsupportedError(DomainError):
-    code = ErrorCode.MULTIPLE_MEMBERSHIPS_UNSUPPORTED
+class UserAlreadyHasTenantError(DomainError):
+    code = ErrorCode.USER_ALREADY_HAS_TENANT
     status_code = 409
     default_message = (
-        "This account is a member of multiple tenants; selecting an active "
-        "tenant is not yet supported."
+        "This user already belongs to a tenant. v1 supports only one "
+        "tenant per user; switching active tenant is not yet available."
     )
 ```
 
@@ -834,14 +1045,14 @@ Edit `src/py/novamoc/api/_problem_details.py`. Append rows to `_TITLES`:
 
 ```python
 ErrorCode.LOGIN_FAILED: "Login failed",
-ErrorCode.MULTIPLE_MEMBERSHIPS_UNSUPPORTED: "Multiple tenant memberships not supported",
+ErrorCode.USER_ALREADY_HAS_TENANT: "User already has a tenant",
 ```
 
 And to `_STATUS_CODES`:
 
 ```python
 ErrorCode.LOGIN_FAILED: 401,
-ErrorCode.MULTIPLE_MEMBERSHIPS_UNSUPPORTED: 409,
+ErrorCode.USER_ALREADY_HAS_TENANT: 409,
 ```
 
 If `schema_error_to_problem_details` already routes by `ErrorCode`, no further wiring needed. Otherwise extend the converter.
@@ -862,9 +1073,6 @@ class AuthSettings:
     session_cookie_secure: bool = field(
         default_factory=_bool_env("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", False)
     )
-    dev_seed_default_admin: bool = field(
-        default_factory=_bool_env("NOVAMOC_DEV_SEED_DEFAULT_ADMIN", False)
-    )
     argon2_time_cost: int = field(
         default_factory=lambda: int(os.environ.get("NOVAMOC_AUTH_ARGON2_TIME_COST", "3"))
     )
@@ -878,7 +1086,17 @@ class AuthSettings:
 
 Add `auth: AuthSettings = field(default_factory=AuthSettings)` to `Settings`.
 
-- [ ] **Step 5: Run the tests + full suite + lint + type-check**
+**No `dev_seed_default_admin`, no `NOVAMOC_DEV_SEED_DEFAULT_ADMIN`** — the server has no environment-conditional code.
+
+- [ ] **Step 5: Update the Task 4 service test**
+
+The membership-service test in Task 4 expects `UserAlreadyHasTenantError` to be raisable. After this task it's a `DomainError` subclass; the test still passes (the type identity is what matters), but verify:
+
+```bash
+uv run pytest tests/accounts/test_membership_service.py -v
+```
+
+- [ ] **Step 6: Run the full suite + lint + type-check**
 
 ```bash
 uv run pytest
@@ -888,7 +1106,7 @@ uv run ty check
 
 Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/py/novamoc/config.py \
@@ -896,7 +1114,7 @@ git add src/py/novamoc/config.py \
         src/py/novamoc/domain/accounts/_errors.py \
         src/py/novamoc/api/_problem_details.py \
         tests/api/test_problem_details.py
-git commit -m "feat(accounts): AuthSettings + LoginFailedError + MultipleMembershipsUnsupportedError"
+git commit -m "feat(accounts): AuthSettings + LoginFailedError + UserAlreadyHasTenantError as DomainErrors"
 ```
 
 ---
@@ -1031,15 +1249,15 @@ import pytest
 def test_principal_holds_id_and_username() -> None:
     from novamoc.domain.accounts._principal import Principal
 
-    p = Principal(user_id="abc", username="alice")
-    assert p.user_id == "abc"
+    p = Principal(id="abc", username="alice")
+    assert p.id == "abc"
     assert p.username == "alice"
 
 
 def test_principal_is_frozen() -> None:
     from novamoc.domain.accounts._principal import Principal
 
-    p = Principal(user_id="abc", username="alice")
+    p = Principal(id="abc", username="alice")
     with pytest.raises(AttributeError):
         p.username = "bob"  # ty: ignore[unresolved-attribute]
 ```
@@ -1109,7 +1327,7 @@ import msgspec
 
 
 class Principal(msgspec.Struct, frozen=True):
-    user_id: str
+    id: str
     username: str
 ```
 
@@ -1167,156 +1385,9 @@ git commit -m "feat(accounts): Principal + login/me payload structs"
 
 ---
 
-## Task 9: `seed_default_admin` + tests
+## Task 9: REMOVED — no in-server seeder
 
-**Files:**
-- Create: `src/py/novamoc/domain/accounts/_seed.py`
-- Create: `tests/accounts/test_seed.py`
-
-Idempotent dev seeder. Idempotent so test fixtures can call it freely; gated upstream by the `dev_seed_default_admin` setting (wired in Task 11).
-
-- [ ] **Step 1: Write the failing tests**
-
-Create `tests/accounts/test_seed.py`:
-
-```python
-from __future__ import annotations
-
-import pytest
-
-pytestmark = pytest.mark.no_tenant
-
-
-async def test_seed_creates_tenant_user_membership(session, settings) -> None:
-    from novamoc.db.models._auth import Tenant, User, UserTenantMembership
-    from novamoc.domain.accounts._seed import seed_default_admin
-
-    await seed_default_admin(settings=settings, session=session)
-
-    tenant = await session.get(Tenant, "dev")
-    assert tenant is not None and tenant.display_name == "Development"
-
-    from novamoc.domain.accounts._services import UserService
-    user = await UserService(session=session).get_by_username("admin")
-    assert user is not None
-
-    membership = await session.get(UserTenantMembership, (user.id, "dev"))
-    assert membership is not None
-
-
-async def test_seed_is_idempotent(session, settings) -> None:
-    from novamoc.db.models._auth import User
-    from novamoc.domain.accounts._seed import seed_default_admin
-    from novamoc.domain.accounts._services import UserService
-    from sqlalchemy import select, func
-
-    await seed_default_admin(settings=settings, session=session)
-    await seed_default_admin(settings=settings, session=session)
-
-    count = (
-        await session.execute(select(func.count()).select_from(User))
-    ).scalar_one()
-    assert count == 1
-
-
-async def test_seed_does_not_clobber_existing_admin(session, settings) -> None:
-    from novamoc.domain.accounts._seed import seed_default_admin
-    from novamoc.domain.accounts._services import UserService
-
-    users = UserService(session=session)
-    existing = await users.create(
-        {"username": "admin", "password_hash": "preserved-hash"}
-    )
-    await seed_default_admin(settings=settings, session=session)
-    refreshed = await users.get_by_username("admin")
-    assert refreshed.password_hash == "preserved-hash"
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Expected: FAIL.
-
-- [ ] **Step 3: Implement `seed_default_admin`**
-
-Create `src/py/novamoc/domain/accounts/_seed.py`:
-
-```python
-"""Dev-mode default-admin seeder.
-
-Idempotent: skips when the ``admin`` user already exists. Production
-deployments leave ``NOVAMOC_DEV_SEED_DEFAULT_ADMIN`` off and this
-function never runs. The dev path logs a loud warning on first use.
-"""
-
-from __future__ import annotations
-
-import logging
-from typing import TYPE_CHECKING
-
-from novamoc.domain.accounts._password import PasswordHasher
-from novamoc.domain.accounts._services import (
-    TenantService,
-    UserService,
-    UserTenantMembershipService,
-)
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from novamoc.config import Settings
-
-_LOGGER = logging.getLogger(__name__)
-
-_DEFAULT_TENANT_ID = "dev"
-_DEFAULT_TENANT_DISPLAY_NAME = "Development"
-_DEFAULT_USERNAME = "admin"
-_DEFAULT_PASSWORD = "admin"  # noqa: S105 — dev seed only, gated by setting
-
-
-async def seed_default_admin(settings: Settings, session: AsyncSession) -> None:
-    """Idempotently create the dev tenant + admin user + membership."""
-    tenants = TenantService(session=session)
-    users = UserService(session=session)
-    memberships = UserTenantMembershipService(session=session)
-
-    if await users.get_by_username(_DEFAULT_USERNAME) is not None:
-        return  # already seeded; do nothing
-
-    _LOGGER.warning(
-        "Seeding default admin user '%s' with the documented dev password. "
-        "Set NOVAMOC_DEV_SEED_DEFAULT_ADMIN=false in any non-dev deployment.",
-        _DEFAULT_USERNAME,
-    )
-
-    if await tenants.get_one_or_none(id=_DEFAULT_TENANT_ID) is None:
-        await tenants.create(
-            {"id": _DEFAULT_TENANT_ID, "display_name": _DEFAULT_TENANT_DISPLAY_NAME}
-        )
-
-    hasher = PasswordHasher(
-        time_cost=settings.auth.argon2_time_cost,
-        memory_cost_kib=settings.auth.argon2_memory_cost_kib,
-        parallelism=settings.auth.argon2_parallelism,
-    )
-    user = await users.create(
-        {"username": _DEFAULT_USERNAME, "password_hash": hasher.hash(_DEFAULT_PASSWORD)}
-    )
-
-    await memberships.create(
-        {"user_id": user.id, "tenant_id": _DEFAULT_TENANT_ID}
-    )
-```
-
-- [ ] **Step 4: Run the tests + full suite + lint + type-check**
-
-Expected: all green.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/py/novamoc/domain/accounts/_seed.py tests/accounts/test_seed.py
-git commit -m "feat(accounts): idempotent seed_default_admin gated by AuthSettings"
-```
+The previous revision of this plan had a `seed_default_admin` task here. It has been removed: the server has no environment-conditional code, no startup hook, and no `dev_seed_default_admin` setting. Dev bootstrap is via CLI in every environment (see Task 13 for the CLI itself and Task 15 for the `just bootstrap-dev` recipe that wraps the three-command sequence). Task numbering is preserved so commit messages and PR comments referencing earlier numbers still resolve.
 
 ---
 
@@ -1346,10 +1417,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from novamoc.db.models._auth import Tenant
-from novamoc.domain.accounts._errors import (
-    LoginFailedError,
-    MultipleMembershipsUnsupportedError,
-)
+from novamoc.domain.accounts._errors import LoginFailedError
 from novamoc.domain.accounts._password import PasswordHasher
 from novamoc.domain.accounts._payloads import (
     LoginRequest,
@@ -1384,13 +1452,13 @@ async def login(
     if not password_hasher.verify(user.password_hash, data.password):
         raise LoginFailedError
 
-    user_memberships = await memberships.list_for_user(user.id)
-    if len(user_memberships) == 0:
+    # N:1 invariant is enforced at UserTenantMembershipService.create
+    # (Task 4), so by the time login runs, the user has 0 or 1 membership.
+    # 0 means a stale invariant-violation; treat as login_failed.
+    membership = await memberships.get_for_user(user.id)
+    if membership is None:
         raise LoginFailedError
-    if len(user_memberships) > 1:
-        raise MultipleMembershipsUnsupportedError
-
-    active_tenant_id = user_memberships[0].tenant_id
+    active_tenant_id = membership.tenant_id
 
     # Rehash on cost change — free upgrade for the active user.
     if password_hasher.check_needs_rehash(user.password_hash):
@@ -1399,7 +1467,7 @@ async def login(
             item_id=user.id,
         )
 
-    request.set_session({"user_id": str(user.id), "active_tenant_id": active_tenant_id})
+    request.set_session({"user_id": str(user.id), "active_tenant_id": str(active_tenant_id)})
 
 
 async def logout(request: Request) -> None:
@@ -1416,8 +1484,8 @@ async def me(
     if tenant is None:  # pragma: no cover — middleware would have rejected first
         raise LoginFailedError
     return MeResponse(
-        user=MePrincipal(id=principal.user_id, username=principal.username),
-        tenant=MeTenant(id=tenant.id, display_name=tenant.display_name),
+        user=MePrincipal(id=principal.id, username=principal.username),
+        tenant=MeTenant(id=str(tenant.id), display_name=tenant.display_name),
     )
 ```
 
@@ -1571,28 +1639,27 @@ import pytest
 pytestmark = pytest.mark.no_tenant
 
 
-async def test_resolve_principal_returns_user_and_auth(session, settings) -> None:
+async def test_resolve_principal_returns_user_and_auth(session, dev_admin) -> None:
     from novamoc.domain.accounts._principal import Principal
     from novamoc.domain.accounts._auth import RequestAuth
     from novamoc.domain.accounts._resolver import resolve_principal_from_session
-    from novamoc.domain.accounts._seed import seed_default_admin
     from novamoc.domain.accounts._services import (
         UserService,
         UserTenantMembershipService,
     )
+    from tests._constants import DEV_TENANT_ID
 
-    await seed_default_admin(settings=settings, session=session)
     user = await UserService(session=session).get_by_username("admin")
 
     principal, auth = await resolve_principal_from_session(
-        session_payload={"user_id": str(user.id), "active_tenant_id": "dev"},
+        session_payload={"user_id": str(user.id), "active_tenant_id": str(DEV_TENANT_ID)},
         users=UserService(session=session),
         memberships=UserTenantMembershipService(session=session),
     )
 
     assert isinstance(principal, Principal)
     assert principal.username == "admin"
-    assert auth == RequestAuth(tenant_id="dev")
+    assert auth == RequestAuth(tenant_id=DEV_TENANT_ID)
 
 
 async def test_missing_session_keys_raises(session) -> None:
@@ -1603,7 +1670,7 @@ async def test_missing_session_keys_raises(session) -> None:
         UserTenantMembershipService,
     )
 
-    for payload in ({}, {"user_id": "x"}, {"active_tenant_id": "dev"}):
+    for payload in ({}, {"user_id": "x"}, {"active_tenant_id": "irrelevant"}):
         with pytest.raises(TenantResolutionError):
             await resolve_principal_from_session(
                 session_payload=payload,
@@ -1624,53 +1691,52 @@ async def test_unknown_user_raises(session) -> None:
 
     with pytest.raises(TenantResolutionError):
         await resolve_principal_from_session(
-            session_payload={"user_id": str(uuid.uuid4()), "active_tenant_id": "dev"},
+            session_payload={"user_id": str(uuid.uuid4()), "active_tenant_id": str(uuid.uuid4())},
             users=UserService(session=session),
             memberships=UserTenantMembershipService(session=session),
         )
 
 
-async def test_disabled_user_raises(session, settings) -> None:
+async def test_disabled_user_raises(session, dev_admin) -> None:
     from datetime import UTC, datetime
 
     from novamoc.domain.accounts._errors import TenantResolutionError
     from novamoc.domain.accounts._resolver import resolve_principal_from_session
-    from novamoc.domain.accounts._seed import seed_default_admin
     from novamoc.domain.accounts._services import (
         UserService,
         UserTenantMembershipService,
     )
+    from tests._constants import DEV_TENANT_ID
 
-    await seed_default_admin(settings=settings, session=session)
     users = UserService(session=session)
     user = await users.get_by_username("admin")
     await users.update({"disabled_at": datetime.now(UTC)}, item_id=user.id)
 
     with pytest.raises(TenantResolutionError):
         await resolve_principal_from_session(
-            session_payload={"user_id": str(user.id), "active_tenant_id": "dev"},
+            session_payload={"user_id": str(user.id), "active_tenant_id": str(DEV_TENANT_ID)},
             users=users,
             memberships=UserTenantMembershipService(session=session),
         )
 
 
-async def test_missing_membership_raises(session, settings) -> None:
+async def test_missing_membership_raises(session, dev_admin) -> None:
+    import uuid
+
     from novamoc.domain.accounts._errors import TenantResolutionError
     from novamoc.domain.accounts._resolver import resolve_principal_from_session
-    from novamoc.domain.accounts._seed import seed_default_admin
     from novamoc.domain.accounts._services import (
         UserService,
         UserTenantMembershipService,
     )
 
-    await seed_default_admin(settings=settings, session=session)
     user = await UserService(session=session).get_by_username("admin")
 
     with pytest.raises(TenantResolutionError):
         await resolve_principal_from_session(
             session_payload={
                 "user_id": str(user.id),
-                "active_tenant_id": "some-other-tenant",
+                "active_tenant_id": str(uuid.uuid4()),  # tenant they have no membership in
             },
             users=UserService(session=session),
             memberships=UserTenantMembershipService(session=session),
@@ -1744,8 +1810,8 @@ async def resolve_principal_from_session(
         raise TenantResolutionError
 
     return (
-        Principal(user_id=str(user.id), username=user.username),
-        RequestAuth(tenant_id=active_tenant_id),
+        Principal(id=str(user.id), username=user.username),
+        RequestAuth(tenant_id=uuid.UUID(active_tenant_id) if isinstance(active_tenant_id, str) else active_tenant_id),
     )
 ```
 
@@ -1832,8 +1898,8 @@ class TenantContextMiddleware(ASGIMiddleware):
 from novamoc.domain.accounts._auth import RequestAuth
 from novamoc.domain.accounts._errors import (
     LoginFailedError,
-    MultipleMembershipsUnsupportedError,
     TenantResolutionError,
+    UserAlreadyHasTenantError,
 )
 from novamoc.domain.accounts._middleware import (
     AuthenticationMiddleware,
@@ -1841,20 +1907,18 @@ from novamoc.domain.accounts._middleware import (
 )
 from novamoc.domain.accounts._password import PasswordHasher
 from novamoc.domain.accounts._principal import Principal
-from novamoc.domain.accounts._seed import seed_default_admin
 from novamoc.domain.accounts.controllers import AuthController
 
 __all__ = (
     "AuthController",
     "AuthenticationMiddleware",
     "LoginFailedError",
-    "MultipleMembershipsUnsupportedError",
     "PasswordHasher",
     "Principal",
     "RequestAuth",
     "TenantContextMiddleware",
     "TenantResolutionError",
-    "seed_default_admin",
+    "UserAlreadyHasTenantError",
 )
 ```
 
@@ -1872,20 +1936,21 @@ from litestar.middleware.session.server_side import ServerSideSessionConfig
 
 from novamoc.api._problem_details import (
     make_login_failed_error_converter,
-    make_multiple_memberships_error_converter,
+    make_user_already_has_tenant_error_converter,
     # ... existing imports
 )
 from novamoc.domain.accounts import (
     AuthController,
     AuthenticationMiddleware,
     LoginFailedError,
-    MultipleMembershipsUnsupportedError,
     PasswordHasher,
     TenantContextMiddleware,
     TenantResolutionError,
-    seed_default_admin,
+    UserAlreadyHasTenantError,
 )
 ```
+
+(No `seed_default_admin` import — there is no seed function.)
 
 2. Build the server-side session config from the alchemy config + auth settings:
 
@@ -1909,7 +1974,7 @@ exception_to_problem_detail_map={  # ty: ignore[invalid-argument-type]
     DomainError: make_domain_error_converter(base_url),
     TenantResolutionError: make_tenant_resolution_error_converter(base_url),
     LoginFailedError: make_login_failed_error_converter(base_url),
-    MultipleMembershipsUnsupportedError: make_multiple_memberships_error_converter(base_url),
+    UserAlreadyHasTenantError: make_user_already_has_tenant_error_converter(base_url),
     msgspec.ValidationError: make_msgspec_validation_error_converter(base_url),
     ValidationException: make_litestar_validation_error_converter(base_url),
 },
@@ -1936,12 +2001,9 @@ middleware=[
 route_handlers=[AuthController, SchemaController, EventsController, problem_docs_router],
 ```
 
-6. Stash the password hasher on `app.state` and gate the dev seed:
+6. Stash the password hasher on `app.state`:
 
 ```python
-from litestar.events import listener
-from litestar.types import ASGIApp
-
 password_hasher = PasswordHasher(
     time_cost=s.auth.argon2_time_cost,
     memory_cost_kib=s.auth.argon2_memory_cost_kib,
@@ -1949,24 +2011,12 @@ password_hasher = PasswordHasher(
 )
 
 # ... in Litestar(...):
-on_startup=[_build_startup_hook(s, alchemy_config, password_hasher)],
 state=State({"settings": s, "password_hasher": password_hasher}),
 ```
 
-with a small startup hook:
+**No `on_startup` hook for seeding** — the server has no environment-conditional code. Bootstrap is via CLI in every environment.
 
-```python
-def _build_startup_hook(s, alchemy_config, password_hasher):
-    async def _hook(app):
-        if not s.auth.dev_seed_default_admin:
-            return
-        async with alchemy_config.get_session() as db_session:
-            await seed_default_admin(settings=s, session=db_session)
-            await db_session.commit()
-    return _hook
-```
-
-7. Add the problem-details factories in `api/_problem_details.py` if they don't already follow from `make_domain_error_converter`. If your existing converter dispatches on `ErrorCode`, no new factory is needed — `LoginFailedError` and `MultipleMembershipsUnsupportedError` inherit from `DomainError` and just need the `_TITLES`/`_STATUS_CODES` rows from Task 6.
+7. Add the problem-details factories in `api/_problem_details.py` if they don't already follow from `make_domain_error_converter`. If your existing converter dispatches on `ErrorCode`, no new factory is needed — `LoginFailedError` and `UserAlreadyHasTenantError` inherit from `DomainError` and just need the `_TITLES`/`_STATUS_CODES` rows from Task 6.
 
 - [ ] **Step 7: Update the listener allow-list**
 
@@ -1988,31 +2038,65 @@ _AUTH_LAYER_TABLE_NAMES = frozenset({
 
 Reference `_AUTH_LAYER_TABLE_NAMES` in the relevant listener guard (assert-or-skip pattern depends on existing listener structure — match the style of the listeners that already do "is this synced?" checks).
 
-- [ ] **Step 8: Preview-wire `conftest.py`**
+- [ ] **Step 8: Migrate `conftest.py`**
 
-This is a partial conftest update — just enough to get `tests/accounts/test_resolver_session.py` passing. Full migration is Task 12.
+The bootstrap path the test fixture uses is the same path `just bootstrap-dev` runs on the CLI — direct service calls against the test session. This keeps the test path environment-symmetric with production and removes any dependency on a startup hook (there is none).
 
-In `tests/conftest.py`, drop the `_TENANT_T1_DEV_TOKEN` import — it no longer exists. Replace the `client` fixture body with a `pytest.skip(...)` placeholder for now (Task 12 rewrites it properly). The handler-level tests and the new `test_resolver_session.py` tests do not use `client`, so they pass; the schema/events e2e tests will be temporarily skipped at this commit boundary.
-
-Wait — temporarily skipping the schema/events e2e tests breaks the "working tree green at every commit boundary" rule. Two options:
-
-A. Land the conftest migration **in this same commit** (mostly the rewrite, full coverage). Pushes this task's file count higher.
-B. Keep the existing conftest's `client` fixture but make it call `POST /auth/login` once at construction. Requires the seed hook to fire; needs the test app to have `dev_seed_default_admin=True`.
-
-Option B is the right call:
+Add a `dev_admin` fixture that creates the dev tenant + `admin` user + membership via direct service calls. The authenticated `client` fixture depends on `dev_admin` and logs in:
 
 ```python
-# In conftest's `settings` fixture, set:
-auth=AuthSettings(dev_seed_default_admin=True)
+import uuid
+from novamoc.domain.accounts._password import PasswordHasher
+from novamoc.domain.accounts._services import (
+    TenantService, UserService, UserTenantMembershipService,
+)
+from tests._constants import DEV_TENANT_ID
 
-# In the `client` fixture:
-async with AsyncTestClient(app) as c:
-    resp = await c.post("/auth/login", json={"username": "admin", "password": "admin"})
-    assert resp.status_code == 204, resp.text
-    yield c
+
+@pytest.fixture
+async def dev_admin(session, settings):
+    """Idempotently create the dev tenant + admin user + membership.
+
+    This mirrors what ``just bootstrap-dev`` does on the CLI — same
+    service calls, same write path, no server-side seed code.
+    """
+    hasher = PasswordHasher(
+        time_cost=settings.auth.argon2_time_cost,
+        memory_cost_kib=settings.auth.argon2_memory_cost_kib,
+        parallelism=settings.auth.argon2_parallelism,
+    )
+    tenants = TenantService(session=session)
+    users = UserService(session=session)
+    memberships = UserTenantMembershipService(session=session)
+
+    # Use a fixed UUID for the dev tenant so scenarios and the autouse
+    # `tenant` fixture see the same value.
+    existing = await tenants.get_one_or_none(id=DEV_TENANT_ID)
+    if existing is None:
+        await tenants.repository.add(
+            tenants.repository.model_type(id=DEV_TENANT_ID, display_name="Development"),
+        )
+    if await users.get_by_username("admin") is None:
+        user = await users.create(
+            {"username": "admin", "password_hash": hasher.hash("admin")}
+        )
+        await memberships.create({"user_id": user.id, "tenant_id": DEV_TENANT_ID})
+    await session.commit()
+
+
+@pytest.fixture
+async def client(app, dev_admin):
+    async with AsyncTestClient(app) as c:
+        resp = await c.post(
+            "/auth/login", json={"username": "admin", "password": "admin"}
+        )
+        assert resp.status_code == 204, resp.text
+        yield c
 ```
 
-With this in place every existing schema/events e2e test logs in once at fixture setup and reuses the session cookie for subsequent requests. Migrate the conftest in this commit; Task 12 builds on top with the `unauth_client` and `authenticated_client` fixtures.
+The `unauth_client` fixture (added in Task 12) is structurally identical without the login call.
+
+Note: the fixture creates the `Tenant` row with `id=DEV_TENANT_ID` rather than letting `UUIDAuditBase` generate one — this is the one place tests pin a specific UUID so scenarios can FK to it. The CLI never does this; it always lets the DB generate the UUID.
 
 - [ ] **Step 9: Run the resolver tests + the full suite**
 
@@ -2140,31 +2224,29 @@ async def test_extra_field_returns_400(unauth_client) -> None:
     assert resp.status_code == 400
 
 
-async def test_user_with_two_memberships_returns_409(unauth_client, app, session) -> None:
-    from novamoc.db.models._auth import Tenant, UserTenantMembership
-    from novamoc.domain.accounts._services import (
-        TenantService,
-        UserService,
-        UserTenantMembershipService,
-    )
+async def test_user_with_zero_memberships_returns_login_failed(unauth_client, app, session, dev_admin) -> None:
+    """A user whose membership has been deleted out from under them
+    (transient invariant violation) is rejected as login_failed —
+    anti-enumeration with the other 401 cases."""
+    from novamoc.domain.accounts._services import UserService, UserTenantMembershipService
+    from sqlalchemy import delete
+    from novamoc.db.models._auth import UserTenantMembership
 
-    # The seeded `admin` user has one membership to `dev`. Add a second.
-    tenants = TenantService(session=session)
-    memberships = UserTenantMembershipService(session=session)
     users = UserService(session=session)
-    await tenants.create({"id": "second", "display_name": "Second"})
     admin = await users.get_by_username("admin")
-    await memberships.create({"user_id": admin.id, "tenant_id": "second"})
+    await session.execute(
+        delete(UserTenantMembership).where(UserTenantMembership.user_id == admin.id)
+    )
     await session.commit()
 
     resp = await unauth_client.post(
         "/auth/login", json={"username": "admin", "password": "admin"}
     )
-    assert resp.status_code == 409
-    assert resp.json()["type"] == "urn:novamoc:problems:multiple_memberships_unsupported"
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "urn:novamoc:problems:login_failed"
 ```
 
-(The second-membership test depends on the test app sharing a database with the test's `session` fixture — verified by the `StaticPool` config in `tests/conftest.py::settings`. The `app` fixture parameter on that test is unused but listed so the fixture is constructed; the conftest's app fixture seeds `admin` at startup.)
+The "user with two memberships → 409" case from the previous revision is gone: the N:1 invariant is enforced at write time (Task 4's `UserTenantMembershipService.create` test pins it), so it cannot arise at login. The CLI-side 409 surface is covered in Task 13.
 
 - [ ] **Step 3: Write the logout + me e2e tests**
 
@@ -2271,29 +2353,45 @@ def test_tenant_create_succeeds(settings) -> None:
     from novamoc.cli import main
 
     runner = CliRunner()
-    result = runner.invoke(main, ["tenant", "create", "acme", "--display-name", "Acme"])
+    result = runner.invoke(main, ["tenant", "create", "--display-name", "Acme"])
     assert result.exit_code == 0, result.output
-
-
-def test_tenant_create_duplicate_errors(settings) -> None:
-    from novamoc.cli import main
-
-    runner = CliRunner()
-    runner.invoke(main, ["tenant", "create", "acme", "--display-name", "Acme"])
-    result = runner.invoke(main, ["tenant", "create", "acme", "--display-name", "Acme"])
-    assert result.exit_code != 0
-    assert "already exists" in result.output.lower() or "exists" in result.output.lower()
+    # Output includes the generated UUID for the new tenant — parse it.
+    # The CLI prints "Created tenant <uuid>." on success.
 
 
 def test_user_create_then_add_to_tenant(settings) -> None:
+    """Happy path: create tenant, create user, add to tenant."""
     from novamoc.cli import main
 
     runner = CliRunner()
-    runner.invoke(main, ["tenant", "create", "acme", "--display-name", "Acme"])
-    r1 = runner.invoke(main, ["user", "create", "bob", "--password", "bob-secret"])
-    assert r1.exit_code == 0, r1.output
-    r2 = runner.invoke(main, ["user", "add-to-tenant", "bob", "acme"])
-    assert r2.exit_code == 0, r2.output
+    r_tenant = runner.invoke(main, ["tenant", "create", "--display-name", "Acme"])
+    assert r_tenant.exit_code == 0
+    # Extract tenant UUID from CLI output.
+    tenant_id = r_tenant.output.strip().split()[-1].rstrip(".")
+
+    r_user = runner.invoke(main, ["user", "create", "bob", "--password", "bob-secret"])
+    assert r_user.exit_code == 0, r_user.output
+
+    r_add = runner.invoke(main, ["user", "add-to-tenant", "bob", tenant_id])
+    assert r_add.exit_code == 0, r_add.output
+
+
+def test_user_add_to_second_tenant_rejected(settings) -> None:
+    """N:1 invariant: a user already in tenant A cannot be added to tenant B."""
+    from novamoc.cli import main
+
+    runner = CliRunner()
+    r_a = runner.invoke(main, ["tenant", "create", "--display-name", "A"])
+    tenant_a = r_a.output.strip().split()[-1].rstrip(".")
+    r_b = runner.invoke(main, ["tenant", "create", "--display-name", "B"])
+    tenant_b = r_b.output.strip().split()[-1].rstrip(".")
+
+    runner.invoke(main, ["user", "create", "bob", "--password", "x"])
+    runner.invoke(main, ["user", "add-to-tenant", "bob", tenant_a])
+
+    result = runner.invoke(main, ["user", "add-to-tenant", "bob", tenant_b])
+    assert result.exit_code != 0
+    assert "already" in result.output.lower() and "tenant" in result.output.lower()
 
 
 def test_user_set_password(settings) -> None:
@@ -2383,20 +2481,19 @@ def tenant() -> None:
 
 
 @tenant.command("create")
-@click.argument("slug")
 @click.option("--display-name", required=True)
-def tenant_create(slug: str, display_name: str) -> None:
-    """Create a tenant with the given slug."""
+def tenant_create(display_name: str) -> None:
+    """Create a tenant. PK UUID is generated by the DB."""
 
     async def run() -> None:
         _settings, config = await _session_context()
         async with config.get_session() as session:
             try:
-                await TenantService(session=session).create(
-                    {"id": slug, "display_name": display_name}
+                tenant = await TenantService(session=session).create(
+                    {"display_name": display_name}
                 )
                 await session.commit()
-                click.echo(f"Created tenant '{slug}'.")
+                click.echo(f"Created tenant {tenant.id}.")
             except Exception as exc:
                 await session.rollback()
                 click.echo(f"Error: {exc}", err=True)
@@ -2464,21 +2561,42 @@ def user_set_password(username: str, password: str) -> None:
 
 @user.command("add-to-tenant")
 @click.argument("username")
-@click.argument("tenant_slug")
-def user_add_to_tenant(username: str, tenant_slug: str) -> None:
+@click.argument("tenant_id")
+def user_add_to_tenant(username: str, tenant_id: str) -> None:
+    """Add ``username`` to ``tenant_id`` (a UUID). Rejects if the user
+    already has a tenant (v1 N:1 invariant)."""
+    import uuid
+
+    from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
+
     async def run() -> None:
         _settings, config = await _session_context()
+        try:
+            target_tenant = uuid.UUID(tenant_id)
+        except ValueError:
+            click.echo(f"Error: {tenant_id!r} is not a valid UUID.", err=True)
+            sys.exit(1)
+
         async with config.get_session() as session:
             users = UserService(session=session)
             target = await users.get_by_username(username)
             if target is None:
-                click.echo(f"User '{username}' not found.", err=True)
+                click.echo(f"User {username!r} not found.", err=True)
                 sys.exit(1)
-            await UserTenantMembershipService(session=session).create(
-                {"user_id": target.id, "tenant_id": tenant_slug}
-            )
+            try:
+                await UserTenantMembershipService(session=session).create(
+                    {"user_id": target.id, "tenant_id": target_tenant}
+                )
+            except UserAlreadyHasTenantError:
+                await session.rollback()
+                click.echo(
+                    f"Error: user {username!r} already has a tenant. "
+                    "v1 supports only one tenant per user.",
+                    err=True,
+                )
+                sys.exit(1)
             await session.commit()
-            click.echo(f"Added '{username}' to tenant '{tenant_slug}'.")
+            click.echo(f"Added {username!r} to tenant {target_tenant}.")
 
     _run(run())
 
@@ -2565,8 +2683,11 @@ Expected: no errors.
 Per CLAUDE.md's UI-testing rule (verify in a browser before marking complete):
 
 ```bash
-# Terminal 1 — backend with dev seed on:
-NOVAMOC_DEV_SEED_DEFAULT_ADMIN=true uv run litestar --app novamoc.asgi:create_app run
+# One-time setup: bootstrap the dev admin via CLI.
+just bootstrap-dev
+
+# Terminal 1 — backend:
+uv run litestar --app novamoc.asgi:create_app run
 
 # Terminal 2 — frontend dev server:
 cd src/js/web && npm run dev
@@ -2583,34 +2704,62 @@ git commit -m "feat(web): minimal Svelte 5 login page + layout auth-gate"
 
 ---
 
-## Task 15: Documentation + README + final verification
+## Task 15: `justfile` `bootstrap-dev` recipe + README + final verification
 
 **Files:**
+- Modify: `justfile` — add `bootstrap-dev` recipe.
 - Modify: `README.md`
 
-- [ ] **Step 1: Update `README.md`**
+The bootstrap recipe is the canonical "fresh checkout to working dev login" command. It's the same sequence an operator would run in an init container in production — same CLI, same write path, no env-conditional code.
+
+- [ ] **Step 1: Add the `bootstrap-dev` recipe**
+
+Append to `justfile`:
+
+```just
+# Create the dev tenant + admin user. Idempotent: skips when admin exists.
+# Production runs the equivalent in an init container.
+bootstrap-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if uv run novamoc user exists admin >/dev/null 2>&1; then
+        echo "admin user already exists; nothing to do."
+        exit 0
+    fi
+    tenant_id=$(uv run novamoc tenant create --display-name "Development" | awk '{print $3}' | tr -d '.')
+    echo "Created tenant $tenant_id."
+    uv run novamoc user create admin --password admin
+    uv run novamoc user add-to-tenant admin "$tenant_id"
+    echo "Bootstrap complete. Login at /login with admin / admin."
+```
+
+(The `novamoc user exists` sub-command is a small addition to Task 13's CLI — exits 0 if the user exists, 1 if not. Add a one-line failing test and the implementation in Task 13's commit, OR fold it into this commit. The plan picks the latter to keep Task 13 focused on the four primary CLI commands.)
+
+- [ ] **Step 2: Update `README.md`**
 
 Replace the existing "Development credentials" section with:
 
 ```markdown
 ## Development credentials
 
-Authentication uses a server-side session cookie. The dev server can
-seed a default admin user at startup:
+Authentication uses a server-side session cookie. The dev workflow is
+a one-liner against the same CLI a production operator would run:
 
 ```sh
-NOVAMOC_DEV_SEED_DEFAULT_ADMIN=true uv run litestar \
-    --app novamoc.asgi:create_app run
+just bootstrap-dev
 ```
 
-This idempotently creates tenant `dev` and user `admin` (password
-`admin`). Production deployments leave the env var off and create users
-via the CLI:
+This idempotently creates a `Development` tenant and an `admin` user
+with password `admin`, then prints the new tenant's UUID for reference.
+Production deployments run the equivalent commands directly in an init
+container — there is no environment-conditional code in the server.
+
+The CLI is the only bootstrap path; for additional users / tenants:
 
 ```sh
-novamoc tenant create acme --display-name "Acme Corp"
+novamoc tenant create --display-name "Acme Corp"
 novamoc user create alice
-novamoc user add-to-tenant alice acme
+novamoc user add-to-tenant alice <tenant-uuid>
 ```
 
 Browser SPA: navigate to `/login`. The auth cookie is HttpOnly and
@@ -2646,8 +2795,8 @@ Expected: all green; ratchet baselines unchanged or only decreasing; svelte-chec
 - [ ] **Step 3: Confirm the live server runs cleanly**
 
 ```bash
-NOVAMOC_DEV_SEED_DEFAULT_ADMIN=true uv run litestar \
-    --app novamoc.asgi:create_app run --port 8001 &
+just bootstrap-dev
+uv run litestar --app novamoc.asgi:create_app run --port 8001 &
 sleep 2
 curl -i -c /tmp/c.txt -X POST http://localhost:8001/auth/login \
     -H 'Content-Type: application/json' \
@@ -2697,9 +2846,10 @@ Closes #19.
 - [ ] `uv run ty check` — clean
 - [ ] `just ratchet` — counts unchanged or decreasing
 - [ ] `cd src/js/web && npm run check` — clean
+- [ ] Manual: `just bootstrap-dev` creates the dev admin idempotently
 - [ ] Manual: login flow in browser at `/login`
 - [ ] Manual: curl flow as documented in `README.md`
-- [ ] Manual: `novamoc tenant create` / `novamoc user create` / `novamoc user add-to-tenant`
+- [ ] Manual: `novamoc tenant create` / `novamoc user create` / `novamoc user add-to-tenant` (including the N:1 rejection on a second tenant)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -2713,28 +2863,28 @@ EOF
 **Spec coverage check:**
 
 - *ADR-020* — Task 1.
-- *`tenants` table + `TenantService` with slug validator* — Task 2.
+- *`tenants` table + UUID type migration + `TenantService`* — Task 2.
 - *`users` table with hashed passwords + `UserService` with case-folded usernames* — Task 3.
-- *`user_tenant_memberships` table + service* — Task 4.
+- *`user_tenant_memberships` table + service + N:1 write-time invariant* — Task 4.
 - *`PasswordHasher` (argon2id, settings-driven cost)* — Task 5.
-- *`AuthSettings`, `LoginFailedError`, `MultipleMembershipsUnsupportedError` + problem-details mappers* — Task 6.
+- *`AuthSettings` (no dev-seed), `LoginFailedError`, `UserAlreadyHasTenantError` + problem-details mappers* — Task 6.
 - *`sessions` table via advanced-alchemy backend* — Task 7.
-- *`Principal` struct + `LoginRequest` / `MeResponse` payloads* — Task 8.
-- *Idempotent `seed_default_admin`* — Task 9.
+- *`Principal` struct (`.id`, not `.user_id`) + `LoginRequest` / `MeResponse` payloads* — Task 8.
+- *Task 9: removed; bootstrap is CLI-driven via `just bootstrap-dev` (Task 15) which calls the same CLI an operator runs in production.*
 - *`login` / `logout` / `me` handlers + `AuthController`* — Task 10.
-- *Resolver rewrite, async middleware, session-middleware mount, problem-details map updates, dev seed hook* — Task 11.
+- *Resolver rewrite, async middleware, session-middleware mount, problem-details map updates* — Task 11. **No seed hook.**
 - *Wire e2e coverage of the three new endpoints + `unauth_client` fixture* — Task 12.
-- *Operator CLI for tenant/user/auth management* — Task 13.
+- *Operator CLI for tenant/user/auth management + N:1 CLI rejection test* — Task 13.
 - *Svelte login page + layout auth probe* — Task 14.
-- *README + final verification + close #19* — Task 15.
+- *`just bootstrap-dev` recipe + README + final verification + close #19* — Task 15.
 
 No spec requirement is uncovered.
 
-**File-count exceptions:** Task 11 (10 files) is flagged inline. The resolver/middleware rewrite + asgi wiring + conftest preview is one conceptual seam (the v1-bearer → v2-session swap) that cannot split cleanly without leaving the test suite red between tasks. The plan accepts the heuristic violation with the rationale recorded.
+**File-count exceptions:** Task 2 (12 files) and Task 11 (10 files) are each flagged inline. Task 2 is the tenant-identity type migration (one conceptual seam touching every `tenant_id` column + the ContextVar + RequestAuth + scenarios). Task 11 is the v1-bearer → v2-session swap (resolver + middleware + asgi + conftest fixture). Neither splits cleanly without leaving the working tree red between tasks. The plan accepts the heuristic violations with rationale recorded inline.
 
 **Placeholder scan:** No "TBD", no "implement later", no "add appropriate error handling". Where a concrete API call shape depends on advanced-alchemy or Litestar specifics that may shift between releases (e.g. `SQLAlchemyAsyncSessionBackend`'s exact import path in Task 7, `connection.app.plugins.get(...)` shape in Task 11's middleware), the plan calls out the existing reference site in the repo to match.
 
-**Type consistency:** `Principal(user_id: str, username: str)` consistent across Tasks 8, 10, 11. `RequestAuth(tenant_id: str)` unchanged from ADR-017. `resolve_principal_from_session(session_payload, users, memberships) -> (Principal, RequestAuth)` consistent across Tasks 11 and the e2e tests in Task 12.
+**Type consistency:** `Principal(id: str, username: str)` consistent across Tasks 8, 10, 11. `RequestAuth(tenant_id: uuid.UUID)` consistent across Tasks 2, 10, 11 (the type migration in Task 2 is the source of truth). `resolve_principal_from_session(session_payload, users, memberships) -> (Principal, RequestAuth)` consistent across Tasks 11 and the e2e tests in Task 12.
 
 **Layering check:** Task 7's `Session` model is the one place where `db/models/` may need to touch a `litestar`-flavoured import (the advanced-alchemy session-backend mixin). The plan calls out two acceptable resolutions; pick at implementation time, document the chosen one in CLAUDE.md's "Critical layering rule" if needed.
 
