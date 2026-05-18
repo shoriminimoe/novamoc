@@ -21,9 +21,11 @@ The schema-change log is **command-grain** (one row per accepted `POST /schema`)
   - `asgi.py` — `create_app()` factory used by Litestar/Granian.
   - `db/models/schema/` — server-authoritative meta-schema tables + `schema_change_log`.
   - `db/models/data/` — synced entity projections, `*_field_values` LWW projections, `event_log`.
-  - `db/models/_mixins.py` — `TenantScopedMixin` (adds `tenant_id` PK column with `sort_order=-200` so the composite PK leads with `tenant_id`, ADR-014).
+  - `db/models/_auth/` — auth / tenant-registry tables (`Tenant`; users + memberships land later in M5). Not tenant-scoped — rows in these tables *are* the tenants and users.
+  - `db/models/_mixins.py` — `TenantScopedMixin` (adds `tenant_id: Mapped[uuid.UUID]` PK column via `GUID` with `sort_order=-200` so the composite PK leads with `tenant_id`, ADR-014/ADR-020).
   - `db/_listeners.py` — three SQLAlchemy event listeners that enforce tenant scoping (issue #51); `db/_tenant_context.py` holds the request-scoped `current_tenant_id` ContextVar and `use_tenant` helper.
   - `domain/schema/` — `POST /schema` endpoint stack (commands, payloads, dispatch, handlers, services, controller). See "Schema endpoint" below.
+  - `domain/accounts/` — authentication middleware + tenant resolver + `TenantService` (advanced-alchemy service for the `tenants` registry).
 - `src/js/web/` — Svelte 5 + Vite + Tailwind SPA (currently scaffolding only).
 - `tests/` — pytest suite (currently schema endpoint only).
 - `docs/adr/` — accepted/proposed architecture decisions (ADR-000 through ADR-016).
@@ -254,7 +256,7 @@ paginator carries no tenant predicate of its own.
 
 ## Data model conventions
 
-- All synced tables (schema + data) are tenant-scoped. Projection tables compose `(TenantScopedMixin, UUIDAuditBase)` — composite PK `(tenant_id, id)` with `tenant_id` as the leading column so the implicit PK index serves per-tenant queries (ADR-014). Log/EAV tables (`schema_change_log`, `*_field_values`) compose `(TenantScopedMixin, DefaultBase)`. `event_log` is the lone exception — it keeps a sole `seq` PK with hand-declared non-PK `tenant_id` because SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PKs; the listeners' column-presence heuristic still enforces tenant scoping on it.
+- All synced tables (schema + data) are tenant-scoped. `tenant_id` is `uuid.UUID` everywhere (ADR-020); the column type lives on `TenantScopedMixin` and `event_log` reuses the same `GUID` declaration directly. Projection tables compose `(TenantScopedMixin, UUIDAuditBase)` — composite PK `(tenant_id, id)` with `tenant_id` as the leading column so the implicit PK index serves per-tenant queries (ADR-014). Log/EAV tables (`schema_change_log`, `*_field_values`) compose `(TenantScopedMixin, DefaultBase)`. `event_log` is the lone exception — it keeps a sole `seq` PK with hand-declared non-PK `tenant_id` because SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PKs; the listeners' column-presence heuristic still enforces tenant scoping on it.
 - `event_log` uses a globally monotonic `seq` BigInt PK with a `(tenant_id, seq)` index — clients consume `seq` as an opaque cursor (ADR-011), so cross-tenant gaps are fine. `schema_change_log` uses a composite `(tenant_id, seq)` PK with the per-tenant `seq` computed at insert time, so each tenant sees a dense `1, 2, 3, …` sequence — that `seq` is the user/API-visible `schema_version` ADR-009's catch-up flow walks. Both derive from `DefaultBase`, not the audit base — `received_at` / `committed_at` are the audit role for an append-only log.
 - Schema entities (types and fields) carry `active: bool`. Tombstoned rows (`active=false`) stay in the table to keep the name reserved and support resurrection via `activate_*`. Name UNIQUE constraints apply across both states.
 - Field-value projection tables (`asset_field_values`, `maintenance_record_field_values`) have no audit columns; rows are rebuildable from the event log and `hlc` is the projection's ordering key.
@@ -266,7 +268,7 @@ paginator carries no tenant predicate of its own.
   - `engine` — function-scoped in-memory aiosqlite, all metadata `create_all`'d on first use.
   - `session` — function-scoped `AsyncSession` against `engine`; rolls back on teardown so tests are isolated.
   - `services` — `ServiceBundle` wired against `session`.
-  - `seed(scenario, tenant_id="t1")` — load a `tests/data/scenarios.py` scenario into the per-test db.
+  - `seed(scenario, tenant_id=...)` — load a `tests/data/scenarios.py` scenario into the per-test db. Defaults to the ambient `tenant` fixture's tenant; pass an explicit `tenant_id=UUID(...)` to override (e.g. seeding under both `DEV_TENANT_ID_A` and `DEV_TENANT_ID_B` for cross-tenant isolation tests). The canonical tenant UUIDs live in `tests/_constants.py`.
   - `app` — a fresh Litestar with its own in-memory aiosqlite engine. Uses SQLAlchemy `StaticPool` so all queries (the plugin's request-scoped session, the autocommit handler, etc.) reach the same in-memory database; each function-scoped `app` gets its own engine and dies at fixture teardown.
   - `client` — `AsyncTestClient(app)` with the dev bearer token already attached to its default headers.
   - `tenant` — autouse fixture that wraps each test in `use_tenant("t1")` so the tenant-scoping listeners have a contextvar to read. Tests that need a different tenant use `@pytest.mark.parametrize("tenant", [...], indirect=True)` and declare `tenant: str` to read the value. Tests that must run with no tenant context opt out with `@pytest.mark.no_tenant`.
@@ -305,5 +307,6 @@ Prefer the specialized tooling below over generic Bash/Read/Edit when the task f
 - ADR-013 — HTTP and WebSocket transports both carry the same event protocol.
 - ADR-014 — multi-tenancy via `tenant_id` columns in shared tables, pre-auth tenant comes from request body.
 - ADR-016 — RFC 9457 problem-details: the API-wide error envelope (`application/problem+json`).
+- ADR-020 — authentication and tenant registry: session cookie via `SQLAlchemyAsyncSessionBackend`, UUIDv7 tenant ids, N-to-N membership with v1 1:1 invariant, argon2id, anti-enumeration 401.
 
 ADRs cite each other by number rather than recapping upstream facts; follow the same convention when adding new ones.

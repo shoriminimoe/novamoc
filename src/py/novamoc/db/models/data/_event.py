@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from advanced_alchemy.types import BigIntIdentity, DateTimeUTC, JsonB
+from advanced_alchemy.types import GUID, BigIntIdentity, DateTimeUTC, JsonB
 from sqlalchemy import BigInteger, Enum, Index, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,7 +37,7 @@ class EventLog(DefaultBase):
     seq: Mapped[int] = mapped_column(
         BigIntIdentity, primary_key=True, autoincrement=True
     )
-    tenant_id: Mapped[str]
+    tenant_id: Mapped[UUID] = mapped_column(GUID)
     hlc: Mapped[str]
     schema_version: Mapped[int] = mapped_column(BigInteger)
     table_name: Mapped[str]

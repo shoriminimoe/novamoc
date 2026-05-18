@@ -17,13 +17,14 @@ from novamoc.domain.schema import _payloads
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._dispatch import dispatch
 from novamoc.domain.schema._outcomes import Outcome
+from tests._constants import DEV_TENANT_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from novamoc.domain.schema._bundle import ServiceBundle
 
-_T = "t1"
+_T = DEV_TENANT_ID
 _AUTH = RequestAuth(tenant_id=_T)
 
 

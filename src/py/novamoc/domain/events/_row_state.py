@@ -41,6 +41,8 @@ from novamoc.domain.events._payloads import (
 )
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from novamoc.domain.events._payloads import EventEnvelope
 
 
@@ -50,7 +52,7 @@ _ENTITY_MODEL = {
 }
 
 
-def _require_tenant() -> str:
+def _require_tenant() -> UUID:
     tenant_id = current_tenant_id.get()
     if tenant_id is None:
         msg = "row-state apply called without an active tenant in context"

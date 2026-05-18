@@ -26,6 +26,7 @@ from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     MaintenanceRecordTypeFieldService,
 )
+from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,22 +62,22 @@ async def test_paginator_isolates_tenants_at_interleaved_seqs(
     bundle = _bundle(session)
 
     # Interleave: t-a, t-b, t-a, t-b, t-a → three events for t-a, two for t-b.
-    with use_tenant("t-a"):
+    with use_tenant(DEV_TENANT_ID_A):
         await _append(bundle, "0001700000000001-00000-aaa")
-    with use_tenant("t-b"):
+    with use_tenant(DEV_TENANT_ID_B):
         await _append(bundle, "0001700000000002-00000-bbb")
-    with use_tenant("t-a"):
+    with use_tenant(DEV_TENANT_ID_A):
         await _append(bundle, "0001700000000003-00000-aaa")
-    with use_tenant("t-b"):
+    with use_tenant(DEV_TENANT_ID_B):
         await _append(bundle, "0001700000000004-00000-bbb")
-    with use_tenant("t-a"):
+    with use_tenant(DEV_TENANT_ID_A):
         await _append(bundle, "0001700000000005-00000-aaa")
 
     paginator = EventLogCursorPaginator(EventLogService(session=session))
 
-    with use_tenant("t-a"):
+    with use_tenant(DEV_TENANT_ID_A):
         items_a, cursor_a = await paginator.get_items(cursor=None, results_per_page=100)
-    with use_tenant("t-b"):
+    with use_tenant(DEV_TENANT_ID_B):
         items_b, cursor_b = await paginator.get_items(cursor=None, results_per_page=100)
 
     assert {it.hlc for it in items_a} == {

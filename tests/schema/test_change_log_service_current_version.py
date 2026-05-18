@@ -5,6 +5,7 @@ from uuid import uuid4
 from novamoc.db._tenant_context import use_tenant
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema.services import SchemaChangeLogService
+from tests._constants import DEV_TENANT_ID, DEV_TENANT_ID_A
 
 
 async def test_current_version_returns_zero_for_empty_tenant(session) -> None:
@@ -27,7 +28,7 @@ async def test_current_version_returns_max_seq_for_tenant(session) -> None:
 
 
 async def test_current_version_is_per_tenant(session) -> None:
-    with use_tenant("t-other"):
+    with use_tenant(DEV_TENANT_ID_A):
         svc = SchemaChangeLogService(session=session)
         await svc.append(
             command=SchemaCommand.CREATE_ASSET_TYPE,
@@ -36,5 +37,5 @@ async def test_current_version_is_per_tenant(session) -> None:
         )
         await session.flush()
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         assert await svc.current_version() == 0

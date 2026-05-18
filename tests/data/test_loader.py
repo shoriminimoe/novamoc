@@ -13,6 +13,7 @@ from uuid import UUID
 
 import pytest
 
+from tests._constants import DEV_TENANT_ID
 from tests.data.loader import load_scenario
 from tests.data.scenarios import (
     ACTIVE_TRUCK,
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
     from novamoc.domain.schema._bundle import ServiceBundle
 
-_TENANT = "t1"
+_TENANT = DEV_TENANT_ID
 
 
 async def test_load_scenario_inserts_rows(

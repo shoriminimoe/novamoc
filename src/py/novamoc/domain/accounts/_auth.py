@@ -23,8 +23,10 @@ refactor.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import msgspec
 
 
 class RequestAuth(msgspec.Struct, frozen=True):
-    tenant_id: str
+    tenant_id: UUID

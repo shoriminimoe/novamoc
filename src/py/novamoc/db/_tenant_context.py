@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from uuid import UUID
 
-current_tenant_id: ContextVar[str | None] = ContextVar(
+current_tenant_id: ContextVar[UUID | None] = ContextVar(
     "novamoc_current_tenant_id", default=None
 )
 
@@ -29,7 +30,7 @@ SKIP_TENANT_FILTER = "novamoc_skip_tenant_filter"
 
 
 @contextmanager
-def use_tenant(tenant_id: str) -> Iterator[None]:
+def use_tenant(tenant_id: UUID) -> Iterator[None]:
     """Set the tenant context for the duration of the with-block.
 
     Resets to the prior value (including None) on exit, even if the

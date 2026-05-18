@@ -28,6 +28,7 @@ from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     MaintenanceRecordTypeFieldService,
 )
+from tests._constants import DEV_TENANT_ID
 from tests.data.scenarios import ACTIVE_OIL_CHANGE_WITH_NOTES
 
 if TYPE_CHECKING:
@@ -41,7 +42,7 @@ _HLC = "0000000000000001-00000-client-a"
 
 
 def _auth() -> RequestAuth:
-    return RequestAuth(tenant_id="t1")
+    return RequestAuth(tenant_id=DEV_TENANT_ID)
 
 
 @pytest.fixture

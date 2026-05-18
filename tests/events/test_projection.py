@@ -16,6 +16,7 @@ from novamoc.db.models.data import Asset, MaintenanceRecord
 from novamoc.domain.events._fold import FieldUpsert
 from novamoc.domain.events._payloads import EntityFamily
 from novamoc.domain.events._projection import apply_entity_projection
+from tests._constants import DEV_TENANT_ID
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-_TENANT = "t1"
+_TENANT = DEV_TENANT_ID
 _ANY_HLC = "0000000000000001-00000-client-a"
 
 

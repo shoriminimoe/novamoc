@@ -24,6 +24,7 @@ from novamoc.db.models.data import (
     MaintenanceRecord,
     MaintenanceRecordFieldValue,
 )
+from tests._constants import DEV_TENANT_ID
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -218,7 +219,7 @@ async def test_happy_path_writes_log_field_values_and_entity_row(
     assert resp.status_code == 202, resp.text
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         # event_log row exists.
         count = (
             await _query(app, select(func.count()).select_from(EventLog))
@@ -270,7 +271,7 @@ async def test_replay_returns_all_duplicate_and_preserves_state(
     assert second.status_code == 202
     assert second.json()["outcomes"][0]["outcome"] == "duplicate"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         count = (
             await _query(app, select(func.count()).select_from(EventLog))
         ).scalar_one()
@@ -312,7 +313,7 @@ async def test_lww_concurrent_events_higher_hlc_wins(
     assert resp.status_code == 202
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         asset = (
             await _query(app, select(Asset).where(Asset.id == instance_id))
         ).scalar_one()
@@ -411,7 +412,7 @@ async def test_tombstoned_field_event_is_accepted(
     )
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         asset = (
             await _query(app, select(Asset).where(Asset.id == instance_id))
         ).scalar_one()
@@ -485,7 +486,7 @@ async def test_delete_then_post_delete_edit_then_restore(
     )
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         asset = (
             await _query(app, select(Asset).where(Asset.id == instance_id))
         ).scalar_one()
@@ -534,7 +535,7 @@ async def test_mixed_outcome_batch_appends_only_accepted_events(
         "accepted",
     ]
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         # event_log gained 2 rows, not 3 — the rejected event did not
         # append.
         count = (
@@ -578,7 +579,7 @@ async def test_mr_happy_path_writes_log_field_values_and_entity_row(
     assert resp.status_code == 202, resp.text
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         # event_log gained one row (the parent asset Create added one
         # earlier — two total).
         count = (
@@ -640,7 +641,7 @@ async def test_mr_created_without_parent_rejected_not_500(
     assert outcome["outcome"] == "rejected:invalid_payload_shape"
     assert "invalid_payload_shape" in outcome["problem"]["type"]
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         count = (
             await _query(app, select(func.count()).select_from(EventLog))
         ).scalar_one()
@@ -739,7 +740,7 @@ async def test_mr_delete_then_post_delete_edit_then_restore(
     )
     assert resp.json()["outcomes"][0]["outcome"] == "accepted"
 
-    with use_tenant("t1"):
+    with use_tenant(DEV_TENANT_ID):
         mr = (
             await _query(
                 app,

@@ -41,6 +41,7 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeService,
     SchemaChangeLogService,
 )
+from tests._constants import DEV_TENANT_ID
 from tests.data.loader import load_scenario
 
 if TYPE_CHECKING:
@@ -57,17 +58,19 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def tenant(request: pytest.FixtureRequest) -> Iterator[str | None]:
+def tenant(request: pytest.FixtureRequest) -> Iterator[UUID | None]:
     """Set the storage-layer tenant contextvar for every test's duration.
 
     Autouse so tests don't need to declare ``tenant`` purely to get a
-    contextvar; defaults to "t1". Tests that need a specific tenant
-    value (or want to flip across tenants) override via indirect
-    parametrization, declaring ``tenant: str`` only when they actually
-    read the value:
+    contextvar; defaults to :data:`tests._constants.DEV_TENANT_ID`. Tests
+    that need a specific tenant value (or want to flip across tenants)
+    override via indirect parametrization, declaring ``tenant: UUID``
+    only when they actually read the value:
 
-        @pytest.mark.parametrize("tenant", ["t-a", "t-b"], indirect=True)
-        async def test_cross_tenant(tenant: str): ...
+        @pytest.mark.parametrize(
+            "tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B], indirect=True,
+        )
+        async def test_cross_tenant(tenant: UUID): ...
 
     Tests that must run with no tenant context (to assert the fail-closed
     paths in the listeners or to verify the contextvar primitive itself)
@@ -79,7 +82,7 @@ def tenant(request: pytest.FixtureRequest) -> Iterator[str | None]:
     if request.node.get_closest_marker("no_tenant"):
         yield None
         return
-    tenant_id = getattr(request, "param", "t1")
+    tenant_id = getattr(request, "param", DEV_TENANT_ID)
     with use_tenant(tenant_id):
         yield tenant_id
 
@@ -139,13 +142,13 @@ def seed(
     regardless of the ambient ``tenant`` fixture, which is useful for
     cross-tenant isolation tests that seed the same scenario twice:
 
-        a_ids = await seed(ACTIVE_TRUCK, tenant_id="t-a")
-        b_ids = await seed(ACTIVE_TRUCK, tenant_id="t-b")
+        a_ids = await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_A)
+        b_ids = await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_B)
     """
 
     async def _seed(
         scenario: Scenario,
-        tenant_id: str | None = None,
+        tenant_id: UUID | None = None,
     ) -> Mapping[str, Mapping[str, UUID]]:
         if tenant_id is not None:
             with use_tenant(tenant_id):

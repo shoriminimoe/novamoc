@@ -14,6 +14,7 @@ import pytest
 from novamoc.db._errors import CrossTenantWriteError, UnscopedQueryError
 from novamoc.db._tenant_context import use_tenant
 from novamoc.domain.schema._commands import SchemaCommand
+from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
 from tests.data.scenarios import ACTIVE_TRUCK
 
 if TYPE_CHECKING:
@@ -29,29 +30,29 @@ _TRUCK_UUID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.fixture
-async def two_tenant_ids(seed) -> dict[str, UUID]:
-    """Seed ACTIVE_TRUCK under t-a and t-b, return their ids.
+async def two_tenant_ids(seed) -> dict[UUID, UUID]:
+    """Seed ACTIVE_TRUCK under tenants A and B, return their ids.
 
     Both entries in the returned dict hold the same UUID value (verified
     against ``_TRUCK_UUID``); the tenant_id in the contextvar is what
     scopes each lookup to its own row.
     """
-    a = await seed(ACTIVE_TRUCK, tenant_id="t-a")
-    b = await seed(ACTIVE_TRUCK, tenant_id="t-b")
+    a = await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_A)
+    b = await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_B)
     ids = {
-        "t-a": a["asset_type"]["Truck"],
-        "t-b": b["asset_type"]["Truck"],
+        DEV_TENANT_ID_A: a["asset_type"]["Truck"],
+        DEV_TENANT_ID_B: b["asset_type"]["Truck"],
     }
     # Guard: the same-UUID property is what makes the cross-tenant tests
     # below non-vacuous. Catch fixture rotations early.
-    assert ids["t-a"] == _TRUCK_UUID
-    assert ids["t-b"] == _TRUCK_UUID
+    assert ids[DEV_TENANT_ID_A] == _TRUCK_UUID
+    assert ids[DEV_TENANT_ID_B] == _TRUCK_UUID
     return ids
 
 
-@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+@pytest.mark.parametrize("tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B])
 async def test_list_returns_only_own_rows(
-    services: ServiceBundle, two_tenant_ids: dict[str, UUID], tenant: str
+    services: ServiceBundle, two_tenant_ids: dict[UUID, UUID], tenant: UUID
 ) -> None:
     """list() under a tenant returns only that tenant's rows."""
     with use_tenant(tenant):
@@ -60,15 +61,15 @@ async def test_list_returns_only_own_rows(
     assert len(rows) == 1
 
 
-@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+@pytest.mark.parametrize("tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B])
 async def test_get_one_or_none_does_not_leak_other_tenant(
-    services: ServiceBundle, two_tenant_ids: dict[str, UUID], tenant: str
+    services: ServiceBundle, two_tenant_ids: dict[UUID, UUID], tenant: UUID
 ) -> None:
     """get_one_or_none(id=<uuid>) under a tenant returns that tenant's row.
 
     Both tenants share the same UUID (the fixture is deterministic).
-    Under tenant t-a, the lookup returns the t-a row; under t-b, the
-    t-b row. The returned row's tenant_id must match the contextvar —
+    Under tenant A, the lookup returns the A row; under B, the
+    B row. The returned row's tenant_id must match the contextvar —
     confirming Layer 1 filters the composite PK correctly.
     """
     uuid = two_tenant_ids[tenant]
@@ -78,9 +79,9 @@ async def test_get_one_or_none_does_not_leak_other_tenant(
     assert row.tenant_id == tenant
 
 
-@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+@pytest.mark.parametrize("tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B])
 async def test_count_is_per_tenant(
-    services: ServiceBundle, two_tenant_ids: dict[str, UUID], tenant: str
+    services: ServiceBundle, two_tenant_ids: dict[UUID, UUID], tenant: UUID
 ) -> None:
     """count() under a tenant sees only its own rows."""
     with use_tenant(tenant):
@@ -88,9 +89,9 @@ async def test_count_is_per_tenant(
     assert n == 1
 
 
-@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+@pytest.mark.parametrize("tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B])
 async def test_update_does_not_touch_other_tenant(
-    services: ServiceBundle, two_tenant_ids: dict[str, UUID], tenant: str
+    services: ServiceBundle, two_tenant_ids: dict[UUID, UUID], tenant: UUID
 ) -> None:
     """update() targeting tenant's composite PK leaves the other tenant unchanged."""
     ids = dict(two_tenant_ids)
@@ -119,7 +120,7 @@ async def test_update_does_not_touch_other_tenant(
 
 @pytest.mark.no_tenant
 async def test_select_without_tenant_context_raises(
-    services: ServiceBundle, two_tenant_ids: dict[str, UUID]
+    services: ServiceBundle, two_tenant_ids: dict[UUID, UUID]
 ) -> None:
     """list() with no tenant context raises UnscopedQueryError.
 
@@ -147,10 +148,10 @@ async def test_create_without_context_raises(services: ServiceBundle) -> None:
 
 async def test_create_with_mismatched_tenant_id_raises(services: ServiceBundle) -> None:
     """create() with tenant_id ≠ contextvar raises CrossTenantWriteError."""
-    with use_tenant("t-a"), pytest.raises(CrossTenantWriteError):
+    with use_tenant(DEV_TENANT_ID_A), pytest.raises(CrossTenantWriteError):
         await services.asset_type.create(
             data={
-                "tenant_id": "t-b",
+                "tenant_id": DEV_TENANT_ID_B,
                 "id": UUID("22222222-2222-2222-2222-222222222222"),
                 "name": "Z",
                 "active": True,
@@ -159,28 +160,28 @@ async def test_create_with_mismatched_tenant_id_raises(services: ServiceBundle) 
         )
 
 
-@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+@pytest.mark.parametrize("tenant", [DEV_TENANT_ID_A, DEV_TENANT_ID_B])
 async def test_list_changes_after_returns_only_own_rows(
-    services: ServiceBundle, session: AsyncSession, tenant: str
+    services: ServiceBundle, session: AsyncSession, tenant: UUID
 ) -> None:
     """list_changes_after under a tenant must not leak sibling-tenant rows.
 
-    Seeds schema_change_log under both t-a and t-b with overlapping seq
+    Seeds schema_change_log under both A and B with overlapping seq
     ranges (each tenant sees its own dense 1, 2, 3, ...). The contextvar
     is what scopes the call to a single tenant's rows.
     """
-    # Seed t-a with 3 rows, t-b with 2 rows. Per-tenant dense seq means
+    # Seed A with 3 rows, B with 2 rows. Per-tenant dense seq means
     # both tenants observe seq=1, seq=2, so a leak would surface as
     # tenant_id != expected on at least one returned row.
     for _ in range(3):
-        with use_tenant("t-a"):
+        with use_tenant(DEV_TENANT_ID_A):
             await services.change_log.append(
                 command=SchemaCommand.CREATE_ASSET_TYPE,
                 entity_id=uuid4(),
                 payload={"name": "x"},
             )
     for _ in range(2):
-        with use_tenant("t-b"):
+        with use_tenant(DEV_TENANT_ID_B):
             await services.change_log.append(
                 command=SchemaCommand.CREATE_ASSET_TYPE,
                 entity_id=uuid4(),
@@ -191,5 +192,5 @@ async def test_list_changes_after_returns_only_own_rows(
     with use_tenant(tenant):
         rows = await services.change_log.list_changes_after(since=0, limit=100)
     assert all(r.tenant_id == tenant for r in rows)
-    expected_count = 3 if tenant == "t-a" else 2
+    expected_count = 3 if tenant == DEV_TENANT_ID_A else 2
     assert len(rows) == expected_count
