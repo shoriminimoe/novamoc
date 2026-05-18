@@ -14,6 +14,7 @@ dependencies = [
     "litestar>=2.21.1",
     "litestar-granian>=0.15.0",
     "litestar-vite>=0.22.1",
+    "msgspec-ext>=0.5.1",
     "sqlalchemy[aiosqlite,asyncio]>=2.0.49",
 ]
 
