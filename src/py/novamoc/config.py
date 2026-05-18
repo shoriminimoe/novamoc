@@ -63,6 +63,26 @@ def _float_env(name: str, default: float) -> Callable[[], float]:
     return _read
 
 
+def _int_env(name: str, default: int) -> Callable[[], int]:
+    """Build a ``default_factory`` that reads ``name`` from env and parses as int.
+
+    A non-integer value raises ``ValueError`` at startup rather than
+    silently falling through to the default.
+    """
+
+    def _read() -> int:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError as exc:
+            msg = f"cannot parse {raw!r} as int for {name}"
+            raise ValueError(msg) from exc
+
+    return _read
+
+
 @dataclass(frozen=True, slots=True)
 class DatabaseSettings:
     url: str = field(
@@ -94,6 +114,9 @@ class AppSettings:
             (ADR-006). Events whose HLC physical component sits
             more than this many seconds ahead of the server wall
             clock are rejected at acceptance time.
+        schema_changes_max_batch_size: Upper bound on rows returned
+            by a single ``GET /schema/changes`` page (M2.2). Clients
+            page via ``next_since`` / ``has_more``.
     """
 
     docs_base_url: str = field(
@@ -103,6 +126,9 @@ class AppSettings:
     )
     hlc_drift_limit_seconds: float = field(
         default_factory=_float_env("NOVAMOC_HLC_DRIFT_LIMIT_SECONDS", 60.0)
+    )
+    schema_changes_max_batch_size: int = field(
+        default_factory=_int_env("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", 500)
     )
 
 
