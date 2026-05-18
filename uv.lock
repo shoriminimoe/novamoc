@@ -393,6 +393,18 @@ wheels = [
 ]
 
 [[package]]
+name = "msgspec-ext"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "msgspec" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/b5/147ef8cb9788a659567a925f4d80bbdac7c1ca1375e05277d9fbf3619cd8/msgspec_ext-0.5.1.tar.gz", hash = "sha256:39ab684c2d9bf564fb706a030bfefa7d5492b49433199821253430bb116ff453", size = 377477, upload-time = "2026-03-22T22:46:40.746Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/6c/6f73947318ba1d41cde989367780763960ccf743f22293ac44161a5484d3/msgspec_ext-0.5.1-py3-none-any.whl", hash = "sha256:1d2b54c8323b62fe05374b76c2df3feb403cb03aa823d541b7f8ad9ec1b0724f", size = 22474, upload-time = "2026-03-22T22:46:39.356Z" },
+]
+
+[[package]]
 name = "multidict"
 version = "6.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -457,6 +469,7 @@ dependencies = [
     { name = "litestar" },
     { name = "litestar-granian" },
     { name = "litestar-vite" },
+    { name = "msgspec-ext" },
     { name = "sqlalchemy", extra = ["aiosqlite", "asyncio"] },
 ]
 
@@ -478,6 +491,7 @@ requires-dist = [
     { name = "litestar", specifier = ">=2.21.1" },
     { name = "litestar-granian", specifier = ">=0.15.0" },
     { name = "litestar-vite", specifier = ">=0.22.1" },
+    { name = "msgspec-ext", specifier = ">=0.5.1" },
     { name = "sqlalchemy", extras = ["aiosqlite", "asyncio"], specifier = ">=2.0.49" },
 ]
 
