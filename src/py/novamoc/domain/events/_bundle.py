@@ -131,6 +131,7 @@ class EventServiceBundle:
                         "hlc": event.hlc,
                         "schema_version": self.schema_version,
                         "table_name": _TABLE_NAMES[event.family],
+                        "type_id": str(event.type_id),
                         "entity_id": str(event.instance_id),
                         "field_id": None,
                         "op": _op_for_body(event.body),

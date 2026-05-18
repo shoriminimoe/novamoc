@@ -40,6 +40,7 @@ class EventLog(DefaultBase):
     hlc: Mapped[str]
     schema_version: Mapped[int] = mapped_column(BigInteger)
     table_name: Mapped[str]
+    type_id: Mapped[str]
     entity_id: Mapped[str]
     field_id: Mapped[str | None]
     op: Mapped[EventOp] = mapped_column(Enum(EventOp, native_enum=False))
