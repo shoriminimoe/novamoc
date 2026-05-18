@@ -23,6 +23,7 @@ from novamoc.domain.events._payloads import (
     Created,
     Deactivated,
     EntityFamily,
+    EventBody,
     EventOutcome,
     Updated,
 )
@@ -32,9 +33,10 @@ from novamoc.domain.events._row_state import apply_row_state
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from novamoc.db.models.data import EventLog
     from novamoc.db.models.schema import AssetTypeField, MaintenanceRecordTypeField
     from novamoc.domain.accounts import RequestAuth
-    from novamoc.domain.events._payloads import EventBody, EventEnvelope
+    from novamoc.domain.events._payloads import EventEnvelope
     from novamoc.domain.events.services import EventLogService
     from novamoc.domain.schema.services import (
         AssetTypeFieldService,
@@ -46,6 +48,26 @@ _TABLE_NAMES: Final[dict[EntityFamily, str]] = {
     EntityFamily.ASSET: "assets",
     EntityFamily.MAINTENANCE_RECORD: "maintenance_records",
 }
+
+
+_FAMILY_BY_TABLE_NAME: Final[dict[str, EntityFamily]] = {
+    name: family for family, name in _TABLE_NAMES.items()
+}
+
+
+def body_from_row(row: EventLog) -> EventBody:
+    """Reverse of :func:`_value_json_for_body` / :func:`_op_for_body`.
+
+    A ``DELETE``-op row reconstructs to :class:`Deactivated`; every
+    other row's ``value_json`` carries the tagged dict
+    :func:`msgspec.to_builtins` wrote, so :func:`msgspec.convert`
+    against the :data:`EventBody` union picks the right variant via
+    the ``event`` discriminator tag (ADR-011 §"Schema: ``value_json
+    TEXT, -- NULL for deletes``").
+    """
+    if row.op is EventOp.DELETE:
+        return Deactivated()
+    return msgspec.convert(row.value_json, type=EventBody)
 
 
 def _op_for_body(body: EventBody) -> EventOp:
