@@ -202,6 +202,56 @@ endpoint. Per-event error types live in ``domain/events/_errors.py``
 ``UnknownFieldError``, ``ValueTypeMismatchError``); generic shape errors
 reuse ``PayloadShapeError(code=ErrorCode.INVALID_PAYLOAD_SHAPE)``.
 
+## Events catch-up endpoint (`GET /events`)
+
+Counterpart to ``POST /events`` and the HTTP half of the catch-up
+flow (ADR-013). Returns the active tenant's ``event_log`` rows after
+a client-supplied cursor in ``seq`` order, in bounded batches.
+
+Response shape is Litestar's
+``CursorPagination[int, RecordedEvent]``: ``items`` plus a
+``cursor`` field that echoes back into the next request's
+``?cursor=`` query parameter, or ``null`` when the caller has
+reached the end. Cursor semantics are exclusive (``seq > cursor``,
+ADR-011). ``RecordedEvent`` (``domain/events/_payloads.py``) is the
+read-side twin of ``EventEnvelope`` — it adds the server-assigned
+fields (``seq``, ``schema_version``, ``received_at``) the
+write-side envelope lacks; the ``body`` field is the same
+discriminated union as on the POST. The M3 WebSocket fan-out will
+emit the same struct so the wire format is transport-independent
+(ADR-013).
+
+``event_log.type_id`` is populated on every accepted event so the
+read side can reconstruct the envelope without joining the
+projection. ``body_from_row`` in ``_bundle.py`` is the inverse of
+``_value_json_for_body`` / ``_op_for_body`` — ``DELETE``-op rows
+reconstruct to ``Deactivated()``; every other row decodes via
+``msgspec.convert(value_json, type=EventBody)`` using the ``event``
+discriminator tag.
+
+Batch size: ``cursor`` defaults to ``None`` (start of stream),
+``results_per_page`` defaults to ``EVENT_CATCHUP_DEFAULT_BATCH_SIZE``
+(500) and is capped at ``EVENT_CATCHUP_MAX_BATCH_SIZE`` (5000); both
+constants live in ``config.py`` and are imported directly by the
+controller. Bad input (negative cursor, out-of-range batch size)
+renders as ``application/problem+json`` per ADR-016, via Litestar's
+standard validation pipeline — no new error codes.
+
+The endpoint always returns events with their acceptance-time
+``schema_version`` tag and does **not** short-circuit on client
+staleness (ADR-013 §"Schema version tagging on events"). Clients
+gate locally — any event with
+``schema_version > active_schema_version`` is buffered until the
+client transitions through the upgrade flow (ADR-009).
+
+Implementation lives in ``domain/events/_pagination.py``
+(``EventLogCursorPaginator`` extends Litestar's
+``AbstractAsyncCursorPaginator[int, RecordedEvent]``); the
+controller's ``read_stream`` handler is a thin pass-through. Tenant
+scoping is structural — Layer 1 of ``db._listeners`` injects the
+``WHERE tenant_id = <ctx>`` predicate on every ORM SELECT, so the
+paginator carries no tenant predicate of its own.
+
 ## Data model conventions
 
 - All synced tables (schema + data) are tenant-scoped. Projection tables compose `(TenantScopedMixin, UUIDAuditBase)` — composite PK `(tenant_id, id)` with `tenant_id` as the leading column so the implicit PK index serves per-tenant queries (ADR-014). Log/EAV tables (`schema_change_log`, `*_field_values`) compose `(TenantScopedMixin, DefaultBase)`. `event_log` is the lone exception — it keeps a sole `seq` PK with hand-declared non-PK `tenant_id` because SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PKs; the listeners' column-presence heuristic still enforces tenant scoping on it.

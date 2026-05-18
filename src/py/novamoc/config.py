@@ -102,6 +102,10 @@ class ServerSettings:
     granian: bool = field(default_factory=_bool_env("NOVAMOC_SERVER_GRANIAN", True))
 
 
+EVENT_CATCHUP_DEFAULT_BATCH_SIZE = 500
+EVENT_CATCHUP_MAX_BATCH_SIZE = 5000
+
+
 @dataclass(frozen=True, slots=True)
 class AppSettings:
     """App-wide tunables that don't belong to a single subsystem.

@@ -32,17 +32,24 @@ Per event, in order:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from advanced_alchemy.extensions.litestar import providers
-from litestar import Controller, Request, post
+from litestar import Controller, Request, get, post
 from litestar.datastructures import (
     State,  # noqa: TC002  # runtime DI provider annotation
 )
 from litestar.di import Provide
+from litestar.openapi.datastructures import ResponseSpec
+from litestar.pagination import CursorPagination
+from litestar.params import Parameter
 from litestar.status_codes import HTTP_202_ACCEPTED
 
-from novamoc.api._problem_details import make_problem_body
+from novamoc.api._problem_details import ProblemDetails, make_problem_body
+from novamoc.config import (
+    EVENT_CATCHUP_DEFAULT_BATCH_SIZE,
+    EVENT_CATCHUP_MAX_BATCH_SIZE,
+)
 from novamoc.domain._errors import DomainError, ErrorCode, PayloadShapeError
 from novamoc.domain.events._bundle import EventServiceBundle
 from novamoc.domain.events._dispatch import dispatch
@@ -51,10 +58,12 @@ from novamoc.domain.events._errors import (
     SchemaVersionStaleError,
 )
 from novamoc.domain.events._hlc import HLC, HLCParseError, wall_now_ms
+from novamoc.domain.events._pagination import EventLogCursorPaginator
 from novamoc.domain.events._payloads import (
     EventBatch,
     EventBatchResponse,
     EventOutcome,
+    RecordedEvent,
 )
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import (
@@ -108,6 +117,12 @@ async def _provide_append_deps(  # noqa: PLR0913  # one parameter per DI'd dep; 
         record_field=maintenance_record_type_field_service,
         event_log=event_log_service,
     )
+
+
+async def _provide_event_log_cursor_paginator(
+    event_log_service: EventLogService,
+) -> EventLogCursorPaginator:
+    return EventLogCursorPaginator(event_log_service)
 
 
 def _rejected(
@@ -184,6 +199,7 @@ class EventsController(Controller):
             "drift_limit_seconds": Provide(_provide_drift_limit_seconds),
             "docs_base_url": Provide(_provide_docs_base_url),
             "deps": Provide(_provide_append_deps),
+            "event_log_cursor_paginator": Provide(_provide_event_log_cursor_paginator),
         }
         | providers.create_service_dependencies(
             SchemaChangeLogService, "schema_change_log_service"
@@ -229,3 +245,25 @@ class EventsController(Controller):
 
         outcomes = [await _process_event(event, ctx) for event in data.events]
         return EventBatchResponse(outcomes=tuple(outcomes))
+
+    @get(
+        "/",
+        responses={
+            400: ResponseSpec(
+                ProblemDetails,
+                description="Invalid cursor or batch size",
+                media_type="application/problem+json",
+            ),
+        },
+    )
+    async def read_stream(
+        self,
+        event_log_cursor_paginator: EventLogCursorPaginator,
+        cursor: Annotated[int | None, Parameter(ge=0)] = None,
+        results_per_page: Annotated[
+            int, Parameter(ge=1, le=EVENT_CATCHUP_MAX_BATCH_SIZE)
+        ] = EVENT_CATCHUP_DEFAULT_BATCH_SIZE,
+    ) -> CursorPagination[int, RecordedEvent]:
+        return await event_log_cursor_paginator(
+            cursor=cursor, results_per_page=results_per_page
+        )
