@@ -7,15 +7,18 @@ tenants and exercising every read/write method must show no leak.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from novamoc.db._errors import CrossTenantWriteError, UnscopedQueryError
 from novamoc.db._tenant_context import use_tenant
+from novamoc.domain.schema._commands import SchemaCommand
 from tests.data.scenarios import ACTIVE_TRUCK
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from novamoc.domain.schema._bundle import ServiceBundle
 
 # The truck JSON fixture has a fixed UUID. The composite PK (tenant_id, id)
@@ -154,3 +157,39 @@ async def test_create_with_mismatched_tenant_id_raises(services: ServiceBundle) 
             },
             auto_commit=False,
         )
+
+
+@pytest.mark.parametrize("tenant", ["t-a", "t-b"])
+async def test_list_changes_after_returns_only_own_rows(
+    services: ServiceBundle, session: AsyncSession, tenant: str
+) -> None:
+    """list_changes_after under a tenant must not leak sibling-tenant rows.
+
+    Seeds schema_change_log under both t-a and t-b with overlapping seq
+    ranges (each tenant sees its own dense 1, 2, 3, ...). The contextvar
+    is what scopes the call to a single tenant's rows.
+    """
+    # Seed t-a with 3 rows, t-b with 2 rows. Per-tenant dense seq means
+    # both tenants observe seq=1, seq=2, so a leak would surface as
+    # tenant_id != expected on at least one returned row.
+    for _ in range(3):
+        with use_tenant("t-a"):
+            await services.change_log.append(
+                command=SchemaCommand.CREATE_ASSET_TYPE,
+                entity_id=uuid4(),
+                payload={"name": "x"},
+            )
+    for _ in range(2):
+        with use_tenant("t-b"):
+            await services.change_log.append(
+                command=SchemaCommand.CREATE_ASSET_TYPE,
+                entity_id=uuid4(),
+                payload={"name": "y"},
+            )
+    await session.flush()
+
+    with use_tenant(tenant):
+        rows = await services.change_log.list_changes_after(since=0, limit=100)
+    assert all(r.tenant_id == tenant for r in rows)
+    expected_count = 3 if tenant == "t-a" else 2
+    assert len(rows) == expected_count
