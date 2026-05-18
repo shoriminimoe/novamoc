@@ -66,6 +66,11 @@ class SchemaChangeView(msgspec.Struct):
     ``_payloads.py`` structs. See the design spec for the rationale
     (rename-compatibility with historical rows; the payload was already
     validated at POST time).
+
+    The envelope is :class:`litestar.pagination.CursorPagination` —
+    ``items``, ``results_per_page``, ``cursor`` (None when caught up).
+    ``schema_version`` is not in the envelope; clients learn it from
+    ``GET /schema``'s ETag.
     """
 
     seq: int
@@ -74,19 +79,3 @@ class SchemaChangeView(msgspec.Struct):
     payload: dict[str, Any]
     committed_at: datetime
     actor_id: str | None
-
-
-class SchemaChangesResponse(msgspec.Struct):
-    """Wire envelope for ``GET /schema/changes``.
-
-    ``schema_version`` is the tenant's current ``MAX(seq)``, read in the
-    same transaction as ``changes`` so the pair is a single snapshot.
-    ``next_since`` is the cursor the client passes back to continue
-    paging (the last row's ``seq``, or the request's ``since`` when
-    empty). ``has_more`` is true iff ``next_since < schema_version``.
-    """
-
-    schema_version: int
-    changes: tuple[SchemaChangeView, ...]
-    next_since: int
-    has_more: bool

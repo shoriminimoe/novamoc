@@ -31,10 +31,11 @@ Tenant is resolved by `TenantContextMiddleware` (ADR-017) from the bearer token.
 
 ### Success response — 200 OK
 
+The wire envelope is Litestar's [`CursorPagination[int, SchemaChangeView]`](https://docs.litestar.dev/latest/usage/responses.html#pagination) — `{items, results_per_page, cursor}`. Using the framework type keeps the OpenAPI shape standard and the client-side pagination idiom uniform.
+
 ```json
 {
-  "schema_version": 47,
-  "changes": [
+  "items": [
     {
       "seq": 12,
       "command": "create_asset_type",
@@ -52,8 +53,8 @@ Tenant is resolved by `TenantContextMiddleware` (ADR-017) from the bearer token.
       "actor_id": null
     }
   ],
-  "next_since": 13,
-  "has_more": true
+  "results_per_page": 500,
+  "cursor": 13
 }
 ```
 
@@ -63,33 +64,34 @@ Headers:
 Content-Type: application/json
 ```
 
-(No ETag. The resource is page-shaped — different `(since, limit)` yields different bodies — and clients drive freshness via `next_since` / `has_more` plus an out-of-band ETag on `GET /schema` when they decide to re-snapshot.)
+(No ETag. The resource is page-shaped — different `(since, limit)` yields different bodies — and clients drive freshness via the `cursor` field plus an out-of-band ETag on `GET /schema` when they decide to re-snapshot.)
 
 Field-by-field:
 
-- `schema_version` — the tenant's current `MAX(seq)` (`0` for empty). Snapshot-consistent with `changes`: both reads share one SQLite WAL transaction. A client that wants the simplest "have I caught up?" check compares `next_since == schema_version`.
-- `changes` — rows with `seq > since AND seq <= schema_version`, ordered ascending by `seq`, capped at `limit`.
+- `items` — rows with `seq > since AND seq <= current_version`, ordered ascending by `seq`, capped at `results_per_page`.
   - `seq` — per-tenant dense integer (issue #17, closed).
   - `command` — `SchemaCommand` enum value as a string (`create_asset_type`, `update_maintenance_record_type_field`, …). Emitted from the `schema_change_log.command` `TEXT` column verbatim; not re-validated against the enum on read (see *Why pass payload through* below — same argument).
   - `entity_id` — UUID string.
   - `payload` — the row's `JsonB` payload, passed through as-is.
   - `committed_at` — ISO-8601 UTC timestamp.
   - `actor_id` — `string | null`. Always `null` in M2; populated once auth lands (M5).
-- `next_since` — the largest `seq` in the returned batch, or the request's `since` if `changes` is empty. Clients pass this back as the next `since` (semantics: "give me everything after the last row I saw").
-- `has_more` — `true` iff `next_since < schema_version`. Tells the client whether to keep paging without re-querying.
+- `results_per_page` — the effective page size used for this request (either the requested `limit` or the server default).
+- `cursor` — Litestar's `CursorPagination` convention: the **next** cursor. The client passes this back as `since` to fetch the next page. `null` means caught up — no rows remain above the last returned one. ADR-009's catch-up loop terminates when this is `null`.
+
+`schema_version` is **not** in the envelope. Clients learn it from `GET /schema`'s ETag (the analogous "snapshot version" signal lives there). The catch-up endpoint is about streaming rows, not about exposing metadata. A client that has paged `/schema/changes` to `cursor: null` knows it has every row up to whatever `current_version` was at request time; if it needs the explicit integer, one `GET /schema` (or one `HEAD /schema`, returning just the ETag) recovers it.
 
 ### Cursor semantics
 
 - `since` is **exclusive** (`seq > since`), matching ADR-011's prose and ADR-008's diff query (`seq > V_old`).
 - `since=0` returns the full per-tenant history starting at the first row (`seq=1`).
-- `since >= current_version` returns `{schema_version, changes: [], next_since: since, has_more: false}` — **not** an error. A caller who has caught up keeps polling cheaply.
-- The `schema_version` returned in the response is the same value the snapshot endpoint would return at that instant; over a multi-page sweep the client sees a single point-in-time view *per request* but `schema_version` may advance between requests. The client should compare `next_since` to *each request's* `schema_version`, not cache an earlier one.
+- `since >= current_version` returns `{items: [], results_per_page: …, cursor: null}` — **not** an error. A caller who has caught up keeps polling cheaply.
+- Each request observes a single point-in-time snapshot (one WAL transaction). `current_version` may advance between requests; the client decides termination by checking `cursor is null` on each response, not by caching an earlier version.
 
 ### Bounded batches
 
 - `limit` defaults to a server-configured maximum and is capped to it. Out-of-range `limit` is a 400.
 - The cap lives in `AppSettings.schema_changes_max_batch_size` (default `500`), tunable per deployment via `NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE`. The default is generous because schema-change-log rows are small (≤ a few KB each) and the typical catch-up is a few dozen rows; we want a single round-trip in the common case while still bounding pathological tenants.
-- `has_more=true` is the signal to keep paging. There is no separate "you exceeded the cap" error — clients simply page.
+- A non-null `cursor` in the response is the signal to keep paging. There is no separate "you exceeded the cap" error — clients simply page.
 
 ### Errors
 
@@ -115,7 +117,7 @@ Single transactional snapshot — `MAX(seq)` and the page of rows must reflect t
 - Two queries inside it: `SELECT COALESCE(MAX(seq), 0) FROM schema_change_log` (the existing `SchemaChangeLogService.current_version()`), and `SELECT … FROM schema_change_log WHERE seq > :since ORDER BY seq LIMIT :limit`.
 - SQLite's WAL gives us this snapshot for free as long as both reads share the session.
 
-Order: read `MAX(seq)` **first**, then the page. Inverting the order would let a concurrent `POST /schema` commit a row between the two queries and produce a response where `next_since > schema_version`, which would mislead the client's `has_more` calculation. Inside one WAL snapshot the order doesn't matter, but we keep it stable for readability and because the snapshot guarantee depends on the connection-pool config (`StaticPool` in tests / `NullPool` in prod — both already enforce single-connection-per-request via Litestar's request-scoped session, but a defensive ordering costs us nothing).
+Order: read `MAX(seq)` **first**, then the page. Inverting the order would let a concurrent `POST /schema` commit a row between the two queries and produce a response where the last item's `seq > current_version`, which would corrupt the `cursor` decision (we'd return `cursor: null` for a client that actually has more rows ahead). Inside one WAL snapshot the order doesn't matter, but we keep it stable for readability and because the snapshot guarantee depends on the connection-pool config (`StaticPool` in tests / `NullPool` in prod — both already enforce single-connection-per-request via Litestar's request-scoped session, but a defensive ordering costs us nothing).
 
 ## Cross-tenant isolation
 
@@ -139,12 +141,12 @@ If we want drift-detection later, the right place for it is an offline `ratchet`
 ## Code surface
 
 - `novamoc/config.py` — add `AppSettings.schema_changes_max_batch_size: int` with `_int_env("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", 500)`. (`_int_env` is new — sibling of the existing `_float_env`; same `ValueError`-on-junk shape.)
-- `novamoc/domain/schema/_read_payloads.py` — add three msgspec Structs:
+- `novamoc/domain/schema/_read_payloads.py` — add one msgspec Struct:
   - `SchemaChangeView` — one row (`seq`, `command`, `entity_id`, `payload`, `committed_at`, `actor_id`).
-  - `SchemaChangesResponse` — `schema_version`, `changes: tuple[SchemaChangeView, ...]`, `next_since`, `has_more`.
-  - No new struct for the request — `since` and `limit` are query parameters bound declaratively on the handler signature.
+  - No envelope struct — the controller returns `litestar.pagination.CursorPagination[int, SchemaChangeView]` directly.
+  - No request struct — `since` and `limit` are query parameters bound declaratively on the handler signature.
 - `novamoc/domain/schema/services/_change_log.py` — add `async def list_changes_after(self, *, since: int, limit: int) -> Sequence[SchemaChangeLog]:` that runs `SELECT … WHERE seq > :since ORDER BY seq LIMIT :limit` via the service's repository. (The existing `current_version()` is reused as-is.)
-- `novamoc/domain/schema/controllers/_schema.py` — add a `@get("/changes")` handler on the existing `SchemaController`. It (1) reads `since` and `limit` as query parameters (both `Optional[int]`; the handler applies the default and bounds because the upper bound is settings-derived, not knowable at class-body parse time); (2) calls `current_version()` then `list_changes_after(since=since, limit=limit)` on the same request-scoped session; (3) maps rows to `SchemaChangeView`; (4) computes `next_since` and `has_more`; (5) returns the response.
+- `novamoc/domain/schema/controllers/_schema.py` — add a `@get("/changes")` handler on the existing `SchemaController`. It (1) reads `since` and `limit` as query parameters (both `Optional[int]`; the handler applies the default and bounds because the upper bound is settings-derived, not knowable at class-body parse time); (2) calls `current_version()` then `list_changes_after(since=since, limit=limit)` on the same request-scoped session; (3) maps rows to `SchemaChangeView`; (4) computes the `cursor` field — `items[-1].seq` if `items[-1].seq < current_version` else `None`; (5) returns `CursorPagination[int, SchemaChangeView](items=…, results_per_page=effective_limit, cursor=…)`.
   - Settings are injected via a `Provide(_provide_max_batch_size)` dependency reading `state.settings.app.schema_changes_max_batch_size` — same shape as `_provide_drift_limit_seconds` in `domain/events/controllers/_events.py`.
   - Bounds enforcement: when `since` or `limit` is out of range, the handler raises `PayloadShapeError(code=ErrorCode.INVALID_PAYLOAD_SHAPE, …)` with `field` and `received` extras, which renders through the existing problem-details converter.
 
@@ -156,16 +158,16 @@ Following repo conventions (real in-memory aiosqlite, no DB mocks):
 
 E2E HTTP tests in `tests/schema/test_changes_endpoint_e2e.py`:
 
-- 200 against an empty tenant → `{schema_version: 0, changes: [], next_since: 0, has_more: false}`.
-- 200 after seeding N `POST /schema` commands and calling with `since=0` → all N rows, `next_since == N`, `has_more=false` (assuming N ≤ default limit).
-- 200 with `since=k` (`0 < k < N`) → only rows `k+1..N`, `next_since == N`, `has_more=false`.
-- 200 with `since >= current_version` → empty `changes`, `next_since == since`, `has_more=false`. Not an error.
-- 200 with `?limit=2` against ≥ 3 rows → 2 rows, `has_more=true`, `next_since == seq of last row in batch`. A follow-up call with `since=next_since` returns the remainder and `has_more=false`.
+- 200 against an empty tenant → `{items: [], results_per_page: 500, cursor: null}`.
+- 200 after seeding N `POST /schema` commands and calling with `since=0` → all N items, `cursor: null` (assuming N ≤ default limit).
+- 200 with `since=k` (`0 < k < N`) → only items `k+1..N`, `cursor: null`.
+- 200 with `since >= current_version` → empty `items`, `cursor: null`. Not an error.
+- 200 with `?limit=2` against ≥ 3 rows → 2 items, `cursor: <seq of last item>`. A follow-up call with `since=<cursor>` returns the remainder and `cursor: null`.
 - 400 for `since=-1`, `limit=0`, `limit > max`.
 - 401 for missing / invalid `Authorization`.
 - Row shape: each entry has all six fields including `actor_id: null`. `payload` is the original POST body (a small variety: `create_asset_type`'s `{"name": ...}`, `update_*`'s diff dict, an empty `{}` for `deactivate_*`).
-- Tombstoning-then-resurrection appears as separate rows (not collapsed): `deactivate_asset_type` and `activate_asset_type` against the same `entity_id` both surface.
-- Ordering: rows are ascending by `seq` regardless of physical insert order.
+- Tombstoning-then-resurrection appears as separate items (not collapsed): `deactivate_asset_type` and `activate_asset_type` against the same `entity_id` both surface.
+- Ordering: items are ascending by `seq` regardless of physical insert order.
 
 Service-level test in `tests/schema/test_change_log_service.py` (extend the existing file):
 
@@ -176,7 +178,7 @@ Handler-level tests are not added — this is a single read query, mirroring the
 
 ## OpenAPI
 
-The new route adds `200` and `400` specs to `SchemaController`. The `200` response body is `SchemaChangesResponse`. The `400` and `401` responses reuse the existing `ProblemDetails` `ResponseSpec` already wired on the controller. The OpenAPI doc continues to live at `/openapi`.
+The new route adds `200`, `400`, and `401` specs to `SchemaController`. The `200` response body is `CursorPagination[int, SchemaChangeView]` — Litestar publishes the generic instantiation directly, so the `oneOf`-style envelope/item shape appears in the spec with no hand-written wrapper. The `400` and `401` responses reuse the existing `ProblemDetails` `ResponseSpec` already wired on the controller. The OpenAPI doc continues to live at `/openapi`.
 
 ## Notable non-changes
 

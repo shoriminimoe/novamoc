@@ -48,6 +48,7 @@ from litestar.datastructures import (
 )
 from litestar.di import Provide
 from litestar.openapi.datastructures import ResponseSpec
+from litestar.pagination import CursorPagination
 
 from novamoc.api._problem_details import ProblemDetails
 from novamoc.domain._errors import ErrorCode, PayloadShapeError
@@ -60,7 +61,6 @@ from novamoc.domain.schema._read_payloads import (
     AssetTypeView,
     MaintenanceRecordTypeFieldView,
     MaintenanceRecordTypeView,
-    SchemaChangesResponse,
     SchemaChangeView,
     SchemaSnapshotResponse,
 )
@@ -283,7 +283,7 @@ class SchemaController(Controller):
         "/changes",
         responses={
             200: ResponseSpec(
-                SchemaChangesResponse,
+                CursorPagination[int, SchemaChangeView],
                 description="Page of schema change log rows for the active tenant",
             ),
             400: ResponseSpec(
@@ -304,7 +304,7 @@ class SchemaController(Controller):
         max_batch_size: int,
         since: int = 0,
         limit: int | None = None,
-    ) -> SchemaChangesResponse:
+    ) -> CursorPagination[int, SchemaChangeView]:
         # Range checks. INVALID_PAYLOAD_SHAPE is the existing code for
         # "the request couldn't be decoded against the expected shape" — see
         # the design spec. We do them here rather than via Parameter(ge=...,
@@ -327,16 +327,16 @@ class SchemaController(Controller):
                 max=max_batch_size,
             )
 
-        # Snapshot consistency: schema_version and the page read share the
+        # Snapshot consistency: current_version and the page read share the
         # same request-scoped session, so they observe one WAL snapshot.
-        # Read schema_version FIRST so a client never sees next_since >
-        # schema_version (would mislead the has_more calculation).
-        schema_version = await schema_change_log_service.current_version()
+        # Read current_version FIRST so the has-more decision is made
+        # against the same point-in-time as the page contents.
+        current_version = await schema_change_log_service.current_version()
         rows = await schema_change_log_service.list_changes_after(
             since=since, limit=effective_limit
         )
 
-        changes = tuple(
+        items = [
             SchemaChangeView(
                 seq=r.seq,
                 command=r.command,
@@ -346,13 +346,16 @@ class SchemaController(Controller):
                 actor_id=r.actor_id,
             )
             for r in rows
+        ]
+        # CursorPagination convention: ``cursor`` in the response is the
+        # next cursor (the seq to pass as ``since`` on the next request).
+        # ``None`` means caught up — no more rows beyond the last returned
+        # one. ADR-009's catch-up loop terminates when this is None.
+        next_cursor = (
+            items[-1].seq if items and items[-1].seq < current_version else None
         )
-        next_since = changes[-1].seq if changes else since
-        has_more = next_since < schema_version
-
-        return SchemaChangesResponse(
-            schema_version=schema_version,
-            changes=changes,
-            next_since=next_since,
-            has_more=has_more,
+        return CursorPagination[int, SchemaChangeView](
+            items=items,
+            results_per_page=effective_limit,
+            cursor=next_cursor,
         )

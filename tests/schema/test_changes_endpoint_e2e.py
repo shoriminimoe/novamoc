@@ -1,4 +1,11 @@
-"""E2E HTTP tests for GET /schema/changes (issue #32)."""
+"""E2E HTTP tests for GET /schema/changes (issue #32).
+
+The endpoint returns Litestar's ``CursorPagination[int, SchemaChangeView]``
+shape — ``{items, results_per_page, cursor}``. The ``cursor`` field in the
+response is the NEXT cursor: ``None`` means caught up (no more rows beyond
+the last returned one); a non-null value is the ``since`` to send on the
+next request.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,8 @@ if TYPE_CHECKING:
 _TYPE_A = "11111111-1111-1111-1111-111111111111"
 _TYPE_B = "22222222-2222-2222-2222-222222222222"
 _TYPE_C = "33333333-3333-3333-3333-333333333333"
+
+_DEFAULT_LIMIT = 500
 
 
 async def _seed_three_creates(client: AsyncTestClient) -> None:
@@ -25,15 +34,14 @@ async def _seed_three_creates(client: AsyncTestClient) -> None:
         assert resp.status_code in (200, 201), resp.text
 
 
-async def test_empty_tenant_returns_empty_changes(client) -> None:
+async def test_empty_tenant_returns_empty_page(client) -> None:
     resp = await client.get("/schema/changes")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body == {
-        "schema_version": 0,
-        "changes": [],
-        "next_since": 0,
-        "has_more": False,
+        "items": [],
+        "results_per_page": _DEFAULT_LIMIT,
+        "cursor": None,
     }
 
 
@@ -44,12 +52,12 @@ async def test_since_zero_returns_full_history(client) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    assert body["schema_version"] == 3
-    assert body["next_since"] == 3
-    assert body["has_more"] is False
-    seqs = [c["seq"] for c in body["changes"]]
+    # Caught up: cursor is None.
+    assert body["cursor"] is None
+    assert body["results_per_page"] == _DEFAULT_LIMIT
+    seqs = [c["seq"] for c in body["items"]]
     assert seqs == [1, 2, 3]
-    commands = [c["command"] for c in body["changes"]]
+    commands = [c["command"] for c in body["items"]]
     assert commands == ["create_asset_type"] * 3
 
 
@@ -59,10 +67,8 @@ async def test_since_at_current_returns_empty_not_error(client) -> None:
     resp = await client.get("/schema/changes?since=3")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["schema_version"] == 3
-    assert body["changes"] == []
-    assert body["next_since"] == 3
-    assert body["has_more"] is False
+    assert body["items"] == []
+    assert body["cursor"] is None
 
 
 async def test_since_above_current_returns_empty_not_error(client) -> None:
@@ -71,12 +77,9 @@ async def test_since_above_current_returns_empty_not_error(client) -> None:
     resp = await client.get("/schema/changes?since=999")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["schema_version"] == 3
-    assert body["changes"] == []
-    # next_since echoes the input when no rows are returned, so a client
-    # that keeps calling with the same cursor doesn't go backwards.
-    assert body["next_since"] == 999
-    assert body["has_more"] is False
+    assert body["items"] == []
+    # Client is ahead of (or at) head: caught up, no more rows.
+    assert body["cursor"] is None
 
 
 async def test_since_skips_rows_below_or_equal(client) -> None:
@@ -85,29 +88,29 @@ async def test_since_skips_rows_below_or_equal(client) -> None:
     resp = await client.get("/schema/changes?since=1")
     assert resp.status_code == 200
     body = resp.json()
-    seqs = [c["seq"] for c in body["changes"]]
+    seqs = [c["seq"] for c in body["items"]]
     # Exclusive lower bound: seq > 1, so [2, 3].
     assert seqs == [2, 3]
-    assert body["next_since"] == 3
-    assert body["has_more"] is False
+    assert body["cursor"] is None
 
 
 async def test_limit_pages_results(client) -> None:
     await _seed_three_creates(client)
 
-    page1 = await client.get("/schema/changes?since=0&limit=2")
+    page1 = await client.get("/schema/changes?limit=2")
     assert page1.status_code == 200
     body1 = page1.json()
-    assert [c["seq"] for c in body1["changes"]] == [1, 2]
-    assert body1["next_since"] == 2
-    assert body1["has_more"] is True
+    assert [c["seq"] for c in body1["items"]] == [1, 2]
+    assert body1["results_per_page"] == 2
+    # More rows above seq=2, so cursor is the next-page key (seq=2).
+    assert body1["cursor"] == 2
 
-    page2 = await client.get(f"/schema/changes?since={body1['next_since']}&limit=2")
+    page2 = await client.get(f"/schema/changes?since={body1['cursor']}&limit=2")
     assert page2.status_code == 200
     body2 = page2.json()
-    assert [c["seq"] for c in body2["changes"]] == [3]
-    assert body2["next_since"] == 3
-    assert body2["has_more"] is False
+    assert [c["seq"] for c in body2["items"]] == [3]
+    # Last row equals current_version → caught up.
+    assert body2["cursor"] is None
 
 
 async def test_row_carries_payload_and_actor_id_null(client) -> None:
@@ -135,9 +138,9 @@ async def test_row_carries_payload_and_actor_id_null(client) -> None:
     resp = await client.get("/schema/changes")
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["changes"]) == 2
+    assert len(body["items"]) == 2
 
-    create_type, create_field = body["changes"]
+    create_type, create_field = body["items"]
     assert create_type["command"] == "create_asset_type"
     assert create_type["entity_id"] == _TYPE_A
     assert create_type["payload"] == {"name": "Truck"}
@@ -181,7 +184,7 @@ async def test_deactivate_and_activate_surface_as_separate_rows(client) -> None:
 
     resp = await client.get("/schema/changes")
     body = resp.json()
-    commands = [c["command"] for c in body["changes"]]
+    commands = [c["command"] for c in body["items"]]
     assert commands == [
         "create_asset_type",
         "deactivate_asset_type",
