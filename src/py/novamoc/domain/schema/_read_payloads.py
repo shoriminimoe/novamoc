@@ -13,6 +13,7 @@ case (see ADR-008 / ADR-009 / the design spec).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -55,3 +56,37 @@ class SchemaSnapshotResponse(msgspec.Struct):
     schema_version: int
     asset_types: tuple[AssetTypeView, ...]
     maintenance_record_types: tuple[MaintenanceRecordTypeView, ...]
+
+
+class SchemaChangeView(msgspec.Struct):
+    """One row of ``schema_change_log`` on the wire.
+
+    ``payload`` is passed through from the ``JsonB`` column as-is — the
+    read path does NOT round-trip through the command-side
+    ``_payloads.py`` structs. See the design spec for the rationale
+    (rename-compatibility with historical rows; the payload was already
+    validated at POST time).
+    """
+
+    seq: int
+    command: str
+    entity_id: UUID
+    payload: dict[str, Any]
+    committed_at: datetime
+    actor_id: str | None
+
+
+class SchemaChangesResponse(msgspec.Struct):
+    """Wire envelope for ``GET /schema/changes``.
+
+    ``schema_version`` is the tenant's current ``MAX(seq)``, read in the
+    same transaction as ``changes`` so the pair is a single snapshot.
+    ``next_since`` is the cursor the client passes back to continue
+    paging (the last row's ``seq``, or the request's ``since`` when
+    empty). ``has_more`` is true iff ``next_since < schema_version``.
+    """
+
+    schema_version: int
+    changes: tuple[SchemaChangeView, ...]
+    next_since: int
+    has_more: bool
