@@ -19,10 +19,12 @@ from novamoc.domain.accounts._middleware import (
     AuthenticationMiddleware,
     TenantContextMiddleware,
 )
+from novamoc.domain.accounts._principal import Principal
 from novamoc.domain.accounts._resolver import resolve_tenant
 
 __all__ = (
     "AuthenticationMiddleware",
+    "Principal",
     "RequestAuth",
     "TenantContextMiddleware",
     "TenantResolutionError",
