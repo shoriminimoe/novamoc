@@ -321,9 +321,7 @@ class SchemaController(Controller):
         if effective_limit < 1 or effective_limit > max_batch_size:
             raise PayloadShapeError(
                 code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-                message=(
-                    f"limit must be between 1 and {max_batch_size} inclusive"
-                ),
+                message=(f"limit must be between 1 and {max_batch_size} inclusive"),
                 field="limit",
                 received=limit,
                 max=max_batch_size,

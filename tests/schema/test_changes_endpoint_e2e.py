@@ -102,9 +102,7 @@ async def test_limit_pages_results(client) -> None:
     assert body1["next_since"] == 2
     assert body1["has_more"] is True
 
-    page2 = await client.get(
-        f"/schema/changes?since={body1['next_since']}&limit=2"
-    )
+    page2 = await client.get(f"/schema/changes?since={body1['next_since']}&limit=2")
     assert page2.status_code == 200
     body2 = page2.json()
     assert [c["seq"] for c in body2["changes"]] == [3]
