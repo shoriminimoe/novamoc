@@ -15,6 +15,13 @@ handler runs, and Layer 1 of the tenant-scoping listeners
 on every read. A missing or invalid bearer token is rejected upstream
 by ``AuthenticationMiddleware`` before either middleware runs.
 
+``GET /schema/changes`` streams ``schema_change_log`` rows with
+``seq > since``, ordered ascending, bounded by a configurable batch
+size. The same ``TenantContextMiddleware`` + Layer 1 listener path
+supplies the tenant predicate. Bounds errors on ``since`` / ``limit``
+render through the existing ``ProblemDetailsPlugin`` as
+``invalid_payload_shape``.
+
 ``POST /schema``'s ``apply_command`` reads ``request.auth`` directly
 because the dispatch table passes ``RequestAuth`` through to handlers
 that need it for ``update``/``delete`` ``item_id`` tuples. ``request.auth``
@@ -35,10 +42,15 @@ from typing import TYPE_CHECKING
 from advanced_alchemy.extensions.litestar import providers
 from advanced_alchemy.filters import OrderBy
 from litestar import Controller, Request, Response, get, post
-from litestar.datastructures import ETag
+from litestar.datastructures import (
+    ETag,
+    State,  # noqa: TC002  # runtime DI provider annotation
+)
+from litestar.di import Provide
 from litestar.openapi.datastructures import ResponseSpec
 
 from novamoc.api._problem_details import ProblemDetails
+from novamoc.domain._errors import ErrorCode, PayloadShapeError
 from novamoc.domain.schema import _payloads
 from novamoc.domain.schema import services as _services
 from novamoc.domain.schema._bundle import ServiceBundle
@@ -48,11 +60,17 @@ from novamoc.domain.schema._read_payloads import (
     AssetTypeView,
     MaintenanceRecordTypeFieldView,
     MaintenanceRecordTypeView,
+    SchemaChangesResponse,
+    SchemaChangeView,
     SchemaSnapshotResponse,
 )
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+
+async def _provide_max_batch_size(state: State) -> int:
+    return state.settings.app.schema_changes_max_batch_size
 
 
 def _matches_current_etag(if_none_match: str | None, current: ETag) -> bool:
@@ -77,7 +95,10 @@ class SchemaController(Controller):
     tags = ["schema"]
 
     dependencies = (
-        providers.create_service_dependencies(
+        {
+            "max_batch_size": Provide(_provide_max_batch_size),
+        }
+        | providers.create_service_dependencies(
             _services.AssetTypeService, "asset_type_service"
         )
         | providers.create_service_dependencies(
@@ -257,3 +278,83 @@ class SchemaController(Controller):
         )
         snapshot_response.set_etag(current_etag)
         return snapshot_response
+
+    @get(
+        "/changes",
+        responses={
+            200: ResponseSpec(
+                SchemaChangesResponse,
+                description="Page of schema change log rows for the active tenant",
+            ),
+            400: ResponseSpec(
+                ProblemDetails,
+                description="Invalid since/limit query parameter",
+                media_type="application/problem+json",
+            ),
+            401: ResponseSpec(
+                ProblemDetails,
+                description="Tenant could not be resolved from request",
+                media_type="application/problem+json",
+            ),
+        },
+    )
+    async def read_changes(
+        self,
+        schema_change_log_service: _services.SchemaChangeLogService,
+        max_batch_size: int,
+        since: int = 0,
+        limit: int | None = None,
+    ) -> SchemaChangesResponse:
+        # Range checks. INVALID_PAYLOAD_SHAPE is the existing code for
+        # "the request couldn't be decoded against the expected shape" — see
+        # the design spec. We do them here rather than via Parameter(ge=...,
+        # le=...) because the upper bound is settings-derived and not a
+        # literal at class-body parse time.
+        if since < 0:
+            raise PayloadShapeError(
+                code=ErrorCode.INVALID_PAYLOAD_SHAPE,
+                message="since must be >= 0",
+                field="since",
+                received=since,
+            )
+        effective_limit = max_batch_size if limit is None else limit
+        if effective_limit < 1 or effective_limit > max_batch_size:
+            raise PayloadShapeError(
+                code=ErrorCode.INVALID_PAYLOAD_SHAPE,
+                message=(
+                    f"limit must be between 1 and {max_batch_size} inclusive"
+                ),
+                field="limit",
+                received=limit,
+                max=max_batch_size,
+            )
+
+        # Snapshot consistency: schema_version and the page read share the
+        # same request-scoped session, so they observe one WAL snapshot.
+        # Read schema_version FIRST so a client never sees next_since >
+        # schema_version (would mislead the has_more calculation).
+        schema_version = await schema_change_log_service.current_version()
+        rows = await schema_change_log_service.list_changes_after(
+            since=since, limit=effective_limit
+        )
+
+        changes = tuple(
+            SchemaChangeView(
+                seq=r.seq,
+                command=r.command,
+                entity_id=r.entity_id,
+                payload=r.payload,
+                committed_at=r.committed_at,
+                actor_id=r.actor_id,
+            )
+            for r in rows
+        )
+        next_since = changes[-1].seq if changes else since
+        has_more = next_since < schema_version
+
+        return SchemaChangesResponse(
+            schema_version=schema_version,
+            changes=changes,
+            next_since=next_since,
+            has_more=has_more,
+        )
