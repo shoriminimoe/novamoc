@@ -25,6 +25,7 @@ keys.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -184,3 +185,35 @@ class EventBatchResponse(msgspec.Struct, forbid_unknown_fields=True):
     """
 
     outcomes: tuple[EventOutcome, ...]
+
+
+class RecordedEvent(msgspec.Struct, forbid_unknown_fields=True):
+    """Server-recorded event, as emitted on read transports.
+
+    The read-side twin of :class:`EventEnvelope`. Adds the server-
+    assigned fields (``seq``, ``schema_version``, ``received_at``) the
+    write-side envelope lacks. Body shape is shared with
+    :class:`EventEnvelope`, so clients pattern-match the same way
+    regardless of direction.
+
+    Attributes:
+        seq: Replication cursor (ADR-011).
+        schema_version: Acceptance-time schema version. Drives client-
+            side gating per ADR-013 / ADR-009.
+        hlc: LWW key, identical to :attr:`EventEnvelope.hlc`.
+        family: Meta-schema family.
+        type_id: User-schema type FK.
+        instance_id: User-data instance id.
+        body: Discriminated event payload — same union as
+            :class:`EventEnvelope`.
+        received_at: Server-side acceptance timestamp.
+    """
+
+    seq: int
+    schema_version: int
+    hlc: str
+    family: EntityFamily
+    type_id: UUID
+    instance_id: UUID
+    body: EventBody
+    received_at: datetime
