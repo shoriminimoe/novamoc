@@ -37,7 +37,7 @@ not register exception handlers itself.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from advanced_alchemy.extensions.litestar import providers
 from advanced_alchemy.filters import OrderBy
@@ -64,9 +64,6 @@ from novamoc.domain.schema._read_payloads import (
     SchemaChangeView,
     SchemaSnapshotResponse,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
 
 
 async def _provide_max_batch_size(state: State) -> int:

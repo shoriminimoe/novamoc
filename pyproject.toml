@@ -144,6 +144,7 @@ runtime-evaluated-decorators = [
     # stay runtime imports — TC001's TYPE_CHECKING autofix would break
     # wire decoding.
     "litestar.post",
+    "litestar.get",
 ]
 
 [tool.ruff.lint.isort]

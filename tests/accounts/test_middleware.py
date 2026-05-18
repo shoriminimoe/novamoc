@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from litestar import Litestar, Request, get
 from litestar.middleware.base import DefineMiddleware
 from litestar.testing import AsyncTestClient
@@ -11,9 +9,6 @@ from novamoc.domain.accounts import (
     RequestAuth,
 )
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
-
-if TYPE_CHECKING:
-    from litestar import Request
 
 _VALID_AUTH = {"Authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"}
 

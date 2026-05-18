@@ -41,9 +41,7 @@ from litestar.datastructures import (
 )
 from litestar.di import Provide
 from litestar.openapi.datastructures import ResponseSpec
-from litestar.pagination import (
-    CursorPagination,  # noqa: TC002  # runtime handler return-type annotation
-)
+from litestar.pagination import CursorPagination
 from litestar.params import Parameter
 from litestar.status_codes import HTTP_202_ACCEPTED
 
@@ -65,7 +63,7 @@ from novamoc.domain.events._payloads import (
     EventBatch,
     EventBatchResponse,
     EventOutcome,
-    RecordedEvent,  # noqa: TC001  # runtime handler return-type annotation
+    RecordedEvent,
 )
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import (
