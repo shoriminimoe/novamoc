@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 import novamoc.db.models as m
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from novamoc.domain.schema._commands import SchemaCommand
@@ -74,3 +75,25 @@ class SchemaChangeLogService(
         stmt = select(func.coalesce(func.max(m.schema.SchemaChangeLog.seq), 0))
         result = await self.repository.session.execute(stmt)
         return int(result.scalar_one())
+
+    async def list_changes_after(
+        self,
+        *,
+        since: int,
+        limit: int,
+    ) -> Sequence[m.schema.SchemaChangeLog]:
+        """Return rows with ``seq > since``, ascending by ``seq``, capped at ``limit``.
+
+        Tenant scoping is supplied by Layer 1 of ``db._listeners``: this is
+        an ORM ``select(SchemaChangeLog)`` so ``state.all_mappers`` is
+        non-empty and ``with_loader_criteria`` attaches the predicate
+        automatically. No ``tenant_id`` filter is added here.
+        """
+        stmt = (
+            select(m.schema.SchemaChangeLog)
+            .where(m.schema.SchemaChangeLog.seq > since)
+            .order_by(m.schema.SchemaChangeLog.seq)
+            .limit(limit)
+        )
+        result = await self.repository.session.execute(stmt)
+        return result.scalars().all()

@@ -10,6 +10,7 @@ from novamoc.config import (
     Settings,
     _bool_env,
     _float_env,
+    _int_env,
     _str_env,
 )
 
@@ -70,6 +71,23 @@ class TestFloatEnv:
             _float_env("NOVAMOC_X_TEST_FLOAT", 1.0)()
 
 
+class TestIntEnv:
+    def test_returns_default_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NOVAMOC_X_TEST_INT", raising=False)
+        assert _int_env("NOVAMOC_X_TEST_INT", 7)() == 7
+
+    def test_parses_env_value_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NOVAMOC_X_TEST_INT", "42")
+        assert _int_env("NOVAMOC_X_TEST_INT", 0)() == 42
+
+    def test_garbage_propagates_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_X_TEST_INT", "not-a-number")
+        with pytest.raises(ValueError, match="cannot parse"):
+            _int_env("NOVAMOC_X_TEST_INT", 0)()
+
+
 class TestAppSettings:
     def test_default_hlc_drift_is_one_minute(
         self, monkeypatch: pytest.MonkeyPatch
@@ -80,6 +98,25 @@ class TestAppSettings:
     def test_env_overrides_drift_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NOVAMOC_HLC_DRIFT_LIMIT_SECONDS", "12.5")
         assert AppSettings().hlc_drift_limit_seconds == 12.5
+
+    def test_schema_changes_max_batch_size_defaults_to_500(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", raising=False)
+        assert AppSettings().schema_changes_max_batch_size == 500
+
+    def test_env_overrides_schema_changes_max_batch_size(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", "42")
+        assert AppSettings().schema_changes_max_batch_size == 42
+
+    def test_garbage_schema_changes_max_batch_size_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", "not-a-number")
+        with pytest.raises(ValueError, match="cannot parse"):
+            AppSettings()
 
 
 class TestSettings:

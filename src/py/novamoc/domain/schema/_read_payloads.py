@@ -13,6 +13,7 @@ case (see ADR-008 / ADR-009 / the design spec).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -55,3 +56,26 @@ class SchemaSnapshotResponse(msgspec.Struct):
     schema_version: int
     asset_types: tuple[AssetTypeView, ...]
     maintenance_record_types: tuple[MaintenanceRecordTypeView, ...]
+
+
+class SchemaChangeView(msgspec.Struct):
+    """One row of ``schema_change_log`` on the wire.
+
+    ``payload`` is passed through from the ``JsonB`` column as-is — the
+    read path does NOT round-trip through the command-side
+    ``_payloads.py`` structs. See the design spec for the rationale
+    (rename-compatibility with historical rows; the payload was already
+    validated at POST time).
+
+    The envelope is :class:`litestar.pagination.CursorPagination` —
+    ``items``, ``results_per_page``, ``cursor`` (None when caught up).
+    ``schema_version`` is not in the envelope; clients learn it from
+    ``GET /schema``'s ETag.
+    """
+
+    seq: int
+    command: str
+    entity_id: UUID
+    payload: dict[str, Any]
+    committed_at: datetime
+    actor_id: str | None
