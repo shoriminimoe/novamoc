@@ -7,6 +7,9 @@ alongside ``TenantScopedMixin``.
 
 from __future__ import annotations
 
+from uuid import UUID
+
+from advanced_alchemy.types import GUID
 from sqlalchemy.orm import Mapped, declarative_mixin, mapped_column
 
 
@@ -21,4 +24,4 @@ class TenantScopedMixin:
     table" by column presence rather than this class.
     """
 
-    tenant_id: Mapped[str] = mapped_column(primary_key=True, sort_order=-200)
+    tenant_id: Mapped[UUID] = mapped_column(GUID, primary_key=True, sort_order=-200)

@@ -9,6 +9,7 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
     MaintenanceRecordTypeService,
 )
+from tests._constants import DEV_TENANT_ID
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,11 +26,11 @@ async def test_type_service_round_trip(service_cls, session: AsyncSession) -> No
     svc = service_cls(session=session)
     eid = uuid4()
     obj = await svc.create(
-        data={"tenant_id": "t1", "id": eid, "name": "X", "active": True},
+        data={"tenant_id": DEV_TENANT_ID, "id": eid, "name": "X", "active": True},
         auto_commit=False,
     )
     await session.flush()
-    fetched = await svc.get_one_or_none(tenant_id="t1", id=eid)
+    fetched = await svc.get_one_or_none(tenant_id=DEV_TENANT_ID, id=eid)
     assert fetched is not None
     assert fetched.name == "X"
     assert obj.id == eid
@@ -52,13 +53,13 @@ async def test_field_service_round_trip(
     type_id = uuid4()
     field_id = uuid4()
     await type_svc.create(
-        data={"tenant_id": "t1", "id": type_id, "name": "T", "active": True},
+        data={"tenant_id": DEV_TENANT_ID, "id": type_id, "name": "T", "active": True},
         auto_commit=False,
     )
     await session.flush()
     obj = await field_svc.create(
         data={
-            "tenant_id": "t1",
+            "tenant_id": DEV_TENANT_ID,
             "id": field_id,
             "parent_id": type_id,
             "name": "f",
@@ -70,6 +71,6 @@ async def test_field_service_round_trip(
     )
     await session.flush()
     assert obj.id == field_id
-    fetched = await field_svc.get_one_or_none(tenant_id="t1", id=field_id)
+    fetched = await field_svc.get_one_or_none(tenant_id=DEV_TENANT_ID, id=field_id)
     assert fetched is not None
     assert fetched.parent_id == type_id

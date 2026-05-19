@@ -9,6 +9,7 @@ from novamoc.domain.accounts import (
     RequestAuth,
 )
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
+from tests._constants import DEV_TENANT_ID
 
 _VALID_AUTH = {"Authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"}
 
@@ -43,7 +44,7 @@ async def test_valid_bearer_populates_request_auth() -> None:
     async with AsyncTestClient(_app()) as client:
         resp = await client.get("/probe", headers=_VALID_AUTH)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"tenant_id": "t1"}
+        assert resp.json() == {"tenant_id": str(DEV_TENANT_ID)}
 
 
 async def test_missing_bearer_renders_401() -> None:
@@ -76,4 +77,5 @@ async def test_exclude_from_auth_opt_key_bypasses_authentication() -> None:
 async def test_authenticated_request_has_typed_request_auth_on_scope() -> None:
     async with AsyncTestClient(_app()) as client:
         resp = await client.get("/probe", headers=_VALID_AUTH)
-        assert resp.json() == {"tenant_id": RequestAuth(tenant_id="t1").tenant_id}
+        expected = str(RequestAuth(tenant_id=DEV_TENANT_ID).tenant_id)
+        assert resp.json() == {"tenant_id": expected}

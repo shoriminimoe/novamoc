@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from litestar import Litestar, get
 from litestar.middleware.base import DefineMiddleware
@@ -13,13 +15,17 @@ from novamoc.domain.accounts import (
     TenantContextMiddleware,
 )
 from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
+from tests._constants import DEV_TENANT_ID
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 async def test_middleware_sets_contextvar_during_request() -> None:
-    seen: list[str | None] = []
+    seen: list[UUID | None] = []
 
     @get("/__probe")
-    async def probe() -> dict[str, str | None]:
+    async def probe() -> dict[str, str]:
         seen.append(current_tenant_id.get())
         return {"ok": "yes"}
 
@@ -35,7 +41,7 @@ async def test_middleware_sets_contextvar_during_request() -> None:
             "/__probe", headers={"Authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"}
         )
         assert response.status_code == 200
-        assert seen == ["t1"]
+        assert seen == [DEV_TENANT_ID]
 
 
 @pytest.mark.no_tenant

@@ -7,8 +7,11 @@ from novamoc.db._tenant_context import use_tenant
 from novamoc.db.models import schema as schema_models
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema.services import SchemaChangeLogService
+from tests._constants import DEV_TENANT_ID, DEV_TENANT_ID_A, DEV_TENANT_ID_B
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -22,7 +25,7 @@ async def test_append_writes_a_row_and_returns_seq(session: AsyncSession) -> Non
     )
     await session.flush()
     assert row.seq is not None
-    assert row.tenant_id == "t1"
+    assert row.tenant_id == DEV_TENANT_ID
     assert row.command == SchemaCommand.ACTIVATE_ASSET_TYPE
     assert row.entity_id == eid
     assert row.payload == {"name": "Truck"}
@@ -69,9 +72,10 @@ async def test_append_assigns_dense_per_tenant_seq(session: AsyncSession) -> Non
     protocol that ADR-009's catch-up flow consumes."""
     svc = SchemaChangeLogService(session=session)
 
-    interleaved: list[tuple[str, int]] = []
+    a, b = DEV_TENANT_ID_A, DEV_TENANT_ID_B
+    interleaved: list[tuple[UUID, int]] = []
     # interleave A,B,A,B,A,B,A
-    for tenant in ("tA", "tB", "tA", "tB", "tA", "tB", "tA"):
+    for tenant in (a, b, a, b, a, b, a):
         with use_tenant(tenant):
             row = await svc.append(
                 command=SchemaCommand.CREATE_ASSET_TYPE,
@@ -81,7 +85,7 @@ async def test_append_assigns_dense_per_tenant_seq(session: AsyncSession) -> Non
             interleaved.append((tenant, row.seq))
     await session.flush()
 
-    a_seqs = [seq for tenant, seq in interleaved if tenant == "tA"]
-    b_seqs = [seq for tenant, seq in interleaved if tenant == "tB"]
+    a_seqs = [seq for tenant, seq in interleaved if tenant == a]
+    b_seqs = [seq for tenant, seq in interleaved if tenant == b]
     assert a_seqs == [1, 2, 3, 4]
     assert b_seqs == [1, 2, 3]

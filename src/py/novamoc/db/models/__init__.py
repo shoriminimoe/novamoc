@@ -1,3 +1,3 @@
-from . import data, schema
+from . import _auth, data, schema
 
-__all__ = ("data", "schema")
+__all__ = ("_auth", "data", "schema")

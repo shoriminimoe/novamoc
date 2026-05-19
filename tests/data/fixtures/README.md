@@ -25,7 +25,6 @@ Worked example: you want a test where there's a Lorry asset type with a `mileage
 ```json
 [
   {
-    "tenant_id": "t1",
     "id": "00000000-0000-0000-0000-000000000020",
     "name": "Lorry",
     "active": true
@@ -38,7 +37,6 @@ Worked example: you want a test where there's a Lorry asset type with a `mileage
 ```json
 [
   {
-    "tenant_id": "t1",
     "id": "00000000-0000-0000-0000-000000000021",
     "parent_id": "00000000-0000-0000-0000-000000000020",
     "name": "mileage",
@@ -95,7 +93,7 @@ The exports map `seed` returns is keyed by `(service_attr, row["name"])` and yie
 
 **UUIDs are deterministic.** Hard-code them. Pick clearly-distinct values; keep one entity's atoms numerically close (a Lorry parent at `...0020`, its fields at `...0021`, `...0022`, …). No central registry — pick a free range and let the JSON be the source of truth.
 
-**Tenant id is `"t1"`.** The canonical test tenant. Use a different one only when a test genuinely needs multi-tenant state.
+**Don't hard-code `tenant_id`.** The autouse `tenant` fixture in `tests/conftest.py` sets the storage-layer ContextVar to `tests._constants.DEV_TENANT_ID` for every test; Layer 2 of `db._listeners` auto-stamps `tenant_id` on every newly-flushed row. Multi-tenant tests parametrise the fixture across `DEV_TENANT_ID_A` / `DEV_TENANT_ID_B`.
 
 ## Breadcrumbs for the curious
 
