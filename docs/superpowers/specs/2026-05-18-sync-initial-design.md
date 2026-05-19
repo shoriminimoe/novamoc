@@ -445,8 +445,11 @@ def serve_batch(cursor, n):
 
 This collapses empty intermediate tables: when `read_page` returns no
 rows and we're not on the last table, we loop and try the next one in
-the same request. An empty tenant returns one batch (`table=assets`,
-`items=()`, `cursor=null`, `event_log_cursor=0`) — a single round-trip.
+the same request. An empty tenant returns one batch (the last table —
+`table=maintenance_record_field_values`, `items=()`, `cursor=null`,
+`event_log_cursor=0`) — a single round-trip. The body's `table` tag in
+the empty case is incidental; what matters to the client is
+`cursor=null` and the accompanying `event_log_cursor`.
 
 `TABLES` is the fixed tuple `(assets, asset_field_values,
 maintenance_records, maintenance_record_field_values)`. The order is a
