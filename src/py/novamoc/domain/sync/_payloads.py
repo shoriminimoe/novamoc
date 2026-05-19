@@ -71,12 +71,13 @@ class MaintenanceRecordFieldValueView(msgspec.Struct, forbid_unknown_fields=True
     hlc: str
 
 
-class _SyncBody(msgspec.Struct, tag_field="table"):
+class _SyncBody(msgspec.Struct, tag_field="table", forbid_unknown_fields=True):
     """Discriminator base for :data:`InitialSyncBody`.
 
     Subclasses set ``tag`` to the table name. The discriminator field
     is ``table``; msgspec publishes the union as ``oneOf`` in the
-    OpenAPI schema.
+    OpenAPI schema. Per-struct config is inherited by subclasses, so
+    setting ``forbid_unknown_fields`` here covers every ``*BatchBody``.
     """
 
 
