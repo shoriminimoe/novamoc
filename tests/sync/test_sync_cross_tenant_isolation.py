@@ -47,9 +47,7 @@ def _paginator(session: AsyncSession) -> InitialSyncPaginator:
     )
 
 
-async def _seed_asset(
-    session: AsyncSession, *, tenant_id: str
-) -> tuple[UUID, UUID]:
+async def _seed_asset(session: AsyncSession, *, tenant_id: str) -> tuple[UUID, UUID]:
     """Seed one asset_type + one asset under ``tenant_id``. Returns
     ``(type_id, asset_id)``."""
     type_id = uuid4()

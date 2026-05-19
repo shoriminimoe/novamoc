@@ -198,8 +198,7 @@ class InitialSyncPaginator:
             filters.insert(
                 0,
                 or_(
-                    MaintenanceRecordFieldValue.maintenance_record_id
-                    > entity_uuid,
+                    MaintenanceRecordFieldValue.maintenance_record_id > entity_uuid,
                     and_(
                         MaintenanceRecordFieldValue.maintenance_record_id
                         == entity_uuid,

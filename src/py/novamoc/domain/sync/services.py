@@ -29,9 +29,7 @@ class AssetService(service.SQLAlchemyAsyncRepositoryService[Asset]):
     repository_type = Repo
 
 
-class AssetFieldValueService(
-    service.SQLAlchemyAsyncRepositoryService[AssetFieldValue]
-):
+class AssetFieldValueService(service.SQLAlchemyAsyncRepositoryService[AssetFieldValue]):
     class Repo(repository.SQLAlchemyAsyncRepository[AssetFieldValue]):
         model_type = AssetFieldValue
 

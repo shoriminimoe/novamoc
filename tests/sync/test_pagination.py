@@ -80,9 +80,7 @@ async def _make_maintenance_record_type(
     name: str = "Inspection",
     tenant_id: str = "t1",
 ) -> MaintenanceRecordType:
-    mrt = MaintenanceRecordType(
-        id=uuid4(), tenant_id=tenant_id, name=name, active=True
-    )
+    mrt = MaintenanceRecordType(id=uuid4(), tenant_id=tenant_id, name=name, active=True)
     session.add(mrt)
     await session.flush()
     return mrt
@@ -136,9 +134,7 @@ async def _make_event(  # noqa: PLR0913  # test-helper builder: explicit keyword
     await session.flush()
 
 
-async def _bump_schema_version(
-    session: AsyncSession, *, tenant_id: str = "t1"
-) -> int:
+async def _bump_schema_version(session: AsyncSession, *, tenant_id: str = "t1") -> int:
     """Append a no-op schema_change_log row to bump current_version()."""
     current = await session.execute(
         select(func.coalesce(func.max(SchemaChangeLog.seq), 0)).where(
