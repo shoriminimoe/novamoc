@@ -254,6 +254,69 @@ scoping is structural — Layer 1 of ``db._listeners`` injects the
 ``WHERE tenant_id = <ctx>`` predicate on every ORM SELECT, so the
 paginator carries no tenant predicate of its own.
 
+## Initial sync endpoint (`GET /sync/initial`)
+
+Companion to ``GET /events`` and the bulk half of the sync handshake
+(ADR-015). Streams the active tenant's current data-projection state —
+``assets``, ``asset_field_values``, ``maintenance_records``,
+``maintenance_record_field_values`` — in fixed-table-order batches with
+an opaque continuation ``cursor``. Closes M2.3 (issue #33).
+
+Response is a custom envelope (not Litestar's ``CursorPagination`` —
+items are heterogeneous across batches):
+
+```
+InitialSyncBatch {
+  schema_version: int
+  cursor: str | null         # opaque continuation; null = transfer complete
+  event_log_cursor: int | null  # only when cursor is null (terminal batch)
+  body: InitialSyncBody      # discriminated by `table` (msgspec tag_field)
+}
+```
+
+``InitialSyncBody`` is a tagged union with one variant per projection
+table: ``AssetsBatchBody``, ``AssetFieldValuesBatchBody``,
+``MaintenanceRecordsBatchBody``, ``MaintenanceRecordFieldValuesBatchBody``.
+Each variant carries an ``items`` tuple of the corresponding row view.
+Row views deliberately omit ``name`` (mirrors ``col:name`` in field
+values) and ``properties`` (derivable from per-field rows) — the client
+reconstructs them by folding field-value rows, per ADR-015 §"Derived
+entity JSON".
+
+The cursor is base64-JSON encoding ``(start_seq, table, last_id)``.
+``start_seq`` is captured on the **first** request (when ``cursor is
+None``) and threaded through every subsequent cursor; this is the
+correctness pin for events arriving mid-transfer. Returned as
+``event_log_cursor`` on the terminal batch — the client uses it to
+start ``GET /events`` catch-up (M2.4) and as the M3 WS hello cursor.
+
+Empty intermediate tables are collapsed server-side, so an empty
+tenant returns in a single round-trip (terminal batch from the last
+table with ``items=()``). Row-value ``>`` on the ``*_field_values``
+tables is expressed as an OR-expansion (``asset_id > eid OR
+(asset_id = eid AND field_id > fid)``) rather than ``sqlalchemy.tuple_``
+for portability and clean typing.
+
+Tenant scoping is structural — Layer 1 of ``db._listeners`` injects
+``WHERE tenant_id = <ctx>`` on every ORM SELECT, including the
+``MAX(event_log.seq)`` and ``MAX(schema_change_log.seq)`` aggregates
+via the listener's get-final-froms fallback path.
+
+Batch size: ``cursor`` defaults to ``None``, ``results_per_page``
+defaults to ``INITIAL_SYNC_DEFAULT_BATCH_SIZE`` (1000) and is capped at
+``INITIAL_SYNC_MAX_BATCH_SIZE`` (5000); both constants live in
+``config.py`` and are imported directly by the controller. Bad input
+(malformed cursor, out-of-range batch size) renders as
+``application/problem+json`` per ADR-016, via Litestar's standard
+validation pipeline plus ``PayloadShapeError(INVALID_PAYLOAD_SHAPE)``
+for cursor-decode failures.
+
+Implementation lives in ``domain/sync/_pagination.py``
+(``InitialSyncPaginator``); the controller's ``initial`` handler is a
+thin pass-through. Wire structs live in ``domain/sync/_payloads.py``,
+opaque cursor in ``domain/sync/_cursor.py``, four read-only services
+in ``domain/sync/services.py``.
+
 ## Data model conventions
 
 - All synced tables (schema + data) are tenant-scoped. `tenant_id` is `uuid.UUID` everywhere (ADR-020); the column type lives on `TenantScopedMixin` and `event_log` reuses the same `GUID` declaration directly. Projection tables compose `(TenantScopedMixin, UUIDAuditBase)` — composite PK `(tenant_id, id)` with `tenant_id` as the leading column so the implicit PK index serves per-tenant queries (ADR-014). Log/EAV tables (`schema_change_log`, `*_field_values`) compose `(TenantScopedMixin, DefaultBase)`. `event_log` is the lone exception — it keeps a sole `seq` PK with hand-declared non-PK `tenant_id` because SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` doesn't support composite PKs; the listeners' column-presence heuristic still enforces tenant scoping on it.
