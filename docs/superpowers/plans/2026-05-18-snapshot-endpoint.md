@@ -1,38 +1,47 @@
-# GET /sync/initial Implementation Plan
+# GET /snapshot Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the M2.3 bulk projection transfer endpoint (`GET /sync/initial`) — paginated streaming of the active tenant's `assets`, `maintenance_records`, `asset_field_values`, `maintenance_record_field_values` plus the `event_log.seq` cursor for incremental sync. Closes issue #33 and flips ADR-015 from Proposed to Accepted.
+> **Note (2026-05-20):** Endpoint renamed from `/sync/initial` → `/snapshot`.
+> Response field `cursor` (opaque pagination continuation) renamed to `page`;
+> response field `event_log_cursor` (replication seq, terminal-batch-only)
+> renamed to `cursor`. Identifiers (`Snapshot*`, `_page.py`, etc.) follow.
+> Step bodies below were authored under the old names and bulk-renamed;
+> most code blocks reflect the current naming, but a few step descriptions
+> may still say "initial sync" — read those as referring to the snapshot
+> transfer.
 
-**Architecture:** A new `domain/sync/` package adds (a) an opaque base64-JSON cursor carrying `(start_seq, table, last_id)`, (b) an `InitialSyncPaginator` that walks the four projection tables in fixed order skipping empty intermediates, (c) a discriminated `InitialSyncBatch` response, and (d) a thin `SyncController`. `start_seq` is captured at first request and threaded through cursors so events arriving mid-transfer are not silently dropped. Tenant scoping is structural via the existing `db._listeners` Layer 1.
+**Goal:** Implement the M2.3 bulk projection transfer endpoint (`GET /snapshot`) — paginated streaming of the active tenant's `assets`, `maintenance_records`, `asset_field_values`, `maintenance_record_field_values` plus the `event_log.seq` cursor for incremental sync. Closes issue #33 and flips ADR-015 from Proposed to Accepted.
+
+**Architecture:** A new `domain/snapshot/` package adds (a) an opaque base64-JSON cursor carrying `(start_seq, table, last_id)`, (b) an `SnapshotPaginator` that walks the four projection tables in fixed order skipping empty intermediates, (c) a discriminated `SnapshotBatch` response, and (d) a thin `SnapshotController`. `start_seq` is captured at first request and threaded through cursors so events arriving mid-transfer are not silently dropped. Tenant scoping is structural via the existing `db._listeners` Layer 1.
 
 **Tech Stack:** Python 3.14, Litestar, advanced-alchemy + SQLAlchemy 2.x, aiosqlite, msgspec, pytest (asyncio auto mode), uv / ruff / ty.
 
-**Spec:** [`docs/superpowers/specs/2026-05-18-sync-initial-design.md`](../specs/2026-05-18-sync-initial-design.md)
+**Spec:** [`docs/superpowers/specs/2026-05-18-snapshot-endpoint-design.md`](../specs/2026-05-18-snapshot-endpoint-design.md)
 
 ---
 
 ## File map
 
 **New files:**
-- `src/py/novamoc/domain/sync/__init__.py`
-- `src/py/novamoc/domain/sync/_cursor.py`
-- `src/py/novamoc/domain/sync/_payloads.py`
-- `src/py/novamoc/domain/sync/services.py`
-- `src/py/novamoc/domain/sync/_pagination.py`
-- `src/py/novamoc/domain/sync/controllers/__init__.py`
-- `src/py/novamoc/domain/sync/controllers/_sync.py`
-- `tests/sync/__init__.py`
-- `tests/sync/test_cursor.py`
-- `tests/sync/test_pagination.py`
-- `tests/sync/test_endpoint_sync_initial.py`
-- `tests/sync/test_sync_cross_tenant_isolation.py`
+- `src/py/novamoc/domain/snapshot/__init__.py`
+- `src/py/novamoc/domain/snapshot/_page.py`
+- `src/py/novamoc/domain/snapshot/_payloads.py`
+- `src/py/novamoc/domain/snapshot/services.py`
+- `src/py/novamoc/domain/snapshot/_pagination.py`
+- `src/py/novamoc/domain/snapshot/controllers/__init__.py`
+- `src/py/novamoc/domain/snapshot/controllers/_sync.py`
+- `tests/snapshot/__init__.py`
+- `tests/snapshot/test_page.py`
+- `tests/snapshot/test_pagination.py`
+- `tests/snapshot/test_endpoint_snapshot.py`
+- `tests/snapshot/test_snapshot_cross_tenant_isolation.py`
 
 **Modified files:**
-- `src/py/novamoc/config.py` — add `INITIAL_SYNC_DEFAULT_BATCH_SIZE`, `INITIAL_SYNC_MAX_BATCH_SIZE`.
+- `src/py/novamoc/config.py` — add `SNAPSHOT_DEFAULT_BATCH_SIZE`, `SNAPSHOT_MAX_BATCH_SIZE`.
 - `src/py/novamoc/domain/events/services.py` — add `EventLogService.current_seq()`.
-- `src/py/novamoc/asgi.py` — register `SyncController` in `route_handlers`.
-- `CLAUDE.md` — add "Initial sync endpoint (`GET /sync/initial`)" section.
+- `src/py/novamoc/asgi.py` — register `SnapshotController` in `route_handlers`.
+- `CLAUDE.md` — add "Initial sync endpoint (`GET /snapshot`)" section.
 - `docs/adr/015-initial-sync-full-dataset.md` — flip Status to Accepted.
 
 ---
@@ -47,13 +56,13 @@
 Edit `src/py/novamoc/config.py`, adding right after `EVENT_CATCHUP_MAX_BATCH_SIZE = 5000`:
 
 ```python
-INITIAL_SYNC_DEFAULT_BATCH_SIZE = 1000
-INITIAL_SYNC_MAX_BATCH_SIZE = 5000
+SNAPSHOT_DEFAULT_BATCH_SIZE = 1000
+SNAPSHOT_MAX_BATCH_SIZE = 5000
 ```
 
 - [ ] **Step 2: Sanity-check the module still imports**
 
-Run: `uv run python -c "from novamoc.config import INITIAL_SYNC_DEFAULT_BATCH_SIZE, INITIAL_SYNC_MAX_BATCH_SIZE; print(INITIAL_SYNC_DEFAULT_BATCH_SIZE, INITIAL_SYNC_MAX_BATCH_SIZE)"`
+Run: `uv run python -c "from novamoc.config import SNAPSHOT_DEFAULT_BATCH_SIZE, SNAPSHOT_MAX_BATCH_SIZE; print(SNAPSHOT_DEFAULT_BATCH_SIZE, SNAPSHOT_MAX_BATCH_SIZE)"`
 Expected: `1000 5000`
 
 - [ ] **Step 3: Commit**
@@ -63,7 +72,7 @@ git add src/py/novamoc/config.py
 git commit -m "$(cat <<'EOF'
 feat(config): initial-sync batch-size constants (M2.3)
 
-Module-level constants for GET /sync/initial. Defaults and max chosen
+Module-level constants for GET /snapshot. Defaults and max chosen
 to match the events catch-up endpoint's max for operational consistency
 while landing in ADR-015's "few thousand per batch" guidance.
 EOF
@@ -149,24 +158,24 @@ EOF
 ## Task 3: Cursor module (TDD — pure functions)
 
 **Files:**
-- Create: `src/py/novamoc/domain/sync/__init__.py`
-- Create: `src/py/novamoc/domain/sync/_cursor.py`
-- Create: `tests/sync/__init__.py`
-- Create: `tests/sync/test_cursor.py`
+- Create: `src/py/novamoc/domain/snapshot/__init__.py`
+- Create: `src/py/novamoc/domain/snapshot/_page.py`
+- Create: `tests/snapshot/__init__.py`
+- Create: `tests/snapshot/test_page.py`
 
 - [ ] **Step 1: Create empty `__init__.py` files**
 
-Create `src/py/novamoc/domain/sync/__init__.py` with content:
+Create `src/py/novamoc/domain/snapshot/__init__.py` with content:
 
 ```python
 """Initial-sync (M2.3) domain — bulk projection transfer (ADR-015)."""
 ```
 
-Create `tests/sync/__init__.py` empty (zero bytes is fine).
+Create `tests/snapshot/__init__.py` empty (zero bytes is fine).
 
 - [ ] **Step 2: Write the failing cursor test file**
 
-Create `tests/sync/test_cursor.py`:
+Create `tests/snapshot/test_page.py`:
 
 ```python
 """Unit tests for the opaque sync cursor."""
@@ -176,42 +185,42 @@ from __future__ import annotations
 import pytest
 
 from novamoc.domain._errors import ErrorCode, PayloadShapeError
-from novamoc.domain.sync._cursor import (
-    CursorState,
-    InitialSyncTable,
-    decode_cursor,
-    encode_cursor,
+from novamoc.domain.snapshot._cursor import (
+    PageState,
+    SnapshotTable,
+    decode_page,
+    encode_page,
 )
 
 
 @pytest.mark.parametrize(
     "table,last_id",
     [
-        (InitialSyncTable.ASSETS, None),
-        (InitialSyncTable.ASSETS, "8c1d0a2f-7b3e-4c5a-9d6e-1a2b3c4d5e6f"),
-        (InitialSyncTable.ASSET_FIELD_VALUES, None),
+        (SnapshotTable.ASSETS, None),
+        (SnapshotTable.ASSETS, "8c1d0a2f-7b3e-4c5a-9d6e-1a2b3c4d5e6f"),
+        (SnapshotTable.ASSET_FIELD_VALUES, None),
         (
-            InitialSyncTable.ASSET_FIELD_VALUES,
+            SnapshotTable.ASSET_FIELD_VALUES,
             "8c1d0a2f-7b3e-4c5a-9d6e-1a2b3c4d5e6f:col:name",
         ),
-        (InitialSyncTable.MAINTENANCE_RECORDS, None),
+        (SnapshotTable.MAINTENANCE_RECORDS, None),
         (
-            InitialSyncTable.MAINTENANCE_RECORD_FIELD_VALUES,
+            SnapshotTable.MAINTENANCE_RECORD_FIELD_VALUES,
             "8c1d0a2f-7b3e-4c5a-9d6e-1a2b3c4d5e6f:f0a1b2c3-d4e5-6789-abcd-ef0123456789",
         ),
     ],
 )
-def test_cursor_roundtrip(table: InitialSyncTable, last_id: str | None) -> None:
-    state = CursorState(start_seq=17, table=table, last_id=last_id)
-    encoded = encode_cursor(state)
+def test_cursor_roundtrip(table: SnapshotTable, last_id: str | None) -> None:
+    state = PageState(start_seq=17, table=table, last_id=last_id)
+    encoded = encode_page(state)
     assert isinstance(encoded, str)
-    decoded = decode_cursor(encoded)
+    decoded = decode_page(encoded)
     assert decoded == state
 
 
 def test_cursor_decode_rejects_garbage() -> None:
     with pytest.raises(PayloadShapeError) as exc:
-        decode_cursor("not-base64!@#")
+        decode_page("not-base64!@#")
     assert exc.value.code is ErrorCode.INVALID_PAYLOAD_SHAPE
 
 
@@ -221,7 +230,7 @@ def test_cursor_decode_rejects_non_json_base64() -> None:
 
     token = base64.urlsafe_b64encode(b"\x00\x01\x02").rstrip(b"=").decode()
     with pytest.raises(PayloadShapeError) as exc:
-        decode_cursor(token)
+        decode_page(token)
     assert exc.value.code is ErrorCode.INVALID_PAYLOAD_SHAPE
 
 
@@ -233,7 +242,7 @@ def test_cursor_decode_rejects_missing_fields() -> None:
         b"="
     ).decode()
     with pytest.raises(PayloadShapeError) as exc:
-        decode_cursor(token)
+        decode_page(token)
     assert exc.value.code is ErrorCode.INVALID_PAYLOAD_SHAPE
 
 
@@ -247,30 +256,30 @@ def test_cursor_decode_rejects_unknown_table() -> None:
         ).encode()
     ).rstrip(b"=").decode()
     with pytest.raises(PayloadShapeError) as exc:
-        decode_cursor(token)
+        decode_page(token)
     assert exc.value.code is ErrorCode.INVALID_PAYLOAD_SHAPE
 
 
 def test_cursor_decode_accepts_padded_token() -> None:
     """Be liberal in what we accept: padded base64 from naive clients."""
-    state = CursorState(
-        start_seq=42, table=InitialSyncTable.ASSETS, last_id=None
+    state = PageState(
+        start_seq=42, table=SnapshotTable.ASSETS, last_id=None
     )
-    encoded = encode_cursor(state)
+    encoded = encode_page(state)
     # Force-add padding back so the decoder must handle the canonical
     # padded form too.
     padded = encoded + "=" * (-len(encoded) % 4)
-    assert decode_cursor(padded) == state
+    assert decode_page(padded) == state
 ```
 
 - [ ] **Step 3: Run tests to verify they fail (no module yet)**
 
-Run: `uv run pytest tests/sync/test_cursor.py -v`
-Expected: FAIL with `ImportError: cannot import name 'CursorState' from 'novamoc.domain.sync._cursor'`.
+Run: `uv run pytest tests/snapshot/test_page.py -v`
+Expected: FAIL with `ImportError: cannot import name 'PageState' from 'novamoc.domain.snapshot._cursor'`.
 
 - [ ] **Step 4: Write the cursor module**
 
-Create `src/py/novamoc/domain/sync/_cursor.py`:
+Create `src/py/novamoc/domain/snapshot/_page.py`:
 
 ```python
 """Opaque cursor for the initial-sync transfer.
@@ -293,11 +302,11 @@ from typing import Any
 from novamoc.domain._errors import ErrorCode, PayloadShapeError
 
 
-class InitialSyncTable(StrEnum):
+class SnapshotTable(StrEnum):
     """The four projection tables an initial sync walks, in order.
 
     The string values double as the discriminator tags on the response
-    body union (see ``_payloads._SyncBody``).
+    body union (see ``_payloads._SnapshotBody``).
     """
 
     ASSETS = "assets"
@@ -307,7 +316,7 @@ class InitialSyncTable(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class CursorState:
+class PageState:
     """State threaded across one client's initial-sync requests.
 
     Attributes:
@@ -324,11 +333,11 @@ class CursorState:
     """
 
     start_seq: int
-    table: InitialSyncTable
+    table: SnapshotTable
     last_id: str | None
 
 
-def encode_cursor(state: CursorState) -> str:
+def encode_page(state: PageState) -> str:
     """URL-safe base64 of compact JSON. Trailing ``=`` padding stripped."""
     payload = {
         "start_seq": state.start_seq,
@@ -339,8 +348,8 @@ def encode_cursor(state: CursorState) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def decode_cursor(token: str) -> CursorState:
-    """Inverse of :func:`encode_cursor`.
+def decode_page(token: str) -> PageState:
+    """Inverse of :func:`encode_page`.
 
     Raises:
         PayloadShapeError: token isn't valid base64-JSON, the decoded
@@ -405,7 +414,7 @@ def decode_cursor(token: str) -> CursorState:
         )
 
     try:
-        table = InitialSyncTable(table_value)
+        table = SnapshotTable(table_value)
     except ValueError as exc:
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
@@ -413,30 +422,30 @@ def decode_cursor(token: str) -> CursorState:
             field="cursor",
         ) from exc
 
-    return CursorState(start_seq=start_seq, table=table, last_id=last_id)
+    return PageState(start_seq=start_seq, table=table, last_id=last_id)
 
 
-__all__ = ("CursorState", "InitialSyncTable", "decode_cursor", "encode_cursor")
+__all__ = ("PageState", "SnapshotTable", "decode_page", "encode_page")
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `uv run pytest tests/sync/test_cursor.py -v`
+Run: `uv run pytest tests/snapshot/test_page.py -v`
 Expected: PASS — all six tests green.
 
 - [ ] **Step 6: Run lint + type-check**
 
-Run: `uv run ruff check src/py/novamoc/domain/sync/_cursor.py tests/sync/test_cursor.py`
+Run: `uv run ruff check src/py/novamoc/domain/snapshot/_page.py tests/snapshot/test_page.py`
 Run: `uv run ty check`
 Expected: No new violations. If ruff suggests autofixes, accept the safe ones and re-run.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/py/novamoc/domain/sync/__init__.py \
-        src/py/novamoc/domain/sync/_cursor.py \
-        tests/sync/__init__.py \
-        tests/sync/test_cursor.py
+git add src/py/novamoc/domain/snapshot/__init__.py \
+        src/py/novamoc/domain/snapshot/_page.py \
+        tests/snapshot/__init__.py \
+        tests/snapshot/test_page.py
 git commit -m "$(cat <<'EOF'
 feat(sync): opaque cursor encode/decode (M2.3)
 
@@ -453,18 +462,18 @@ EOF
 ## Task 4: Row-view payloads + discriminated batch envelope
 
 **Files:**
-- Create: `src/py/novamoc/domain/sync/_payloads.py`
+- Create: `src/py/novamoc/domain/snapshot/_payloads.py`
 
 No new tests — these structs are exercised end-to-end by the paginator and E2E tests in later tasks.
 
 - [ ] **Step 1: Write the payloads module**
 
-Create `src/py/novamoc/domain/sync/_payloads.py`:
+Create `src/py/novamoc/domain/snapshot/_payloads.py`:
 
 ```python
-"""Wire-format structs for ``GET /sync/initial``.
+"""Wire-format structs for ``GET /snapshot``.
 
-The response is :class:`InitialSyncBatch`. Its ``body`` field is a
+The response is :class:`SnapshotBatch`. Its ``body`` field is a
 discriminated union tagged on ``table`` — one variant per projection
 table — so each batch is a homogeneous list of one shape of row.
 
@@ -537,8 +546,8 @@ class MaintenanceRecordFieldValueView(
     hlc: str
 
 
-class _SyncBody(msgspec.Struct, tag_field="table"):
-    """Discriminator base for :data:`InitialSyncBody`.
+class _SnapshotBody(msgspec.Struct, tag_field="table"):
+    """Discriminator base for :data:`SnapshotBody`.
 
     Subclasses set ``tag`` to the table name. The discriminator field
     is ``table``; msgspec publishes the union as ``oneOf`` in the
@@ -546,25 +555,25 @@ class _SyncBody(msgspec.Struct, tag_field="table"):
     """
 
 
-class AssetsBatchBody(_SyncBody, tag="assets"):
+class AssetsBatchBody(_SnapshotBody, tag="assets"):
     items: tuple[AssetView, ...]
 
 
-class AssetFieldValuesBatchBody(_SyncBody, tag="asset_field_values"):
+class AssetFieldValuesBatchBody(_SnapshotBody, tag="asset_field_values"):
     items: tuple[AssetFieldValueView, ...]
 
 
-class MaintenanceRecordsBatchBody(_SyncBody, tag="maintenance_records"):
+class MaintenanceRecordsBatchBody(_SnapshotBody, tag="maintenance_records"):
     items: tuple[MaintenanceRecordView, ...]
 
 
 class MaintenanceRecordFieldValuesBatchBody(
-    _SyncBody, tag="maintenance_record_field_values"
+    _SnapshotBody, tag="maintenance_record_field_values"
 ):
     items: tuple[MaintenanceRecordFieldValueView, ...]
 
 
-InitialSyncBody = (
+SnapshotBody = (
     AssetsBatchBody
     | AssetFieldValuesBatchBody
     | MaintenanceRecordsBatchBody
@@ -572,7 +581,7 @@ InitialSyncBody = (
 )
 
 
-class InitialSyncBatch(msgspec.Struct, forbid_unknown_fields=True):
+class SnapshotBatch(msgspec.Struct, forbid_unknown_fields=True):
     """One batch of the initial-sync transfer.
 
     Attributes:
@@ -595,7 +604,7 @@ class InitialSyncBatch(msgspec.Struct, forbid_unknown_fields=True):
     schema_version: int
     cursor: str | None
     event_log_cursor: int | None
-    body: InitialSyncBody
+    body: SnapshotBody
 
 
 __all__ = (
@@ -603,8 +612,8 @@ __all__ = (
     "AssetFieldValuesBatchBody",
     "AssetView",
     "AssetsBatchBody",
-    "InitialSyncBatch",
-    "InitialSyncBody",
+    "SnapshotBatch",
+    "SnapshotBody",
     "MaintenanceRecordFieldValueView",
     "MaintenanceRecordFieldValuesBatchBody",
     "MaintenanceRecordView",
@@ -614,7 +623,7 @@ __all__ = (
 
 - [ ] **Step 2: Sanity-import**
 
-Run: `uv run python -c "from novamoc.domain.sync._payloads import InitialSyncBatch, AssetView; print(InitialSyncBatch.__struct_fields__, AssetView.__struct_fields__)"`
+Run: `uv run python -c "from novamoc.domain.snapshot._payloads import SnapshotBatch, AssetView; print(SnapshotBatch.__struct_fields__, AssetView.__struct_fields__)"`
 Expected:
 ```
 ('schema_version', 'cursor', 'event_log_cursor', 'body') ('id', 'type_id', 'deleted', 'row_state_hlc', 'created_at', 'updated_at')
@@ -622,19 +631,19 @@ Expected:
 
 - [ ] **Step 3: Run lint + type-check**
 
-Run: `uv run ruff check src/py/novamoc/domain/sync/_payloads.py`
+Run: `uv run ruff check src/py/novamoc/domain/snapshot/_payloads.py`
 Run: `uv run ty check`
 Expected: clean.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/py/novamoc/domain/sync/_payloads.py
+git add src/py/novamoc/domain/snapshot/_payloads.py
 git commit -m "$(cat <<'EOF'
 feat(sync): wire-format structs for initial-sync (M2.3)
 
 Row views (Asset/MaintenanceRecord ± their *_field_values) plus the
-table-discriminated InitialSyncBatch envelope. name/properties are
+table-discriminated SnapshotBatch envelope. name/properties are
 omitted from the wire — clients reconstruct from per-field rows
 per ADR-015's default.
 EOF
@@ -646,13 +655,13 @@ EOF
 ## Task 5: Read-only services for the four projection tables
 
 **Files:**
-- Create: `src/py/novamoc/domain/sync/services.py`
+- Create: `src/py/novamoc/domain/snapshot/services.py`
 
 No new tests — these are pure advanced-alchemy wrappers identical in shape to `EventLogService`. They're exercised by paginator tests in Task 7+.
 
 - [ ] **Step 1: Write the services module**
 
-Create `src/py/novamoc/domain/sync/services.py`:
+Create `src/py/novamoc/domain/snapshot/services.py`:
 
 ```python
 """Read-only service wrappers for the projection tables.
@@ -723,19 +732,19 @@ __all__ = (
 
 - [ ] **Step 2: Sanity-import**
 
-Run: `uv run python -c "from novamoc.domain.sync.services import AssetService, AssetFieldValueService, MaintenanceRecordService, MaintenanceRecordFieldValueService; print('ok')"`
+Run: `uv run python -c "from novamoc.domain.snapshot.services import AssetService, AssetFieldValueService, MaintenanceRecordService, MaintenanceRecordFieldValueService; print('ok')"`
 Expected: `ok`
 
 - [ ] **Step 3: Run lint + type-check**
 
-Run: `uv run ruff check src/py/novamoc/domain/sync/services.py`
+Run: `uv run ruff check src/py/novamoc/domain/snapshot/services.py`
 Run: `uv run ty check`
 Expected: clean.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/py/novamoc/domain/sync/services.py
+git add src/py/novamoc/domain/snapshot/services.py
 git commit -m "$(cat <<'EOF'
 feat(sync): read-only services for projection tables (M2.3)
 
@@ -754,15 +763,15 @@ EOF
 We split paginator work across multiple tasks (one test scenario per task) so each iteration is reviewable. This task lays down the file, the fixtures, and the simplest test.
 
 **Files:**
-- Create: `src/py/novamoc/domain/sync/_pagination.py`
-- Create: `tests/sync/test_pagination.py`
+- Create: `src/py/novamoc/domain/snapshot/_pagination.py`
+- Create: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Write the first failing paginator test**
 
-Create `tests/sync/test_pagination.py`:
+Create `tests/snapshot/test_pagination.py`:
 
 ```python
-"""Unit tests for ``InitialSyncPaginator``.
+"""Unit tests for ``SnapshotPaginator``.
 
 Run against an in-memory aiosqlite engine — no mocks, per the project's
 testing rule. Each test builds its services inline against the
@@ -777,9 +786,9 @@ import pytest
 
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import SchemaChangeLogService
-from novamoc.domain.sync._pagination import InitialSyncPaginator
-from novamoc.domain.sync._payloads import AssetsBatchBody
-from novamoc.domain.sync.services import (
+from novamoc.domain.snapshot._pagination import SnapshotPaginator
+from novamoc.domain.snapshot._payloads import AssetsBatchBody
+from novamoc.domain.snapshot.services import (
     AssetFieldValueService,
     AssetService,
     MaintenanceRecordFieldValueService,
@@ -791,8 +800,8 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def paginator(session: AsyncSession) -> InitialSyncPaginator:
-    return InitialSyncPaginator(
+def paginator(session: AsyncSession) -> SnapshotPaginator:
+    return SnapshotPaginator(
         change_log_service=SchemaChangeLogService(session=session),
         event_log_service=EventLogService(session=session),
         asset_service=AssetService(session=session),
@@ -805,7 +814,7 @@ def paginator(session: AsyncSession) -> InitialSyncPaginator:
 
 
 async def test_empty_tenant_returns_single_terminal_batch(
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     batch = await paginator(cursor=None, results_per_page=100)
     assert batch.schema_version == 0
@@ -817,12 +826,12 @@ async def test_empty_tenant_returns_single_terminal_batch(
 
 - [ ] **Step 2: Run test to verify it fails (module doesn't exist)**
 
-Run: `uv run pytest tests/sync/test_pagination.py -v`
-Expected: FAIL with `ImportError: cannot import name 'InitialSyncPaginator'`.
+Run: `uv run pytest tests/snapshot/test_pagination.py -v`
+Expected: FAIL with `ImportError: cannot import name 'SnapshotPaginator'`.
 
 - [ ] **Step 3: Write the paginator module**
 
-Create `src/py/novamoc/domain/sync/_pagination.py`:
+Create `src/py/novamoc/domain/snapshot/_pagination.py`:
 
 ```python
 """Walks the four projection tables in fixed order.
@@ -851,19 +860,19 @@ from novamoc.db.models.data import (
     MaintenanceRecord,
     MaintenanceRecordFieldValue,
 )
-from novamoc.domain.sync._cursor import (
-    CursorState,
-    InitialSyncTable,
-    decode_cursor,
-    encode_cursor,
+from novamoc.domain.snapshot._cursor import (
+    PageState,
+    SnapshotTable,
+    decode_page,
+    encode_page,
 )
-from novamoc.domain.sync._payloads import (
+from novamoc.domain.snapshot._payloads import (
     AssetFieldValuesBatchBody,
     AssetFieldValueView,
     AssetsBatchBody,
     AssetView,
-    InitialSyncBatch,
-    InitialSyncBody,
+    SnapshotBatch,
+    SnapshotBody,
     MaintenanceRecordFieldValuesBatchBody,
     MaintenanceRecordFieldValueView,
     MaintenanceRecordsBatchBody,
@@ -875,7 +884,7 @@ if TYPE_CHECKING:
 
     from novamoc.domain.events.services import EventLogService
     from novamoc.domain.schema.services import SchemaChangeLogService
-    from novamoc.domain.sync.services import (
+    from novamoc.domain.snapshot.services import (
         AssetFieldValueService,
         AssetService,
         MaintenanceRecordFieldValueService,
@@ -885,15 +894,15 @@ if TYPE_CHECKING:
 
 # Fixed order. ``maintenance_record_field_values`` is always last because
 # its terminal batch is what carries ``event_log_cursor``.
-_TABLES: Final[tuple[InitialSyncTable, ...]] = (
-    InitialSyncTable.ASSETS,
-    InitialSyncTable.ASSET_FIELD_VALUES,
-    InitialSyncTable.MAINTENANCE_RECORDS,
-    InitialSyncTable.MAINTENANCE_RECORD_FIELD_VALUES,
+_TABLES: Final[tuple[SnapshotTable, ...]] = (
+    SnapshotTable.ASSETS,
+    SnapshotTable.ASSET_FIELD_VALUES,
+    SnapshotTable.MAINTENANCE_RECORDS,
+    SnapshotTable.MAINTENANCE_RECORD_FIELD_VALUES,
 )
 
 
-def _tables_from(start: InitialSyncTable) -> tuple[InitialSyncTable, ...]:
+def _tables_from(start: SnapshotTable) -> tuple[SnapshotTable, ...]:
     """Suffix of ``_TABLES`` starting at ``start``."""
     idx = _TABLES.index(start)
     return _TABLES[idx:]
@@ -909,7 +918,7 @@ def _split_field_value_last_id(last_id: str) -> tuple[UUID, str]:
     return UUID(entity_str), field_id
 
 
-class InitialSyncPaginator:
+class SnapshotPaginator:
     """Page through the four projection tables in fixed order."""
 
     def __init__(
@@ -931,13 +940,13 @@ class InitialSyncPaginator:
 
     async def __call__(
         self, *, cursor: str | None, results_per_page: int
-    ) -> InitialSyncBatch:
+    ) -> SnapshotBatch:
         if cursor is None:
             start_seq = await self._event_log.current_seq()
             current_table = _TABLES[0]
             last_id: str | None = None
         else:
-            state = decode_cursor(cursor)
+            state = decode_page(cursor)
             start_seq = state.start_seq
             current_table = state.table
             last_id = state.last_id
@@ -957,23 +966,23 @@ class InitialSyncPaginator:
                     has_more_in_table=has_more_in_table,
                     start_seq=start_seq,
                 )
-                return InitialSyncBatch(
+                return SnapshotBatch(
                     schema_version=schema_version,
                     cursor=next_cursor,
                     event_log_cursor=event_log_cursor,
                     body=body,
                 )
         # Unreachable: the last-table branch above always returns.
-        msg = "InitialSyncPaginator exited the walk without emitting a batch"
+        msg = "SnapshotPaginator exited the walk without emitting a batch"
         raise RuntimeError(msg)
 
     async def _read_page(
         self,
-        table: InitialSyncTable,
+        table: SnapshotTable,
         last_id: str | None,
         limit: int,
     ) -> Sequence[object]:
-        if table is InitialSyncTable.ASSETS:
+        if table is SnapshotTable.ASSETS:
             filters: list[object] = [
                 OrderBy(field_name="id"),
                 LimitOffset(limit=limit, offset=0),
@@ -981,7 +990,7 @@ class InitialSyncPaginator:
             if last_id is not None:
                 filters.insert(0, Asset.id > UUID(last_id))
             return await self._asset.list(*filters)
-        if table is InitialSyncTable.ASSET_FIELD_VALUES:
+        if table is SnapshotTable.ASSET_FIELD_VALUES:
             filters = [
                 OrderBy(field_name="asset_id"),
                 OrderBy(field_name="field_id"),
@@ -995,7 +1004,7 @@ class InitialSyncPaginator:
                     > tuple_(entity_uuid, field_id),
                 )
             return await self._asset_field_value.list(*filters)
-        if table is InitialSyncTable.MAINTENANCE_RECORDS:
+        if table is SnapshotTable.MAINTENANCE_RECORDS:
             filters = [
                 OrderBy(field_name="id"),
                 LimitOffset(limit=limit, offset=0),
@@ -1024,44 +1033,44 @@ class InitialSyncPaginator:
     @staticmethod
     def _compute_continuation(
         *,
-        table: InitialSyncTable,
+        table: SnapshotTable,
         page_rows: Sequence[object],
         has_more_in_table: bool,
         start_seq: int,
     ) -> tuple[str | None, int | None]:
         """Return ``(next_cursor, event_log_cursor)`` for this batch."""
         if has_more_in_table:
-            next_state = CursorState(
+            next_state = PageState(
                 start_seq=start_seq,
                 table=table,
                 last_id=_last_id_of(table, page_rows[-1]),
             )
-            return encode_cursor(next_state), None
+            return encode_page(next_state), None
         if table is _TABLES[-1]:
             return None, start_seq
         next_table = _TABLES[_TABLES.index(table) + 1]
-        next_state = CursorState(
+        next_state = PageState(
             start_seq=start_seq, table=next_table, last_id=None
         )
-        return encode_cursor(next_state), None
+        return encode_page(next_state), None
 
 
-def _last_id_of(table: InitialSyncTable, row: object) -> str:
+def _last_id_of(table: SnapshotTable, row: object) -> str:
     """Return the encoded last-id string for ``row`` in ``table``."""
-    if table is InitialSyncTable.ASSETS:
+    if table is SnapshotTable.ASSETS:
         return str(row.id)  # type: ignore[attr-defined]
-    if table is InitialSyncTable.ASSET_FIELD_VALUES:
+    if table is SnapshotTable.ASSET_FIELD_VALUES:
         return f"{row.asset_id}:{row.field_id}"  # type: ignore[attr-defined]
-    if table is InitialSyncTable.MAINTENANCE_RECORDS:
+    if table is SnapshotTable.MAINTENANCE_RECORDS:
         return str(row.id)  # type: ignore[attr-defined]
     return f"{row.maintenance_record_id}:{row.field_id}"  # type: ignore[attr-defined]
 
 
 def _body_for(
-    table: InitialSyncTable, rows: Sequence[object]
-) -> InitialSyncBody:
+    table: SnapshotTable, rows: Sequence[object]
+) -> SnapshotBody:
     """Wrap ``rows`` in the discriminated body variant for ``table``."""
-    if table is InitialSyncTable.ASSETS:
+    if table is SnapshotTable.ASSETS:
         return AssetsBatchBody(
             items=tuple(
                 AssetView(
@@ -1075,7 +1084,7 @@ def _body_for(
                 for r in rows
             )
         )
-    if table is InitialSyncTable.ASSET_FIELD_VALUES:
+    if table is SnapshotTable.ASSET_FIELD_VALUES:
         return AssetFieldValuesBatchBody(
             items=tuple(
                 AssetFieldValueView(
@@ -1087,7 +1096,7 @@ def _body_for(
                 for r in rows
             )
         )
-    if table is InitialSyncTable.MAINTENANCE_RECORDS:
+    if table is SnapshotTable.MAINTENANCE_RECORDS:
         return MaintenanceRecordsBatchBody(
             items=tuple(
                 MaintenanceRecordView(
@@ -1115,26 +1124,26 @@ def _body_for(
     )
 
 
-__all__ = ("InitialSyncPaginator",)
+__all__ = ("SnapshotPaginator",)
 ```
 
 - [ ] **Step 4: Run the empty-tenant test**
 
-Run: `uv run pytest tests/sync/test_pagination.py -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py -v`
 Expected: PASS — the single test for empty tenant.
 
 - [ ] **Step 5: Run lint + type-check**
 
-Run: `uv run ruff check src/py/novamoc/domain/sync/_pagination.py tests/sync/test_pagination.py`
+Run: `uv run ruff check src/py/novamoc/domain/snapshot/_pagination.py tests/snapshot/test_pagination.py`
 Run: `uv run ty check`
 Expected: clean (the `# type: ignore[attr-defined]` comments are intentional — the helper functions take `object` to avoid four overloads).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/py/novamoc/domain/sync/_pagination.py tests/sync/test_pagination.py
+git add src/py/novamoc/domain/snapshot/_pagination.py tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
-feat(sync): InitialSyncPaginator scaffold + empty-tenant test (M2.3)
+feat(sync): SnapshotPaginator scaffold + empty-tenant test (M2.3)
 
 Captures start_seq on first request (cursor=None), reads each table
 with ordered limit-offset, skips empty intermediates, emits the
@@ -1149,13 +1158,13 @@ EOF
 ## Task 7: Paginator — single table fits one page
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 Helper note: we'll author rows directly via the session (bypassing event-fold complexity) — the paginator under test only reads, so seeded rows work. We use a tiny helper to keep test bodies readable.
 
 - [ ] **Step 1: Add the helper and the test**
 
-Append to `tests/sync/test_pagination.py` (above the test functions, after the existing fixture):
+Append to `tests/snapshot/test_pagination.py` (above the test functions, after the existing fixture):
 
 ```python
 from datetime import UTC, datetime
@@ -1163,7 +1172,7 @@ from uuid import UUID, uuid4
 
 from novamoc.db.models.data import Asset
 from novamoc.db.models.schema import AssetType
-from novamoc.domain.sync._payloads import AssetsBatchBody
+from novamoc.domain.snapshot._payloads import AssetsBatchBody
 
 
 async def _make_asset_type(
@@ -1201,7 +1210,7 @@ async def _make_asset(
 
 async def test_single_table_fits_one_page(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     for _ in range(3):
@@ -1227,18 +1236,18 @@ Check by running: `uv run python -c "from novamoc.db.models.schema import AssetT
 
 - [ ] **Step 2: Run the new test**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_single_table_fits_one_page -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_single_table_fits_one_page -v`
 Expected: PASS.
 
 - [ ] **Step 3: Run the full pagination test file**
 
-Run: `uv run pytest tests/sync/test_pagination.py -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py -v`
 Expected: both tests PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): single-table-fits-one-page paginator case (M2.3)
 
@@ -1253,16 +1262,16 @@ EOF
 ## Task 8: Paginator — multi-page within one table
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Append the test**
 
-Append to `tests/sync/test_pagination.py`:
+Append to `tests/snapshot/test_pagination.py`:
 
 ```python
 async def test_multi_page_within_one_table(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     asset_ids = {(await _make_asset(session, type_id=asset_type.id)).id for _ in range(5)}
@@ -1288,13 +1297,13 @@ async def test_multi_page_within_one_table(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_multi_page_within_one_table -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_multi_page_within_one_table -v`
 Expected: PASS. The paginator advances within ``assets`` using `last_id` until the table is exhausted, then advances through the three empty later tables (collapsed server-side) and emits the terminal batch.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator multi-page cursor handoff within one table (M2.3)
 
@@ -1309,11 +1318,11 @@ EOF
 ## Task 9: Paginator — cross-table walk with all four populated
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Append helpers + test**
 
-Append to `tests/sync/test_pagination.py`:
+Append to `tests/snapshot/test_pagination.py`:
 
 ```python
 from novamoc.db.models.data import (
@@ -1324,7 +1333,7 @@ from novamoc.db.models.data import (
     MaintenanceRecordFieldValue,
 )
 from novamoc.db.models.schema import MaintenanceRecordType
-from novamoc.domain.sync._payloads import (
+from novamoc.domain.snapshot._payloads import (
     AssetFieldValuesBatchBody,
     MaintenanceRecordFieldValuesBatchBody,
     MaintenanceRecordsBatchBody,
@@ -1370,7 +1379,7 @@ async def _make_event(
 
 async def test_cross_table_walk(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     mr_type = await _make_maintenance_record_type(session)
@@ -1436,13 +1445,13 @@ async def test_cross_table_walk(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_cross_table_walk -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_cross_table_walk -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator cross-table walk with all four populated (M2.3)
 
@@ -1460,14 +1469,14 @@ EOF
 ## Task 10: Paginator — skip empty intermediate tables
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Append the test**
 
 ```python
 async def test_skips_empty_intermediate_tables(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     mr_type = await _make_maintenance_record_type(session)
@@ -1504,13 +1513,13 @@ async def test_skips_empty_intermediate_tables(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_skips_empty_intermediate_tables -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_skips_empty_intermediate_tables -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator skips empty intermediate tables (M2.3)
 
@@ -1528,7 +1537,7 @@ EOF
 ## Task 11: Paginator — start_seq is start-snapshot
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 This is the correctness-critical test (see design spec §"Why `start_seq` on the first request"). If this fails, the implementation has the silent-skip bug.
 
@@ -1537,7 +1546,7 @@ This is the correctness-critical test (see design spec §"Why `start_seq` on the
 ```python
 async def test_start_seq_is_captured_at_first_request(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     asset = await _make_asset(session, type_id=asset_type.id)
@@ -1578,13 +1587,13 @@ async def test_start_seq_is_captured_at_first_request(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_start_seq_is_captured_at_first_request -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_start_seq_is_captured_at_first_request -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator captures start_seq at first request (M2.3)
 
@@ -1601,7 +1610,7 @@ EOF
 ## Task 12: Paginator — schema_version is current at request time
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Append the test**
 
@@ -1638,7 +1647,7 @@ async def _bump_schema_version(
 
 async def test_schema_version_is_current_each_request(
     session: AsyncSession,
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     asset_type = await _make_asset_type(session)
     for _ in range(3):
@@ -1657,13 +1666,13 @@ async def test_schema_version_is_current_each_request(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_schema_version_is_current_each_request -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_schema_version_is_current_each_request -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator schema_version is current at request time (M2.3)
 
@@ -1680,13 +1689,13 @@ EOF
 ## Task 13: Paginator — bad cursor surfaces PayloadShapeError
 
 **Files:**
-- Modify: `tests/sync/test_pagination.py`
+- Modify: `tests/snapshot/test_pagination.py`
 
 - [ ] **Step 1: Append the test**
 
 ```python
 async def test_bad_cursor_raises_payload_shape_error(
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> None:
     with pytest.raises(PayloadShapeError) as exc:
         await paginator(cursor="not-base64!@#", results_per_page=10)
@@ -1700,22 +1709,22 @@ from novamoc.domain._errors import ErrorCode, PayloadShapeError  # noqa: E402
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_pagination.py::test_bad_cursor_raises_payload_shape_error -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py::test_bad_cursor_raises_payload_shape_error -v`
 Expected: PASS.
 
 - [ ] **Step 3: Run the full paginator suite**
 
-Run: `uv run pytest tests/sync/test_pagination.py -v`
+Run: `uv run pytest tests/snapshot/test_pagination.py -v`
 Expected: all paginator tests PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/sync/test_pagination.py
+git add tests/snapshot/test_pagination.py
 git commit -m "$(cat <<'EOF'
 test(sync): paginator surfaces bad cursor as PayloadShapeError (M2.3)
 
-Verifies the decode_cursor → PayloadShapeError contract at the
+Verifies the decode_page → PayloadShapeError contract at the
 paginator boundary, which is what the controller relies on for its
 400 application/problem+json mapping.
 EOF
@@ -1727,26 +1736,26 @@ EOF
 ## Task 14: Controller + asgi registration
 
 **Files:**
-- Create: `src/py/novamoc/domain/sync/controllers/__init__.py`
-- Create: `src/py/novamoc/domain/sync/controllers/_sync.py`
+- Create: `src/py/novamoc/domain/snapshot/controllers/__init__.py`
+- Create: `src/py/novamoc/domain/snapshot/controllers/_sync.py`
 - Modify: `src/py/novamoc/asgi.py`
 
 - [ ] **Step 1: Write the controller package init**
 
-Create `src/py/novamoc/domain/sync/controllers/__init__.py`:
+Create `src/py/novamoc/domain/snapshot/controllers/__init__.py`:
 
 ```python
-from ._sync import SyncController
+from ._sync import SnapshotController
 
-__all__ = ("SyncController",)
+__all__ = ("SnapshotController",)
 ```
 
 - [ ] **Step 2: Write the controller**
 
-Create `src/py/novamoc/domain/sync/controllers/_sync.py`:
+Create `src/py/novamoc/domain/snapshot/controllers/_sync.py`:
 
 ```python
-"""HTTP controller for ``/sync/initial`` (M2.3, ADR-015).
+"""HTTP controller for ``/snapshot`` (M2.3, ADR-015).
 
 Thin by design: bound checking lives in the Litestar ``Parameter(...)``
 annotation, cursor decoding lives in the paginator, tenant scoping is
@@ -1767,14 +1776,14 @@ from litestar.params import Parameter
 
 from novamoc.api._problem_details import ProblemDetails
 from novamoc.config import (
-    INITIAL_SYNC_DEFAULT_BATCH_SIZE,
-    INITIAL_SYNC_MAX_BATCH_SIZE,
+    SNAPSHOT_DEFAULT_BATCH_SIZE,
+    SNAPSHOT_MAX_BATCH_SIZE,
 )
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import SchemaChangeLogService
-from novamoc.domain.sync._pagination import InitialSyncPaginator
-from novamoc.domain.sync._payloads import InitialSyncBatch
-from novamoc.domain.sync.services import (
+from novamoc.domain.snapshot._pagination import SnapshotPaginator
+from novamoc.domain.snapshot._payloads import SnapshotBatch
+from novamoc.domain.snapshot.services import (
     AssetFieldValueService,
     AssetService,
     MaintenanceRecordFieldValueService,
@@ -1782,15 +1791,15 @@ from novamoc.domain.sync.services import (
 )
 
 
-async def _provide_initial_sync_paginator(  # noqa: PLR0913  # one parameter per DI'd dep; Litestar pattern
+async def _provide_snapshot_paginator(  # noqa: PLR0913  # one parameter per DI'd dep; Litestar pattern
     schema_change_log_service: SchemaChangeLogService,
     event_log_service: EventLogService,
     asset_service: AssetService,
     asset_field_value_service: AssetFieldValueService,
     maintenance_record_service: MaintenanceRecordService,
     maintenance_record_field_value_service: MaintenanceRecordFieldValueService,
-) -> InitialSyncPaginator:
-    return InitialSyncPaginator(
+) -> SnapshotPaginator:
+    return SnapshotPaginator(
         change_log_service=schema_change_log_service,
         event_log_service=event_log_service,
         asset_service=asset_service,
@@ -1800,11 +1809,11 @@ async def _provide_initial_sync_paginator(  # noqa: PLR0913  # one parameter per
     )
 
 
-class SyncController(Controller):
+class SnapshotController(Controller):
     path = "/sync"
     tags = ("sync",)
     dependencies = (
-        {"paginator": Provide(_provide_initial_sync_paginator)}
+        {"paginator": Provide(_provide_snapshot_paginator)}
         | providers.create_service_dependencies(
             SchemaChangeLogService, "schema_change_log_service"
         )
@@ -1836,12 +1845,12 @@ class SyncController(Controller):
     )
     async def initial(
         self,
-        paginator: InitialSyncPaginator,
+        paginator: SnapshotPaginator,
         cursor: str | None = None,
         results_per_page: Annotated[
-            int, Parameter(ge=1, le=INITIAL_SYNC_MAX_BATCH_SIZE)
-        ] = INITIAL_SYNC_DEFAULT_BATCH_SIZE,
-    ) -> InitialSyncBatch:
+            int, Parameter(ge=1, le=SNAPSHOT_MAX_BATCH_SIZE)
+        ] = SNAPSHOT_DEFAULT_BATCH_SIZE,
+    ) -> SnapshotBatch:
         return await paginator(cursor=cursor, results_per_page=results_per_page)
 ```
 
@@ -1859,7 +1868,7 @@ from novamoc.domain.schema.controllers import SchemaController
 Add a new line:
 
 ```python
-from novamoc.domain.sync.controllers import SyncController
+from novamoc.domain.snapshot.controllers import SnapshotController
 ```
 
 Then in the `Litestar(...)` call (around line 95), change:
@@ -1871,7 +1880,7 @@ route_handlers=[SchemaController, EventsController, problem_docs_router],
 to:
 
 ```python
-route_handlers=[SchemaController, EventsController, SyncController, problem_docs_router],
+route_handlers=[SchemaController, EventsController, SnapshotController, problem_docs_router],
 ```
 
 - [ ] **Step 4: Smoke-test the app boots**
@@ -1881,7 +1890,7 @@ Expected: `ok`.
 
 - [ ] **Step 5: Run lint + type-check + existing test suite**
 
-Run: `uv run ruff check src/py/novamoc/domain/sync/`
+Run: `uv run ruff check src/py/novamoc/domain/snapshot/`
 Run: `uv run ty check`
 Run: `uv run pytest -q`
 Expected: clean lint, clean type-check, all existing tests still PASS.
@@ -1889,11 +1898,11 @@ Expected: clean lint, clean type-check, all existing tests still PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/py/novamoc/domain/sync/controllers/ src/py/novamoc/asgi.py
+git add src/py/novamoc/domain/snapshot/controllers/ src/py/novamoc/asgi.py
 git commit -m "$(cat <<'EOF'
-feat(sync): SyncController mounted at /sync/initial (M2.3)
+feat(sync): SnapshotController mounted at /snapshot (M2.3)
 
-Thin handler — DI-injected InitialSyncPaginator + Litestar
+Thin handler — DI-injected SnapshotPaginator + Litestar
 Parameter(ge=1, le=5000) for the page-size bound. Errors funnel
 through the existing ProblemDetailsPlugin: validation -> 400, bad
 cursor -> 400 via PayloadShapeError (INVALID_PAYLOAD_SHAPE).
@@ -1908,14 +1917,14 @@ EOF
 ## Task 15: E2E — empty tenant
 
 **Files:**
-- Create: `tests/sync/test_endpoint_sync_initial.py`
+- Create: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Write the empty-tenant test**
 
-Create `tests/sync/test_endpoint_sync_initial.py`:
+Create `tests/snapshot/test_endpoint_snapshot.py`:
 
 ```python
-"""End-to-end tests for ``GET /sync/initial`` (M2.3)."""
+"""End-to-end tests for ``GET /snapshot`` (M2.3)."""
 
 from __future__ import annotations
 
@@ -1928,7 +1937,7 @@ if TYPE_CHECKING:
 async def test_empty_tenant_returns_terminal_batch(
     client: AsyncTestClient,
 ) -> None:
-    resp = await client.get("/sync/initial")
+    resp = await client.get("/snapshot")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["schema_version"] == 0
@@ -1940,15 +1949,15 @@ async def test_empty_tenant_returns_terminal_batch(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py -v`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
-test(sync): GET /sync/initial empty tenant returns terminal batch (M2.3)
+test(sync): GET /snapshot empty tenant returns terminal batch (M2.3)
 
 200 OK with cursor=null, event_log_cursor=0, body.table=assets,
 body.items=[]. Single round-trip for an empty tenant.
@@ -1961,7 +1970,7 @@ EOF
 ## Task 16: E2E — single round-trip with seeded data
 
 **Files:**
-- Modify: `tests/sync/test_endpoint_sync_initial.py`
+- Modify: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Append the test**
 
@@ -2001,7 +2010,7 @@ async def test_post_event_then_get_sync_initial_round_trip(
         params = {"results_per_page": "100"}
         if cursor:
             params["cursor"] = cursor
-        resp = await client.get("/sync/initial", params=params)
+        resp = await client.get("/snapshot", params=params)
         assert resp.status_code == 200, resp.text
         body = resp.json()
         table = body["body"]["table"]
@@ -2032,17 +2041,17 @@ async def test_post_event_then_get_sync_initial_round_trip(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py::test_post_event_then_get_sync_initial_round_trip -v`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py::test_post_event_then_get_sync_initial_round_trip -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
-test(sync): POST /events + GET /sync/initial round trip (M2.3)
+test(sync): POST /events + GET /snapshot round trip (M2.3)
 
-POST a Created asset event, drive GET /sync/initial to terminal,
+POST a Created asset event, drive GET /snapshot to terminal,
 assert the asset and its col:name field-value row both surface with
 HLC preserved.
 EOF
@@ -2054,7 +2063,7 @@ EOF
 ## Task 17: E2E — multi-batch round-trip
 
 **Files:**
-- Modify: `tests/sync/test_endpoint_sync_initial.py`
+- Modify: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Append the test**
 
@@ -2087,7 +2096,7 @@ async def test_multi_batch_round_trip(client: AsyncTestClient) -> None:
         params = {"results_per_page": "2"}
         if cursor:
             params["cursor"] = cursor
-        resp = await client.get("/sync/initial", params=params)
+        resp = await client.get("/snapshot", params=params)
         body = resp.json()
         if body["body"]["table"] == "assets":
             for r in body["body"]["items"]:
@@ -2104,15 +2113,15 @@ async def test_multi_batch_round_trip(client: AsyncTestClient) -> None:
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py::test_multi_batch_round_trip -v`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py::test_multi_batch_round_trip -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
-test(sync): GET /sync/initial multi-batch round-trip (M2.3)
+test(sync): GET /snapshot multi-batch round-trip (M2.3)
 
 5 assets posted, page=2 ⇒ multiple round-trips. Every asset id
 surfaces exactly once across the assembled batches.
@@ -2125,7 +2134,7 @@ EOF
 ## Task 18: E2E — mid-transfer schema-version observation
 
 **Files:**
-- Modify: `tests/sync/test_endpoint_sync_initial.py`
+- Modify: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Append the test**
 
@@ -2154,7 +2163,7 @@ async def test_mid_transfer_schema_version_advance_is_observable(
         assert post.status_code == 202, post.text
 
     # First batch — observe schema_version V1.
-    resp1 = await client.get("/sync/initial", params={"results_per_page": "1"})
+    resp1 = await client.get("/snapshot", params={"results_per_page": "1"})
     body1 = resp1.json()
     v1 = body1["schema_version"]
     assert body1["cursor"] is not None
@@ -2168,7 +2177,7 @@ async def test_mid_transfer_schema_version_advance_is_observable(
 
     # Next batch (driven by body1.cursor) — observe a higher schema_version.
     resp2 = await client.get(
-        "/sync/initial",
+        "/snapshot",
         params={"cursor": body1["cursor"], "results_per_page": "1"},
     )
     body2 = resp2.json()
@@ -2177,13 +2186,13 @@ async def test_mid_transfer_schema_version_advance_is_observable(
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py::test_mid_transfer_schema_version_advance_is_observable -v`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py::test_mid_transfer_schema_version_advance_is_observable -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
 test(sync): mid-transfer schema_version advance is observable (M2.3)
 
@@ -2199,7 +2208,7 @@ EOF
 ## Task 19: E2E — validation errors (bad cursor, bad page size)
 
 **Files:**
-- Modify: `tests/sync/test_endpoint_sync_initial.py`
+- Modify: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Append the tests**
 
@@ -2207,7 +2216,7 @@ EOF
 async def test_bad_cursor_returns_problem_details(
     client: AsyncTestClient,
 ) -> None:
-    resp = await client.get("/sync/initial", params={"cursor": "not-base64!@#"})
+    resp = await client.get("/snapshot", params={"cursor": "not-base64!@#"})
     assert resp.status_code == 400, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
@@ -2215,26 +2224,26 @@ async def test_bad_cursor_returns_problem_details(
 
 
 async def test_results_per_page_below_min_is_400(client: AsyncTestClient) -> None:
-    resp = await client.get("/sync/initial", params={"results_per_page": "0"})
+    resp = await client.get("/snapshot", params={"results_per_page": "0"})
     assert resp.status_code == 400, resp.text
 
 
 async def test_results_per_page_above_max_is_400(client: AsyncTestClient) -> None:
     resp = await client.get(
-        "/sync/initial", params={"results_per_page": "5001"}
+        "/snapshot", params={"results_per_page": "5001"}
     )
     assert resp.status_code == 400, resp.text
 ```
 
 - [ ] **Step 2: Run them**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py -v -k "bad_cursor or results_per_page"`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py -v -k "bad_cursor or results_per_page"`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
 test(sync): validation errors as application/problem+json (M2.3)
 
@@ -2250,7 +2259,7 @@ EOF
 ## Task 20: E2E — tombstone inclusion
 
 **Files:**
-- Modify: `tests/sync/test_endpoint_sync_initial.py`
+- Modify: `tests/snapshot/test_endpoint_snapshot.py`
 
 - [ ] **Step 1: Append the test**
 
@@ -2299,7 +2308,7 @@ async def test_tombstoned_assets_are_included(client: AsyncTestClient) -> None:
         params = {"results_per_page": "100"}
         if cursor:
             params["cursor"] = cursor
-        body = (await client.get("/sync/initial", params=params)).json()
+        body = (await client.get("/snapshot", params=params)).json()
         if body["body"]["table"] == "assets":
             seen_assets.extend(body["body"]["items"])
         if body["cursor"] is None:
@@ -2312,13 +2321,13 @@ async def test_tombstoned_assets_are_included(client: AsyncTestClient) -> None:
 
 - [ ] **Step 2: Run it**
 
-Run: `uv run pytest tests/sync/test_endpoint_sync_initial.py::test_tombstoned_assets_are_included -v`
+Run: `uv run pytest tests/snapshot/test_endpoint_snapshot.py::test_tombstoned_assets_are_included -v`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/sync/test_endpoint_sync_initial.py
+git add tests/snapshot/test_endpoint_snapshot.py
 git commit -m "$(cat <<'EOF'
 test(sync): tombstoned assets surface with deleted=true (M2.3)
 
@@ -2334,7 +2343,7 @@ EOF
 ## Task 21: Cross-tenant isolation
 
 **Files:**
-- Create: `tests/sync/test_sync_cross_tenant_isolation.py`
+- Create: `tests/snapshot/test_snapshot_cross_tenant_isolation.py`
 
 We need a second tenant token. Re-use the same pattern as
 `tests/events/test_catchup_cross_tenant_isolation.py` — look there for
@@ -2348,17 +2357,17 @@ Note how it sets up t-a / t-b: which fixture provides multi-tenant tokens, how i
 
 - [ ] **Step 2: Write the cross-tenant test**
 
-Create `tests/sync/test_sync_cross_tenant_isolation.py`. Follow the structure of `tests/events/test_catchup_cross_tenant_isolation.py` exactly; the only differences are the endpoint (`/sync/initial` instead of `/events/`) and the body shape (paginated `body.items` per table instead of flat `items`).
+Create `tests/snapshot/test_snapshot_cross_tenant_isolation.py`. Follow the structure of `tests/events/test_catchup_cross_tenant_isolation.py` exactly; the only differences are the endpoint (`/snapshot` instead of `/events/`) and the body shape (paginated `body.items` per table instead of flat `items`).
 
 The test must:
 - Seed equivalent data under `t-a` and `t-b` (e.g., one asset each, with distinct ids).
-- Drive `/sync/initial` to completion under each tenant.
+- Drive `/snapshot` to completion under each tenant.
 - Assert each tenant sees only its own asset ids; no cross-pollination.
 
 Concrete skeleton (adapt the auth setup to whatever the events isolation test uses):
 
 ```python
-"""Cross-tenant isolation for ``GET /sync/initial`` (M2.3)."""
+"""Cross-tenant isolation for ``GET /snapshot`` (M2.3)."""
 
 from __future__ import annotations
 
@@ -2376,7 +2385,7 @@ async def _drive_sync(client: AsyncTestClient) -> dict[str, list[dict]]:
         params = {"results_per_page": "100"}
         if cursor:
             params["cursor"] = cursor
-        resp = await client.get("/sync/initial", params=params)
+        resp = await client.get("/snapshot", params=params)
         assert resp.status_code == 200, resp.text
         body = resp.json()
         table = body["body"]["table"]
@@ -2393,7 +2402,7 @@ async def test_each_tenant_sees_only_its_own_assets(
 ) -> None:
     # 1. Seed an asset under t-a (via POST /events with the t-a bearer).
     # 2. Switch auth header to t-b; seed a distinct asset.
-    # 3. Drive /sync/initial under each header; assert ids are partitioned.
+    # 3. Drive /snapshot under each header; assert ids are partitioned.
     ...  # adapt to the events isolation pattern
 ```
 
@@ -2401,15 +2410,15 @@ If `tests/events/test_catchup_cross_tenant_isolation.py` uses session-level fixt
 
 - [ ] **Step 3: Run it**
 
-Run: `uv run pytest tests/sync/test_sync_cross_tenant_isolation.py -v`
+Run: `uv run pytest tests/snapshot/test_snapshot_cross_tenant_isolation.py -v`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/sync/test_sync_cross_tenant_isolation.py
+git add tests/snapshot/test_snapshot_cross_tenant_isolation.py
 git commit -m "$(cat <<'EOF'
-test(sync): cross-tenant isolation for /sync/initial (M2.3)
+test(sync): cross-tenant isolation for /snapshot (M2.3)
 
 t-a and t-b seeded with distinct assets; each sees only its own data
 through the paginator. The tenant predicate is supplied structurally
@@ -2423,7 +2432,7 @@ EOF
 ## Task 22: CLAUDE.md update
 
 **Files:**
-- Modify: `CLAUDE.md` — add a new "Initial sync endpoint (`GET /sync/initial`)" subsection after the existing "Events catch-up endpoint (`GET /events`)" subsection.
+- Modify: `CLAUDE.md` — add a new "Initial sync endpoint (`GET /snapshot`)" subsection after the existing "Events catch-up endpoint (`GET /events`)" subsection.
 
 - [ ] **Step 1: Locate the insertion point**
 
@@ -2434,7 +2443,7 @@ Open `CLAUDE.md`. Find the heading `## Events catch-up endpoint (`GET /events`)`
 Insert the following into `CLAUDE.md`:
 
 ````markdown
-## Initial sync endpoint (`GET /sync/initial`)
+## Initial sync endpoint (`GET /snapshot`)
 
 Companion to ``GET /events`` and the bulk half of the sync handshake
 (ADR-015). Streams the active tenant's current data-projection state —
@@ -2446,15 +2455,15 @@ Response shape is a custom envelope (not Litestar's ``CursorPagination``
 — items are heterogeneous across batches):
 
 ```
-InitialSyncBatch {
+SnapshotBatch {
   schema_version: int
   cursor: str | null         # opaque continuation; null = transfer complete
   event_log_cursor: int | null  # only when cursor is null (terminal batch)
-  body: InitialSyncBody      # discriminated by `table` (msgspec tag_field)
+  body: SnapshotBody      # discriminated by `table` (msgspec tag_field)
 }
 ```
 
-``InitialSyncBody`` is a tagged union with one variant per projection
+``SnapshotBody`` is a tagged union with one variant per projection
 table: ``AssetsBatchBody``, ``AssetFieldValuesBatchBody``,
 ``MaintenanceRecordsBatchBody``, ``MaintenanceRecordFieldValuesBatchBody``.
 Each variant carries an ``items`` tuple of the corresponding row view.
@@ -2476,16 +2485,16 @@ Tenant scoping is structural — Layer 1 of ``db._listeners`` injects
 via the listener's get-final-froms fallback path.
 
 Batch size: ``cursor`` defaults to ``None``, ``results_per_page``
-defaults to ``INITIAL_SYNC_DEFAULT_BATCH_SIZE`` (1000) and is capped at
-``INITIAL_SYNC_MAX_BATCH_SIZE`` (5000); both constants live in
+defaults to ``SNAPSHOT_DEFAULT_BATCH_SIZE`` (1000) and is capped at
+``SNAPSHOT_MAX_BATCH_SIZE`` (5000); both constants live in
 ``config.py`` and are imported directly by the controller. Bad input
 (negative cursor format, out-of-range batch size) renders as
 ``application/problem+json`` per ADR-016, via Litestar's standard
 validation pipeline plus ``PayloadShapeError(INVALID_PAYLOAD_SHAPE)``
 for cursor-decode failures.
 
-Implementation lives in ``domain/sync/_pagination.py``
-(``InitialSyncPaginator``); the controller's ``initial`` handler is a
+Implementation lives in ``domain/snapshot/_pagination.py``
+(``SnapshotPaginator``); the controller's ``initial`` handler is a
 thin pass-through. Empty intermediate tables are collapsed
 server-side, so an empty tenant returns in a single round-trip.
 ````
@@ -2495,9 +2504,9 @@ server-side, so an empty tenant returns in a single round-trip.
 ```bash
 git add CLAUDE.md
 git commit -m "$(cat <<'EOF'
-docs(claude-md): document GET /sync/initial bulk transfer endpoint (M2.3)
+docs(claude-md): document GET /snapshot bulk transfer endpoint (M2.3)
 
-New subsection describing the InitialSyncBatch envelope, the
+New subsection describing the SnapshotBatch envelope, the
 table-tagged discriminated body, the opaque cursor and the
 start_seq-on-first-request correctness pin, and the connection
 to M2.4 catch-up and M3 WS handshake.
@@ -2559,7 +2568,7 @@ git commit -m "$(cat <<'EOF'
 docs(adr): ADR-015 Accepted (M2.3 shipped)
 
 Initial-sync bulk projection transfer is now implemented behind
-GET /sync/initial. Status: Proposed -> Accepted (2026-05-18).
+GET /snapshot. Status: Proposed -> Accepted (2026-05-18).
 EOF
 )"
 ```
@@ -2567,7 +2576,7 @@ EOF
 - [ ] **Step 4: Final smoke check**
 
 Run: `uv run pytest tests/sync -v`
-Expected: every test in `tests/sync/` PASSes (cursor, pagination, endpoint, isolation).
+Expected: every test in `tests/snapshot/` PASSes (cursor, pagination, endpoint, isolation).
 
 Run: `just check`
 Expected: clean across the board.
@@ -2583,7 +2592,7 @@ Cross-checked the plan against the spec section-by-section:
 - **Settings** — Task 1.
 - **Cursor encoding** — Task 3, including the tamper-rejection tests called out in the spec.
 - **Row views** — Task 4. Omits ``name`` / ``properties`` as required.
-- **Discriminated body union + ``InitialSyncBatch``** — Task 4.
+- **Discriminated body union + ``SnapshotBatch``** — Task 4.
 - **Read services** — Task 5; uses the existing ``EventLog``-style pattern.
 - **Paginator algorithm** (incl. empty-intermediate collapse, fixed table order, terminal ``event_log_cursor``) — Tasks 6–13.
 - **``start_seq`` correctness invariant** — Task 11 explicitly.
@@ -2594,5 +2603,5 @@ Cross-checked the plan against the spec section-by-section:
 - **CLAUDE.md + ADR-015 status flip** — Tasks 22–23.
 
 No placeholders. Every step gives the actual content. Type names used
-across tasks are consistent (``InitialSyncTable``, ``CursorState``,
-``InitialSyncPaginator``, the four ``*BatchBody`` variants).
+across tasks are consistent (``SnapshotTable``, ``PageState``,
+``SnapshotPaginator``, the four ``*BatchBody`` variants).

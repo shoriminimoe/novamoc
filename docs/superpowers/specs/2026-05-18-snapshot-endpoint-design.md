@@ -1,17 +1,34 @@
-# Design: `GET /sync/initial` bulk projection transfer
+# Design: `GET /snapshot` bulk projection transfer
 
 ## Status
 
-Drafted 2026-05-18. Closes M2.3 (issue #33). The HTTP half of ADR-015; flips
-the ADR to Accepted on ship.
+Drafted 2026-05-18, renamed `/sync/initial` → `/snapshot` on 2026-05-20.
+Closes M2.3 (issue #33). The HTTP half of ADR-015; flips the ADR to
+Accepted on ship.
+
+**Page vs cursor.** Two cursor-flavoured fields ride at the top level
+of `SnapshotBatch` and are deliberately distinct:
+
+* `page` — opaque continuation across requests in this multi-batch
+  transfer. `None` on the terminal batch. Passed back as the
+  `?page=` query parameter on the next request.
+* `cursor` — the replication `event_log.seq` captured at the start of
+  the transfer. Present only on the terminal batch. The client feeds
+  this to `GET /events?cursor=` to begin incremental catch-up.
+
+In a few code blocks below, prose written before the rename may still
+use the old terminology (`cursor` for the pagination continuation,
+`event_log_cursor` for the replication seq). Field names in the actual
+code match the new shape; the bulk-rename pass scrubbed identifiers
+but some narrative phrasing was kept for readability.
 
 ## Problem
 
 A fresh client (new device, cleared local storage) needs to populate its
 local SQLite with the active tenant's data-projection state before it can
-go live. ADR-015 commits to **full** initial sync: ship the projections
-(not the event log) plus a cursor the client uses to start incremental
-sync (M2.4 catch-up, M3 WS). This spec is that endpoint.
+go live. ADR-015 commits to **full** projection transfer: ship the projections
+(not the event log) plus an ``event_log.seq`` cursor the client uses to
+start incremental sync (M2.4 catch-up, M3 WS). This spec is that endpoint.
 
 Concretely, the client needs:
 
@@ -32,32 +49,32 @@ Two things have to be true that the current system does not provide:
    batches, with a continuation token that survives across requests.
 2. **A wire envelope** that distinguishes the four projection tables (their
    row shapes differ) and carries the cross-batch consistency signals
-   (`schema_version`, `cursor`, terminal `event_log_cursor`).
+   (`schema_version`, `cursor`, terminal `cursor`).
 
 ## Goals
 
-1. Add `GET /sync/initial` that streams the active tenant's data
+1. Add `GET /snapshot` that streams the active tenant's data
    projection in fixed-table-order batches, capped by a
    `results_per_page` query parameter, with an opaque continuation
    `cursor`.
-2. Define `InitialSyncBatch` (custom msgspec struct) with a `table`-tagged
+2. Define `SnapshotBatch` (custom msgspec struct) with a `table`-tagged
    discriminated union body so each batch is a homogeneous list of one
    table's rows.
 3. Capture the per-tenant `event_log.seq` ceiling on the first request
    and thread it through every subsequent cursor; emit it as
-   `event_log_cursor` on the terminal batch only.
+   `cursor` on the terminal batch only.
 4. Match the existing endpoint conventions: tenant scoping via
    `TenantContextMiddleware` + Layer 1 listener, no tenant in URL or
    body, `application/problem+json` on errors per ADR-016,
    handler-level + E2E tests against a real in-memory SQLite (no
    mocks).
-5. Register `SyncController` in `asgi.create_app` alongside
+5. Register `SnapshotController` in `asgi.create_app` alongside
    `SchemaController` and `EventsController`.
 
 ## Non-goals
 
 - **Schema transfer.** Clients already fetch the full schema snapshot
-  via `GET /schema` (M2.1). Initial sync is just the *data* projections.
+  via `GET /schema` (M2.1). The snapshot transfer is just the *data* projections.
   ADR-015 §"Flow" describes the schema fetch as a separate step.
 - **`*Properties` on the wire.** Per ADR-015 §"Derived entity JSON",
   the default is *compute on client from field values*. We omit
@@ -66,9 +83,10 @@ Two things have to be true that the current system does not provide:
   reconstructs them by folding the per-field rows. Reintroduce server-
   side if profiling on a large tenant demands it; an optimisation, not
   a correctness requirement.
-- **WebSocket variant.** Initial sync is HTTP-only by ADR-013's
-  decomposition (`/sync` is bulk, WS is incremental). M3 reads the
-  cursor this endpoint returns; it doesn't replicate the bulk path.
+- **WebSocket variant.** The snapshot transfer is HTTP-only by ADR-013's
+  decomposition: bulk transfer is HTTP, incremental sync (events) is over
+  HTTP+WS. M3 reads the cursor this endpoint returns; it doesn't replicate
+  the bulk path.
 - **Resume across schema-version change.** If `schema_version` advances
   mid-transfer the client restarts (ADR-015 §"Consequences"). The
   endpoint emits the current `schema_version` on each batch so the
@@ -90,22 +108,22 @@ Two things have to be true that the current system does not provide:
 ```
 src/py/novamoc/
 ├── config.py                          # MODIFIED: INITIAL_SYNC_* constants
-├── asgi.py                            # MODIFIED: register SyncController
-└── domain/sync/                       # NEW package
+├── asgi.py                            # MODIFIED: register SnapshotController
+└── domain/snapshot/                       # NEW package
     ├── __init__.py
-    ├── _cursor.py                     # NEW: opaque cursor encode/decode
-    ├── _pagination.py                 # NEW: InitialSyncPaginator
-    ├── _payloads.py                   # NEW: InitialSyncBatch + body union
+    ├── _page.py                     # NEW: opaque cursor encode/decode
+    ├── _pagination.py                 # NEW: SnapshotPaginator
+    ├── _payloads.py                   # NEW: SnapshotBatch + body union
     ├── services.py                    # NEW: 4 projection-table services
     └── controllers/
         ├── __init__.py
-        └── _sync.py                   # NEW: SyncController
-tests/sync/                            # NEW
+        └── _snapshot.py                   # NEW: SnapshotController
+tests/snapshot/                            # NEW
 ├── __init__.py
-├── test_cursor.py                     # NEW: encode/decode + tamper
+├── test_page.py                     # NEW: encode/decode + tamper
 ├── test_pagination.py                 # NEW: paginator unit tests
-├── test_endpoint_sync_initial.py      # NEW: E2E
-└── test_sync_cross_tenant_isolation.py# NEW
+├── test_endpoint_snapshot.py      # NEW: E2E
+└── test_snapshot_cross_tenant_isolation.py# NEW
 ```
 
 No changes to `db/models/` — the four projection tables already exist and
@@ -116,10 +134,9 @@ M1.6).
 
 #### Route
 
-`GET /sync/initial`, mounted on a new `SyncController` (path `/sync`).
-The endpoint is named with the `/initial` suffix so a future incremental
-companion under `/sync` (e.g. M2.4's `GET /events` could be re-homed if
-ever needed) doesn't collide.
+`GET /snapshot`, mounted on a new `SnapshotController` with path
+`/snapshot` and handler at `/`. Single-purpose endpoint, no sub-routes;
+"as-of-seq" snapshots are explicitly out of scope (see Non-goals).
 
 Query parameters:
 
@@ -137,7 +154,7 @@ Defaults and the upper bound come from `config.INITIAL_SYNC_*` constants
 {
   "schema_version": 12,
   "cursor": "eyJzdGFydF9zZXEiOjE3LCJ0YWJsZSI6ImFzc2V0X2ZpZWxkX3ZhbHVlcyIsImxhc3RfaWQiOiI3ZmU2…",
-  "event_log_cursor": null,
+  "cursor": null,
   "body": {
     "table": "assets",
     "items": [
@@ -160,7 +177,7 @@ Terminal batch (transfer complete):
 {
   "schema_version": 12,
   "cursor": null,
-  "event_log_cursor": 17,
+  "cursor": 17,
   "body": {
     "table": "maintenance_record_field_values",
     "items": [ /* … final rows, possibly empty … */ ]
@@ -179,11 +196,11 @@ Terminal batch (transfer complete):
 - `cursor` — opaque continuation. `null` ⇒ the transfer is complete.
   Non-null ⇒ pass back as `?cursor=<value>` on the next request. See
   §"Cursor encoding" for the internal shape.
-- `event_log_cursor` — `int` only on the terminal batch (when `cursor`
+- `cursor` — `int` only on the terminal batch (when `cursor`
   is `null`); `null` on every intermediate batch. Captured on the first
   request and threaded through cursors; equals `MAX(event_log.seq)`
   observed when the client's transfer began. The client passes this as
-  `?cursor=<event_log_cursor>` to `GET /events` (M2.4) and as the WS
+  `?cursor=<cursor>` to `GET /events` (M2.4) and as the WS
   hello cursor (M3).
 - `body.table` — the projection table these `items` came from. One of
   `assets`, `asset_field_values`, `maintenance_records`,
@@ -194,7 +211,7 @@ Terminal batch (transfer complete):
 
 ##### Row views
 
-Defined in `domain/sync/_payloads.py`:
+Defined in `domain/snapshot/_payloads.py`:
 
 ```python
 class AssetView(msgspec.Struct, forbid_unknown_fields=True):
@@ -247,33 +264,33 @@ rides on `AssetView` / `MaintenanceRecordView`. Schema tombstones
 ##### Discriminated body
 
 ```python
-class _SyncBody(msgspec.Struct, tag_field="table"):
-    """Discriminator base for ``InitialSyncBody``.
+class _SnapshotBody(msgspec.Struct, tag_field="table"):
+    """Discriminator base for ``SnapshotBody``.
 
     Subclasses set ``tag`` to the table name. msgspec publishes the union
     as ``oneOf`` discriminated on ``table`` in the OpenAPI schema.
     """
 
 
-class AssetsBatchBody(_SyncBody, tag="assets"):
+class AssetsBatchBody(_SnapshotBody, tag="assets"):
     items: tuple[AssetView, ...]
 
 
-class AssetFieldValuesBatchBody(_SyncBody, tag="asset_field_values"):
+class AssetFieldValuesBatchBody(_SnapshotBody, tag="asset_field_values"):
     items: tuple[AssetFieldValueView, ...]
 
 
-class MaintenanceRecordsBatchBody(_SyncBody, tag="maintenance_records"):
+class MaintenanceRecordsBatchBody(_SnapshotBody, tag="maintenance_records"):
     items: tuple[MaintenanceRecordView, ...]
 
 
 class MaintenanceRecordFieldValuesBatchBody(
-    _SyncBody, tag="maintenance_record_field_values"
+    _SnapshotBody, tag="maintenance_record_field_values"
 ):
     items: tuple[MaintenanceRecordFieldValueView, ...]
 
 
-InitialSyncBody = (
+SnapshotBody = (
     AssetsBatchBody
     | AssetFieldValuesBatchBody
     | MaintenanceRecordsBatchBody
@@ -281,11 +298,11 @@ InitialSyncBody = (
 )
 
 
-class InitialSyncBatch(msgspec.Struct, forbid_unknown_fields=True):
+class SnapshotBatch(msgspec.Struct, forbid_unknown_fields=True):
     schema_version: int
     cursor: str | None
-    event_log_cursor: int | None
-    body: InitialSyncBody
+    cursor: int | None
+    body: SnapshotBody
 ```
 
 #### Errors
@@ -296,7 +313,7 @@ Rendered as `application/problem+json` per ADR-016 through the existing
 | Status | `type` URI leaf            | Trigger                                                       |
 |--------|----------------------------|---------------------------------------------------------------|
 | 400    | `invalid_payload_shape`    | `cursor` malformed (bad base64 / not JSON / missing fields).  |
-| 400    | (Litestar ValidationException) | `results_per_page` < 1 or > `INITIAL_SYNC_MAX_BATCH_SIZE`. |
+| 400    | (Litestar ValidationException) | `results_per_page` < 1 or > `SNAPSHOT_MAX_BATCH_SIZE`. |
 | 401    | (`AuthenticationMiddleware`) | Missing / invalid bearer.                                    |
 
 Tampered cursors that decode successfully but reference a `table` that
@@ -308,20 +325,20 @@ the trust model (see §"Cursor encoding").
 
 ### Cursor encoding
 
-`_cursor.py` exposes two pure functions and one error type:
+`_page.py` exposes two pure functions and one error type:
 
 ```python
 @dataclass(frozen=True, slots=True)
-class CursorState:
+class PageState:
     """The state a cursor encodes between requests.
 
     Attributes:
         start_seq: The ``MAX(event_log.seq)`` observed on the first
             request, threaded through every cursor for the duration of
-            the transfer. Returned to the client as ``event_log_cursor``
+            the transfer. Returned to the client as ``cursor``
             on the terminal batch.
         table: The next projection table to read from. One of the four
-            ``InitialSyncTable`` values.
+            ``SnapshotTable`` values.
         last_id: The encoded last-seen primary key in ``table``, or
             ``None`` to start at the beginning of ``table``. For entity
             tables this is a single UUID string; for ``*_field_values``
@@ -329,16 +346,16 @@ class CursorState:
     """
 
     start_seq: int
-    table: InitialSyncTable
+    table: SnapshotTable
     last_id: str | None
 
 
-def encode_cursor(state: CursorState) -> str:
+def encode_page(state: PageState) -> str:
     """URL-safe base64 of compact JSON. Trailing ``=`` padding stripped."""
 
 
-def decode_cursor(token: str) -> CursorState:
-    """Inverse of :func:`encode_cursor`.
+def decode_page(token: str) -> PageState:
+    """Inverse of :func:`encode_page`.
 
     Raises:
         PayloadShapeError(INVALID_PAYLOAD_SHAPE): token isn't valid
@@ -348,7 +365,7 @@ def decode_cursor(token: str) -> CursorState:
     """
 ```
 
-`InitialSyncTable` is a `StrEnum` with values
+`SnapshotTable` is a `StrEnum` with values
 `assets`, `asset_field_values`, `maintenance_records`,
 `maintenance_record_field_values` — the same strings that appear as
 discriminator tags on the body union. Single source of truth.
@@ -377,7 +394,7 @@ Patterned on `EventLogCursorPaginator` (M2.4) but custom-coded because
 of the table-walking and the start-seq capture.
 
 ```python
-class InitialSyncPaginator:
+class SnapshotPaginator:
     """Walks the four projection tables in fixed order.
 
     The four projection-table services and the change-log service are
@@ -385,7 +402,7 @@ class InitialSyncPaginator:
     public entry point — it captures ``start_seq`` on the first call
     (when ``cursor is None``), pages within the current table, advances
     to the next non-empty table when the current one runs out, and
-    emits the terminal batch with ``event_log_cursor=start_seq`` when
+    emits the terminal batch with ``cursor=start_seq`` when
     every table is exhausted.
 
     Tenant scoping is structural: every ``.list(...)`` call hits Layer
@@ -405,7 +422,7 @@ class InitialSyncPaginator:
 
     async def __call__(
         self, cursor: str | None, results_per_page: int
-    ) -> InitialSyncBatch: ...
+    ) -> SnapshotBatch: ...
 ```
 
 ##### Algorithm
@@ -428,17 +445,17 @@ def serve_batch(cursor, n):
         rows = rows[:n]
         if rows or table is TABLES[-1]:
             if has_more_in_table:
-                next_state = CursorState(start_seq, table, last_id_of(rows[-1]))
+                next_state = PageState(start_seq, table, last_id_of(rows[-1]))
                 next_cursor = encode(next_state)
-                event_log_cursor = None
+                cursor = None
             elif table is TABLES[-1]:
                 next_cursor = None
-                event_log_cursor = start_seq
+                cursor = start_seq
             else:
-                next_state = CursorState(start_seq, table_after(table), None)
+                next_state = PageState(start_seq, table_after(table), None)
                 next_cursor = encode(next_state)
-                event_log_cursor = None
-            return Batch(schema_version, next_cursor, event_log_cursor,
+                cursor = None
+            return Batch(schema_version, next_cursor, cursor,
                           body=body_for(table, rows))
     # unreachable: the last-table branch above always returns
 ```
@@ -447,14 +464,14 @@ This collapses empty intermediate tables: when `read_page` returns no
 rows and we're not on the last table, we loop and try the next one in
 the same request. An empty tenant returns one batch (the last table —
 `table=maintenance_record_field_values`, `items=()`, `cursor=null`,
-`event_log_cursor=0`) — a single round-trip. The body's `table` tag in
+`cursor=0`) — a single round-trip. The body's `table` tag in
 the empty case is incidental; what matters to the client is
-`cursor=null` and the accompanying `event_log_cursor`.
+`cursor=null` and the accompanying `cursor`.
 
 `TABLES` is the fixed tuple `(assets, asset_field_values,
 maintenance_records, maintenance_record_field_values)`. The order is a
 contract — `maintenance_record_field_values` is always last because its
-`event_log_cursor` ride is what signals "done."
+`cursor` ride is what signals "done."
 
 ##### `read_page` and ordering
 
@@ -517,18 +534,18 @@ class AssetFieldValueService(
 # … MaintenanceRecordService, MaintenanceRecordFieldValueService …
 ```
 
-These are sync-domain reads only; the write path (the events fold)
+These are snapshot-domain reads only; the write path (the events fold)
 continues to use the raw-SQLAlchemy helpers in `domain/events/_fold.py`
 / `_projection.py` / `_row_state.py`. There is no risk of overlap.
 
 ### Controller
 
 ```python
-class SyncController(Controller):
-    path = "/sync"
-    tags = ("sync",)
+class SnapshotController(Controller):
+    path = "/snapshot"
+    tags = ("snapshot",)
     dependencies = (
-        {"paginator": Provide(_provide_initial_sync_paginator)}
+        {"paginator": Provide(_provide_snapshot_paginator)}
         | providers.create_service_dependencies(SchemaChangeLogService,
                                                 "schema_change_log_service")
         | providers.create_service_dependencies(EventLogService,
@@ -554,14 +571,14 @@ class SyncController(Controller):
             ),
         },
     )
-    async def initial(
+    async def read(
         self,
-        paginator: InitialSyncPaginator,
-        cursor: str | None = None,
+        paginator: SnapshotPaginator,
+        page: str | None = None,
         results_per_page: Annotated[
-            int, Parameter(ge=1, le=INITIAL_SYNC_MAX_BATCH_SIZE)
-        ] = INITIAL_SYNC_DEFAULT_BATCH_SIZE,
-    ) -> InitialSyncBatch:
+            int, Parameter(ge=1, le=SNAPSHOT_MAX_BATCH_SIZE)
+        ] = SNAPSHOT_DEFAULT_BATCH_SIZE,
+    ) -> SnapshotBatch:
         return await paginator(cursor=cursor, results_per_page=results_per_page)
 ```
 
@@ -578,8 +595,8 @@ Two new module-level constants in `config.py`, next to the existing
 `EVENT_CATCHUP_*` pair:
 
 ```python
-INITIAL_SYNC_DEFAULT_BATCH_SIZE = 1000
-INITIAL_SYNC_MAX_BATCH_SIZE = 5000
+SNAPSHOT_DEFAULT_BATCH_SIZE = 1000
+SNAPSHOT_MAX_BATCH_SIZE = 5000
 ```
 
 Imported directly by the controller for use in the `Parameter(...)`
@@ -595,10 +612,10 @@ events catch-up endpoint for operational consistency.
 One additional import and one extra entry in `route_handlers`:
 
 ```python
-from novamoc.domain.sync.controllers import SyncController
+from novamoc.domain.snapshot.controllers import SnapshotController
 …
 return Litestar(
-    route_handlers=[SchemaController, EventsController, SyncController,
+    route_handlers=[SchemaController, EventsController, SnapshotController,
                     problem_docs_router],
     …
 )
@@ -647,7 +664,7 @@ per-batch recomputation.
 
 ### What stays unchanged
 
-- The events endpoint (`POST /events`, `GET /events`) — initial sync
+- The events endpoint (`POST /events`, `GET /events`) — snapshot transfer
   is read-only against projections and does not interact with the
   event log writers.
 - The schema endpoint (`GET /schema`, `POST /schema`, `GET
@@ -664,13 +681,13 @@ per-batch recomputation.
 ## Tests
 
 All tests use the project's standard fixtures: real in-memory aiosqlite,
-no mocks. New tests live under `tests/sync/`.
+no mocks. New tests live under `tests/snapshot/`.
 
-### `test_cursor.py`
+### `test_page.py`
 
-Pure unit tests for `encode_cursor` / `decode_cursor`:
+Pure unit tests for `encode_page` / `decode_page`:
 
-- Roundtrip for every `InitialSyncTable` variant, with `last_id` both
+- Roundtrip for every `SnapshotTable` variant, with `last_id` both
   `None` and populated (entity UUID for entity tables, `"uuid:field_id"`
   for field-value tables).
 - Tamper rejection: garbage base64 → `PayloadShapeError`; valid base64
@@ -682,70 +699,70 @@ Pure unit tests for `encode_cursor` / `decode_cursor`:
 
 ### `test_pagination.py`
 
-`InitialSyncPaginator` constructed against the `services`-style fixtures
+`SnapshotPaginator` constructed against the `services`-style fixtures
 (no HTTP):
 
 - **Empty tenant.** No assets, no records, no field values, no events
-  ⇒ first call returns `cursor=None`, `event_log_cursor=0`,
+  ⇒ first call returns `cursor=None`, `cursor=0`,
   `body=AssetsBatchBody(items=())`.
 - **Single non-empty table, fits one page.** Seed N assets only.
   First call: `body.items` has N entries, `cursor=None`,
-  `event_log_cursor=0` (no events yet from event_log).
+  `cursor=0` (no events yet from event_log).
 - **Single non-empty table, multiple pages.** Seed N assets with
   `results_per_page < N`. Iterate; assert items are returned in `id`
   order, no duplicates, no gaps, last response has `cursor=None`.
 - **Cursor walk across all four tables.** Seed at least one row in
-  each table (and at least one event for a non-zero `event_log_cursor`).
+  each table (and at least one event for a non-zero `cursor`).
   Drive the paginator until `cursor=None` and assert the visited
   `body.table` sequence is exactly `(assets, asset_field_values,
   maintenance_records, maintenance_record_field_values)`.
 - **Empty intermediate table is skipped.** Seed assets and maintenance
   records but no asset_field_values. Iterate; assert no batch with
   `table=asset_field_values` is ever emitted.
-- **`event_log_cursor` is start-snapshot, not end-snapshot.** Seed N
+- **`cursor` is start-snapshot, not end-snapshot.** Seed N
   events. Call paginator once with `cursor=None` (captures
   `start_seq`). Manually append a new event with the
   `event_log_service`. Continue iterating to terminal. Assert
-  `event_log_cursor` equals the *pre-extra* seq, not the *post-extra*
+  `cursor` equals the *pre-extra* seq, not the *post-extra*
   seq.
 - **`schema_version` is current at request time.** Seed schema at v1,
   call paginator (assert v1 emitted), apply a schema change to v2,
   call paginator with the previous cursor, assert v2 emitted.
 
-### `test_endpoint_sync_initial.py` (E2E)
+### `test_endpoint_snapshot.py` (E2E)
 
 Uses the `client` fixture from `tests/conftest.py`:
 
-- `GET /sync/initial` on a fresh tenant returns 200 with
-  `cursor=null`, `event_log_cursor=0`, `body.table="assets"`,
+- `GET /snapshot` on a fresh tenant returns 200 with
+  `cursor=null`, `cursor=0`, `body.table="assets"`,
   `body.items=[]`.
-- Seed an asset via `POST /events`, then `GET /sync/initial`. Body
+- Seed an asset via `POST /events`, then `GET /snapshot`. Body
   contains an `AssetView` for that asset and at least one
   `AssetFieldValueView` (for `col:name`) reachable by walking the
   cursor. Tombstones surface with `deleted=true`.
 - Multi-batch round-trip: seed > `results_per_page` rows, drive
-  successive `GET /sync/initial?cursor=…`, assemble all `items` and
+  successive `GET /snapshot?cursor=…`, assemble all `items` and
   assert no duplicates and full coverage.
 - Mid-transfer schema-version advance is observable: page 1 returns
   `schema_version=V1`. Commit a schema change (via `POST /schema`).
   Page 2 (driven by the page-1 `cursor`) returns `schema_version=V2`.
   Server keeps emitting; the client-side restart is *out of scope*.
-- `GET /sync/initial?results_per_page=0` → 400 problem-details.
-- `GET /sync/initial?results_per_page=5001` → 400 problem-details.
-- `GET /sync/initial?cursor=not-base64` → 400 problem-details with
+- `GET /snapshot?results_per_page=0` → 400 problem-details.
+- `GET /snapshot?results_per_page=5001` → 400 problem-details.
+- `GET /snapshot?cursor=not-base64` → 400 problem-details with
   `type` URI leaf `invalid_payload_shape`.
-- `GET /sync/initial?cursor=<valid-but-unknown-table>` → 400.
+- `GET /snapshot?cursor=<valid-but-unknown-table>` → 400.
 - HLC preservation: every `*_field_values` row in the response
   carries the same `hlc` string the original event used. Compare
   against a known seed.
 
-### `test_sync_cross_tenant_isolation.py`
+### `test_snapshot_cross_tenant_isolation.py`
 
 Indirect-parametrised across two tenants:
 
 - Seed identical scenarios under `t-a` and `t-b` (using the existing
   `seed(..., tenant_id=...)` fixture).
-- Under each tenant, `GET /sync/initial` returns rows whose
+- Under each tenant, `GET /snapshot` returns rows whose
   `tenant_id` would have been only that tenant (assert by content —
   ids are seeded distinctly per tenant).
 - Drive the cursor to completion under `t-a`; assert the same `cursor`
@@ -766,7 +783,7 @@ table schemas are unchanged.
    `start_seq` and a per-table position, and the items differ in shape
    across batches. Custom envelope wins on clarity here; the cost is
    one bespoke struct family, paid once.
-2. **`event_log_cursor` only on terminal batch.** Intermediate batches
+2. **`cursor` only on terminal batch.** Intermediate batches
    emit `null`. Available-on-every-batch would let a misbehaving client
    commit a partial cursor and skip catch-up; making it explicitly
    terminal forces correct staging.
@@ -789,7 +806,7 @@ table schemas are unchanged.
 - Pre-release, no migration tooling. The four projection tables already
   exist and the endpoint only adds read paths.
 - No wire-format change to existing endpoints.
-- `CLAUDE.md` gains a "Initial sync endpoint (`GET /sync/initial`)"
+- `CLAUDE.md` gains a "The snapshot transfer endpoint (`GET /snapshot`)"
   subsection on ship, matching the existing per-endpoint sections for
   schema / events.
 - ADR-015 flips from Proposed to Accepted in the same commit train.

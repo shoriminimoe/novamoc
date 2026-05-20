@@ -4,7 +4,7 @@ Identical shape to :class:`novamoc.domain.events.services.EventLogService`
 — advanced-alchemy repositories over the four projection models. The
 write path is the events fold (see ``domain/events/_fold.py``,
 ``_projection.py``, ``_row_state.py``); these services are used only
-by the initial-sync paginator for ordered reads.
+by the snapshot paginator for ordered reads.
 
 Tenant scoping is structural: every ``.list(...)`` goes through Layer 1
 of ``db._listeners`` and is filtered to the active tenant.

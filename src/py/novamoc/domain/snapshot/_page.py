@@ -1,9 +1,12 @@
-"""Opaque cursor for the initial-sync transfer.
+"""Opaque pagination token for ``GET /snapshot``.
 
-Encodes ``(start_seq, table, last_id)`` as URL-safe base64 of compact JSON.
-The cursor is *not* signed: see the design spec §"Cursor encoding" for
-the threat model — a client that tampers only hurts itself, and Layer 1
-of the tenant-scoping listeners scopes every read regardless.
+Encodes ``(start_seq, table, last_id)`` as URL-safe base64 of compact
+JSON. Distinct from the replication ``cursor`` (the ``event_log.seq``
+returned on the terminal batch) — see the design spec §"Page vs cursor"
+for the two-concept disambiguation.
+
+The page token is *not* signed: a client that tampers only hurts itself,
+and Layer 1 of the tenant-scoping listeners scopes every read regardless.
 """
 
 from __future__ import annotations
@@ -18,11 +21,11 @@ from typing import Any
 from novamoc.domain._errors import ErrorCode, PayloadShapeError
 
 
-class InitialSyncTable(StrEnum):
-    """The four projection tables an initial sync walks, in order.
+class SnapshotTable(StrEnum):
+    """The four projection tables a snapshot walks, in order.
 
     The string values double as the discriminator tags on the response
-    body union (see ``_payloads._SyncBody``).
+    body union (see ``_payloads._SnapshotBody``).
     """
 
     ASSETS = "assets"
@@ -32,15 +35,15 @@ class InitialSyncTable(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class CursorState:
-    """State threaded across one client's initial-sync requests.
+class PageState:
+    """State threaded across one client's snapshot requests.
 
     Attributes:
         start_seq: ``MAX(event_log.seq)`` observed on the first
-            request; emitted as ``event_log_cursor`` on the terminal
-            batch. Threaded so that mid-transfer event arrivals don't
-            shift the cursor (design spec §"Why ``start_seq`` on the
-            first request").
+            request; emitted as the terminal-batch ``cursor`` on the
+            final batch. Threaded so that mid-transfer event arrivals
+            don't shift the cursor (design spec §"Why ``start_seq`` on
+            the first request").
         table: Next projection table to read from.
         last_id: Last-seen primary key in ``table``, or ``None`` to
             start at the beginning. Entity tables: the UUID as a string.
@@ -49,11 +52,11 @@ class CursorState:
     """
 
     start_seq: int
-    table: InitialSyncTable
+    table: SnapshotTable
     last_id: str | None
 
 
-def encode_cursor(state: CursorState) -> str:
+def encode_page(state: PageState) -> str:
     """URL-safe base64 of compact JSON. Trailing ``=`` padding stripped."""
     payload = {
         "start_seq": state.start_seq,
@@ -64,8 +67,8 @@ def encode_cursor(state: CursorState) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def decode_cursor(token: str) -> CursorState:
-    """Inverse of :func:`encode_cursor`.
+def decode_page(token: str) -> PageState:
+    """Inverse of :func:`encode_page`.
 
     Raises:
         PayloadShapeError: token isn't valid base64-JSON, the decoded
@@ -78,8 +81,8 @@ def decode_cursor(token: str) -> CursorState:
     except (binascii.Error, ValueError) as exc:
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor is not valid base64",
-            field="cursor",
+            message="page is not valid base64",
+            field="page",
         ) from exc
 
     try:
@@ -87,15 +90,15 @@ def decode_cursor(token: str) -> CursorState:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor is not valid JSON",
-            field="cursor",
+            message="page is not valid JSON",
+            field="page",
         ) from exc
 
     if not isinstance(parsed, dict):
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor must decode to a JSON object",
-            field="cursor",
+            message="page must decode to a JSON object",
+            field="page",
         )
 
     try:
@@ -105,39 +108,39 @@ def decode_cursor(token: str) -> CursorState:
     except KeyError as exc:
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message=f"cursor missing field {exc.args[0]!r}",
-            field="cursor",
+            message=f"page missing field {exc.args[0]!r}",
+            field="page",
         ) from exc
 
     if not isinstance(start_seq, int) or isinstance(start_seq, bool):
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor.start_seq must be an integer",
-            field="cursor",
+            message="page.start_seq must be an integer",
+            field="page",
         )
     if not isinstance(table_value, str):
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor.table must be a string",
-            field="cursor",
+            message="page.table must be a string",
+            field="page",
         )
     if last_id is not None and not isinstance(last_id, str):
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message="cursor.last_id must be a string or null",
-            field="cursor",
+            message="page.last_id must be a string or null",
+            field="page",
         )
 
     try:
-        table = InitialSyncTable(table_value)
+        table = SnapshotTable(table_value)
     except ValueError as exc:
         raise PayloadShapeError(
             code=ErrorCode.INVALID_PAYLOAD_SHAPE,
-            message=f"cursor.table {table_value!r} is not a known table",
-            field="cursor",
+            message=f"page.table {table_value!r} is not a known table",
+            field="page",
         ) from exc
 
-    return CursorState(start_seq=start_seq, table=table, last_id=last_id)
+    return PageState(start_seq=start_seq, table=table, last_id=last_id)
 
 
-__all__ = ("CursorState", "InitialSyncTable", "decode_cursor", "encode_cursor")
+__all__ = ("PageState", "SnapshotTable", "decode_page", "encode_page")

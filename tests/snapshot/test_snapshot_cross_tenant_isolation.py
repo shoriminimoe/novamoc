@@ -1,6 +1,6 @@
-"""``InitialSyncPaginator`` returns only the active tenant's rows.
+"""``SnapshotPaginator`` returns only the active tenant's rows.
 
-Regression guard for the bulk-sync endpoint's tenant scoping. The
+Regression guard for the snapshot endpoint's tenant scoping. The
 paginator carries no tenant predicate of its own — Layer 1 of
 ``db._listeners`` injects ``WHERE tenant_id = <ctx>`` on every ORM
 SELECT against the four projection tables and on the ``current_seq``
@@ -19,9 +19,9 @@ from novamoc.db.models.data import Asset
 from novamoc.db.models.schema import AssetType
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import SchemaChangeLogService
-from novamoc.domain.sync._pagination import InitialSyncPaginator
-from novamoc.domain.sync._payloads import AssetsBatchBody
-from novamoc.domain.sync.services import (
+from novamoc.domain.snapshot._pagination import SnapshotPaginator
+from novamoc.domain.snapshot._payloads import AssetsBatchBody
+from novamoc.domain.snapshot.services import (
     AssetFieldValueService,
     AssetService,
     MaintenanceRecordFieldValueService,
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def _paginator(session: AsyncSession) -> InitialSyncPaginator:
-    return InitialSyncPaginator(
+def _paginator(session: AsyncSession) -> SnapshotPaginator:
+    return SnapshotPaginator(
         change_log_service=SchemaChangeLogService(session=session),
         event_log_service=EventLogService(session=session),
         asset_service=AssetService(session=session),
@@ -72,19 +72,19 @@ async def _seed_asset(session: AsyncSession, *, tenant_id: str) -> tuple[UUID, U
 
 
 async def _collect_asset_ids(
-    paginator: InitialSyncPaginator,
+    paginator: SnapshotPaginator,
 ) -> set[UUID]:
     seen: set[UUID] = set()
-    cursor: str | None = None
+    page: str | None = None
     pages = 0
     while True:
-        batch = await paginator(cursor=cursor, results_per_page=100)
+        batch = await paginator(page=page, results_per_page=100)
         if isinstance(batch.body, AssetsBatchBody):
             for item in batch.body.items:
                 seen.add(item.id)
-        if batch.cursor is None:
+        if batch.page is None:
             break
-        cursor = batch.cursor
+        page = batch.page
         pages += 1
         assert pages < 20, "runaway-loop guard"
     return seen

@@ -1,11 +1,11 @@
-"""Regression guards for the sync wire-format structs."""
+"""Regression guards for the snapshot wire-format structs."""
 
 from __future__ import annotations
 
 import msgspec
 import pytest
 
-from novamoc.domain.sync._payloads import (
+from novamoc.domain.snapshot._payloads import (
     AssetFieldValuesBatchBody,
     AssetsBatchBody,
     MaintenanceRecordFieldValuesBatchBody,
@@ -23,7 +23,7 @@ from novamoc.domain.sync._payloads import (
     ],
 )
 def test_batch_body_rejects_unknown_fields(body_type: type, tag: str) -> None:
-    """``forbid_unknown_fields`` set on ``_SyncBody`` propagates to
+    """``forbid_unknown_fields`` set on ``_SnapshotBody`` propagates to
     every ``*BatchBody`` subclass via msgspec inheritance.
 
     A regression guard for `the PR-104 review

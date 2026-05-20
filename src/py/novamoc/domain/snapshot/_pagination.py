@@ -1,9 +1,9 @@
 """Walks the four projection tables in fixed order.
 
-Captures ``start_seq`` on the first request (when ``cursor is None``),
+Captures ``start_seq`` on the first request (when ``page is None``),
 pages within the current table, advances to the next non-empty table
 when the current one runs out, and emits the terminal batch (with
-``event_log_cursor=start_seq``) once every table is exhausted.
+``cursor=start_seq``) once every table is exhausted.
 
 Tenant scoping is structural: every ``.list(...)`` and every
 ``current_version`` / ``current_seq`` aggregate routes through Layer 1
@@ -24,22 +24,22 @@ from novamoc.db.models.data import (
     MaintenanceRecord,
     MaintenanceRecordFieldValue,
 )
-from novamoc.domain.sync._cursor import (
-    CursorState,
-    InitialSyncTable,
-    decode_cursor,
-    encode_cursor,
+from novamoc.domain.snapshot._page import (
+    PageState,
+    SnapshotTable,
+    decode_page,
+    encode_page,
 )
-from novamoc.domain.sync._payloads import (
+from novamoc.domain.snapshot._payloads import (
     AssetFieldValuesBatchBody,
     AssetFieldValueView,
     AssetsBatchBody,
     AssetView,
-    InitialSyncBatch,
     MaintenanceRecordFieldValuesBatchBody,
     MaintenanceRecordFieldValueView,
     MaintenanceRecordsBatchBody,
     MaintenanceRecordView,
+    SnapshotBatch,
 )
 
 if TYPE_CHECKING:
@@ -50,8 +50,8 @@ if TYPE_CHECKING:
 
     from novamoc.domain.events.services import EventLogService
     from novamoc.domain.schema.services import SchemaChangeLogService
-    from novamoc.domain.sync._payloads import InitialSyncBody
-    from novamoc.domain.sync.services import (
+    from novamoc.domain.snapshot._payloads import SnapshotBody
+    from novamoc.domain.snapshot.services import (
         AssetFieldValueService,
         AssetService,
         MaintenanceRecordFieldValueService,
@@ -60,16 +60,16 @@ if TYPE_CHECKING:
 
 
 # Fixed order. ``maintenance_record_field_values`` is always last because
-# its terminal batch is what carries ``event_log_cursor``.
-_TABLES: Final[tuple[InitialSyncTable, ...]] = (
-    InitialSyncTable.ASSETS,
-    InitialSyncTable.ASSET_FIELD_VALUES,
-    InitialSyncTable.MAINTENANCE_RECORDS,
-    InitialSyncTable.MAINTENANCE_RECORD_FIELD_VALUES,
+# its terminal batch is what carries ``cursor`` (the replication seq).
+_TABLES: Final[tuple[SnapshotTable, ...]] = (
+    SnapshotTable.ASSETS,
+    SnapshotTable.ASSET_FIELD_VALUES,
+    SnapshotTable.MAINTENANCE_RECORDS,
+    SnapshotTable.MAINTENANCE_RECORD_FIELD_VALUES,
 )
 
 
-def _tables_from(start: InitialSyncTable) -> tuple[InitialSyncTable, ...]:
+def _tables_from(start: SnapshotTable) -> tuple[SnapshotTable, ...]:
     """Suffix of ``_TABLES`` starting at ``start``."""
     idx = _TABLES.index(start)
     return _TABLES[idx:]
@@ -85,7 +85,7 @@ def _split_field_value_last_id(last_id: str) -> tuple[UUID, str]:
     return UUID(entity_str), field_id
 
 
-class InitialSyncPaginator:
+class SnapshotPaginator:
     """Page through the four projection tables in fixed order."""
 
     def __init__(  # noqa: PLR0913  # one parameter per injected service; aggregator class
@@ -106,14 +106,14 @@ class InitialSyncPaginator:
         self._maintenance_record_field_value = maintenance_record_field_value_service
 
     async def __call__(
-        self, *, cursor: str | None, results_per_page: int
-    ) -> InitialSyncBatch:
-        if cursor is None:
+        self, *, page: str | None, results_per_page: int
+    ) -> SnapshotBatch:
+        if page is None:
             start_seq = await self._event_log.current_seq()
             current_table = _TABLES[0]
             last_id: str | None = None
         else:
-            state = decode_cursor(cursor)
+            state = decode_page(page)
             start_seq = state.start_seq
             current_table = state.table
             last_id = state.last_id
@@ -127,29 +127,29 @@ class InitialSyncPaginator:
             page_rows = rows[:results_per_page]
             if page_rows or table is _TABLES[-1]:
                 body = _body_for(table, page_rows)
-                next_cursor, event_log_cursor = self._compute_continuation(
+                next_page, cursor = self._compute_continuation(
                     table=table,
                     page_rows=page_rows,
                     has_more_in_table=has_more_in_table,
                     start_seq=start_seq,
                 )
-                return InitialSyncBatch(
+                return SnapshotBatch(
                     schema_version=schema_version,
-                    cursor=next_cursor,
-                    event_log_cursor=event_log_cursor,
+                    page=next_page,
+                    cursor=cursor,
                     body=body,
                 )
         # Unreachable: the last-table branch above always returns.
-        msg = "InitialSyncPaginator exited the walk without emitting a batch"
+        msg = "SnapshotPaginator exited the walk without emitting a batch"
         raise RuntimeError(msg)
 
     async def _read_page(
         self,
-        table: InitialSyncTable,
+        table: SnapshotTable,
         last_id: str | None,
         limit: int,
     ) -> Sequence[Any]:
-        if table is InitialSyncTable.ASSETS:
+        if table is SnapshotTable.ASSETS:
             filters: list[StatementFilter | ColumnElement[bool]] = [
                 OrderBy(field_name="id"),
                 LimitOffset(limit=limit, offset=0),
@@ -157,7 +157,7 @@ class InitialSyncPaginator:
             if last_id is not None:
                 filters.insert(0, Asset.id > UUID(last_id))
             return await self._asset.list(*filters)
-        if table is InitialSyncTable.ASSET_FIELD_VALUES:
+        if table is SnapshotTable.ASSET_FIELD_VALUES:
             filters: list[StatementFilter | ColumnElement[bool]] = [
                 OrderBy(field_name="asset_id"),
                 OrderBy(field_name="field_id"),
@@ -179,7 +179,7 @@ class InitialSyncPaginator:
                     ),
                 )
             return await self._asset_field_value.list(*filters)
-        if table is InitialSyncTable.MAINTENANCE_RECORDS:
+        if table is SnapshotTable.MAINTENANCE_RECORDS:
             filters: list[StatementFilter | ColumnElement[bool]] = [
                 OrderBy(field_name="id"),
                 LimitOffset(limit=limit, offset=0),
@@ -211,45 +211,51 @@ class InitialSyncPaginator:
     @staticmethod
     def _compute_continuation(
         *,
-        table: InitialSyncTable,
+        table: SnapshotTable,
         page_rows: Sequence[Any],
         has_more_in_table: bool,
         start_seq: int,
     ) -> tuple[str | None, int | None]:
-        """Return ``(next_cursor, event_log_cursor)`` for this batch."""
+        """Return ``(next_page, cursor)`` for this batch.
+
+        ``next_page`` is the opaque pagination continuation (or ``None``
+        on the terminal batch). ``cursor`` is the replication
+        ``event_log.seq`` (only present on the terminal batch; ``None``
+        on intermediate batches).
+        """
         if has_more_in_table:
-            next_state = CursorState(
+            next_state = PageState(
                 start_seq=start_seq,
                 table=table,
                 last_id=_last_id_of(table, page_rows[-1]),
             )
-            return encode_cursor(next_state), None
+            return encode_page(next_state), None
         if table is _TABLES[-1]:
             return None, start_seq
         next_table = _TABLES[_TABLES.index(table) + 1]
-        next_state = CursorState(start_seq=start_seq, table=next_table, last_id=None)
-        return encode_cursor(next_state), None
+        next_state = PageState(start_seq=start_seq, table=next_table, last_id=None)
+        return encode_page(next_state), None
 
 
-def _last_id_of(table: InitialSyncTable, row: Any) -> str:
+def _last_id_of(table: SnapshotTable, row: Any) -> str:
     """Return the encoded last-id string for ``row`` in ``table``.
 
     ``row`` is the appropriate ORM model for ``table``; typed as ``Any``
     because the four branches handle four model classes without
     over-engineering an overload set.
     """
-    if table is InitialSyncTable.ASSETS:
+    if table is SnapshotTable.ASSETS:
         return str(row.id)
-    if table is InitialSyncTable.ASSET_FIELD_VALUES:
+    if table is SnapshotTable.ASSET_FIELD_VALUES:
         return f"{row.asset_id}:{row.field_id}"
-    if table is InitialSyncTable.MAINTENANCE_RECORDS:
+    if table is SnapshotTable.MAINTENANCE_RECORDS:
         return str(row.id)
     return f"{row.maintenance_record_id}:{row.field_id}"
 
 
-def _body_for(table: InitialSyncTable, rows: Sequence[Any]) -> InitialSyncBody:
+def _body_for(table: SnapshotTable, rows: Sequence[Any]) -> SnapshotBody:
     """Wrap ``rows`` in the discriminated body variant for ``table``."""
-    if table is InitialSyncTable.ASSETS:
+    if table is SnapshotTable.ASSETS:
         return AssetsBatchBody(
             items=tuple(
                 AssetView(
@@ -263,7 +269,7 @@ def _body_for(table: InitialSyncTable, rows: Sequence[Any]) -> InitialSyncBody:
                 for r in rows
             )
         )
-    if table is InitialSyncTable.ASSET_FIELD_VALUES:
+    if table is SnapshotTable.ASSET_FIELD_VALUES:
         return AssetFieldValuesBatchBody(
             items=tuple(
                 AssetFieldValueView(
@@ -275,7 +281,7 @@ def _body_for(table: InitialSyncTable, rows: Sequence[Any]) -> InitialSyncBody:
                 for r in rows
             )
         )
-    if table is InitialSyncTable.MAINTENANCE_RECORDS:
+    if table is SnapshotTable.MAINTENANCE_RECORDS:
         return MaintenanceRecordsBatchBody(
             items=tuple(
                 MaintenanceRecordView(
@@ -303,4 +309,4 @@ def _body_for(table: InitialSyncTable, rows: Sequence[Any]) -> InitialSyncBody:
     )
 
 
-__all__ = ("InitialSyncPaginator",)
+__all__ = ("SnapshotPaginator",)

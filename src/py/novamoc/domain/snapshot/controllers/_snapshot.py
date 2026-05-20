@@ -1,10 +1,20 @@
-"""HTTP controller for ``/sync/initial`` (M2.3, ADR-015).
+"""HTTP controller for ``GET /snapshot`` (M2.3, ADR-015).
 
 Thin by design: bound checking lives in the Litestar ``Parameter(...)``
-annotation, cursor decoding lives in the paginator, tenant scoping is
-structural via the listener layer. The handler performs no manual
+annotation, page-token decoding lives in the paginator, tenant scoping
+is structural via the listener layer. The handler performs no manual
 error mapping; ``ValidationException`` and ``PayloadShapeError`` both
 funnel through the existing ``ProblemDetailsPlugin`` (ADR-016).
+
+Two cursor-flavoured fields on the response are deliberately distinct
+(see ``_payloads.SnapshotBatch``):
+
+* The ``?page=`` query parameter (and the response's ``page`` field)
+  is the opaque pagination continuation across the multi-batch
+  transfer.
+* The ``cursor`` field on the response (present only on the terminal
+  batch) is the replication ``event_log.seq`` the client feeds to
+  ``GET /events?cursor=`` for incremental catch-up.
 """
 
 from __future__ import annotations
@@ -19,14 +29,14 @@ from litestar.params import Parameter
 
 from novamoc.api._problem_details import ProblemDetails
 from novamoc.config import (
-    INITIAL_SYNC_DEFAULT_BATCH_SIZE,
-    INITIAL_SYNC_MAX_BATCH_SIZE,
+    SNAPSHOT_DEFAULT_BATCH_SIZE,
+    SNAPSHOT_MAX_BATCH_SIZE,
 )
 from novamoc.domain.events.services import EventLogService
 from novamoc.domain.schema.services import SchemaChangeLogService
-from novamoc.domain.sync._pagination import InitialSyncPaginator
-from novamoc.domain.sync._payloads import InitialSyncBatch
-from novamoc.domain.sync.services import (
+from novamoc.domain.snapshot._pagination import SnapshotPaginator
+from novamoc.domain.snapshot._payloads import SnapshotBatch
+from novamoc.domain.snapshot.services import (
     AssetFieldValueService,
     AssetService,
     MaintenanceRecordFieldValueService,
@@ -34,15 +44,15 @@ from novamoc.domain.sync.services import (
 )
 
 
-async def _provide_initial_sync_paginator(  # noqa: PLR0913  # one parameter per DI'd dep; Litestar pattern
+async def _provide_snapshot_paginator(  # noqa: PLR0913  # one parameter per DI'd dep; Litestar pattern
     schema_change_log_service: SchemaChangeLogService,
     event_log_service: EventLogService,
     asset_service: AssetService,
     asset_field_value_service: AssetFieldValueService,
     maintenance_record_service: MaintenanceRecordService,
     maintenance_record_field_value_service: MaintenanceRecordFieldValueService,
-) -> InitialSyncPaginator:
-    return InitialSyncPaginator(
+) -> SnapshotPaginator:
+    return SnapshotPaginator(
         change_log_service=schema_change_log_service,
         event_log_service=event_log_service,
         asset_service=asset_service,
@@ -52,11 +62,11 @@ async def _provide_initial_sync_paginator(  # noqa: PLR0913  # one parameter per
     )
 
 
-class SyncController(Controller):
-    path = "/sync"
-    tags = ("sync",)
+class SnapshotController(Controller):
+    path = "/snapshot"
+    tags = ("snapshot",)
     dependencies = (
-        {"paginator": Provide(_provide_initial_sync_paginator)}
+        {"paginator": Provide(_provide_snapshot_paginator)}
         | providers.create_service_dependencies(
             SchemaChangeLogService, "schema_change_log_service"
         )
@@ -75,21 +85,21 @@ class SyncController(Controller):
     )
 
     @get(
-        "/initial",
+        "/",
         responses={
             400: ResponseSpec(
                 ProblemDetails,
-                description="Invalid cursor or batch size",
+                description="Invalid page token or batch size",
                 media_type="application/problem+json",
             ),
         },
     )
-    async def initial(
+    async def read(
         self,
-        paginator: InitialSyncPaginator,
-        cursor: str | None = None,
+        paginator: SnapshotPaginator,
+        page: str | None = None,
         results_per_page: Annotated[
-            int, Parameter(ge=1, le=INITIAL_SYNC_MAX_BATCH_SIZE)
-        ] = INITIAL_SYNC_DEFAULT_BATCH_SIZE,
-    ) -> InitialSyncBatch:
-        return await paginator(cursor=cursor, results_per_page=results_per_page)
+            int, Parameter(ge=1, le=SNAPSHOT_MAX_BATCH_SIZE)
+        ] = SNAPSHOT_DEFAULT_BATCH_SIZE,
+    ) -> SnapshotBatch:
+        return await paginator(page=page, results_per_page=results_per_page)

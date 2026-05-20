@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
     )
     from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema.controllers import SchemaController
-    from novamoc.domain.sync.controllers import SyncController
+    from novamoc.domain.snapshot.controllers import SnapshotController
 
     s = settings if settings is not None else Settings()
 
@@ -96,7 +96,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
         route_handlers=[
             SchemaController,
             EventsController,
-            SyncController,
+            SnapshotController,
             problem_docs_router,
         ],
         middleware=[

@@ -254,27 +254,35 @@ scoping is structural — Layer 1 of ``db._listeners`` injects the
 ``WHERE tenant_id = <ctx>`` predicate on every ORM SELECT, so the
 paginator carries no tenant predicate of its own.
 
-## Initial sync endpoint (`GET /sync/initial`)
+## Snapshot endpoint (`GET /snapshot`)
 
 Companion to ``GET /events`` and the bulk half of the sync handshake
 (ADR-015). Streams the active tenant's current data-projection state —
 ``assets``, ``asset_field_values``, ``maintenance_records``,
-``maintenance_record_field_values`` — in fixed-table-order batches with
-an opaque continuation ``cursor``. Closes M2.3 (issue #33).
+``maintenance_record_field_values`` — in fixed-table-order batches.
+Closes M2.3 (issue #33). Historical (as-of-seq) snapshots are out of
+scope; only the current projection is served.
 
 Response is a custom envelope (not Litestar's ``CursorPagination`` —
 items are heterogeneous across batches):
 
 ```
-InitialSyncBatch {
+SnapshotBatch {
   schema_version: int
-  cursor: str | null         # opaque continuation; null = transfer complete
-  event_log_cursor: int | null  # only when cursor is null (terminal batch)
-  body: InitialSyncBody      # discriminated by `table` (msgspec tag_field)
+  page: str | null        # opaque pagination continuation; null = terminal batch
+  cursor: int | null      # replication event_log.seq; only on terminal batch
+  body: SnapshotBody      # discriminated by `table` (msgspec tag_field)
 }
 ```
 
-``InitialSyncBody`` is a tagged union with one variant per projection
+Two cursor-flavoured fields ride at the top level and are deliberately
+distinct: ``page`` is the opaque pagination continuation across this
+multi-batch transfer (passed back as ``?page=`` on the next request);
+``cursor`` is the replication ``event_log.seq`` captured at the start
+of the transfer (present only on the terminal batch — the client feeds
+this to ``GET /events?cursor=`` to begin incremental catch-up).
+
+``SnapshotBody`` is a tagged union with one variant per projection
 table: ``AssetsBatchBody``, ``AssetFieldValuesBatchBody``,
 ``MaintenanceRecordsBatchBody``, ``MaintenanceRecordFieldValuesBatchBody``.
 Each variant carries an ``items`` tuple of the corresponding row view.
@@ -283,12 +291,11 @@ values) and ``properties`` (derivable from per-field rows) — the client
 reconstructs them by folding field-value rows, per ADR-015 §"Derived
 entity JSON".
 
-The cursor is base64-JSON encoding ``(start_seq, table, last_id)``.
-``start_seq`` is captured on the **first** request (when ``cursor is
-None``) and threaded through every subsequent cursor; this is the
-correctness pin for events arriving mid-transfer. Returned as
-``event_log_cursor`` on the terminal batch — the client uses it to
-start ``GET /events`` catch-up (M2.4) and as the M3 WS hello cursor.
+The page token is base64-JSON encoding ``(start_seq, table, last_id)``.
+``start_seq`` is captured on the **first** request (when ``page is
+None``) and threaded through every subsequent token; this is the
+correctness pin for events arriving mid-transfer. Returned as the
+``cursor`` field on the terminal batch.
 
 Empty intermediate tables are collapsed server-side, so an empty
 tenant returns in a single round-trip (terminal batch from the last
@@ -302,20 +309,20 @@ Tenant scoping is structural — Layer 1 of ``db._listeners`` injects
 ``MAX(event_log.seq)`` and ``MAX(schema_change_log.seq)`` aggregates
 via the listener's get-final-froms fallback path.
 
-Batch size: ``cursor`` defaults to ``None``, ``results_per_page``
-defaults to ``INITIAL_SYNC_DEFAULT_BATCH_SIZE`` (1000) and is capped at
-``INITIAL_SYNC_MAX_BATCH_SIZE`` (5000); both constants live in
+Batch size: ``page`` defaults to ``None``, ``results_per_page``
+defaults to ``SNAPSHOT_DEFAULT_BATCH_SIZE`` (1000) and is capped at
+``SNAPSHOT_MAX_BATCH_SIZE`` (5000); both constants live in
 ``config.py`` and are imported directly by the controller. Bad input
-(malformed cursor, out-of-range batch size) renders as
+(malformed page token, out-of-range batch size) renders as
 ``application/problem+json`` per ADR-016, via Litestar's standard
 validation pipeline plus ``PayloadShapeError(INVALID_PAYLOAD_SHAPE)``
-for cursor-decode failures.
+for page-decode failures.
 
-Implementation lives in ``domain/sync/_pagination.py``
-(``InitialSyncPaginator``); the controller's ``initial`` handler is a
-thin pass-through. Wire structs live in ``domain/sync/_payloads.py``,
-opaque cursor in ``domain/sync/_cursor.py``, four read-only services
-in ``domain/sync/services.py``.
+Implementation lives in ``domain/snapshot/_pagination.py``
+(``SnapshotPaginator``); the controller's ``read`` handler is a thin
+pass-through. Wire structs live in ``domain/snapshot/_payloads.py``,
+opaque page token in ``domain/snapshot/_page.py``, four read-only
+services in ``domain/snapshot/services.py``.
 
 ## Data model conventions
 
