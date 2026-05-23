@@ -198,6 +198,125 @@ async def test_results_per_page_above_max_is_400(client: AsyncTestClient) -> Non
     assert resp.status_code == 400, resp.text
 
 
+async def test_snapshot_then_catchup_full_handshake(
+    client: AsyncTestClient,
+) -> None:
+    """End-to-end client bootstrap: snapshot → catch-up handshake.
+
+    The canonical fresh-client flow ADR-015 + ADR-013 prescribe:
+    bulk-fetch the projection via ``GET /snapshot``, then start
+    incremental sync from the seq the server captured at the *start*
+    of that transfer (returned as ``cursor`` on the terminal batch,
+    fed to ``GET /events?cursor=``).
+
+    The correctness pin: events appended *after* the snapshot started
+    but *before* it terminated must surface via catch-up — they're
+    absent from the projection rows but present in ``event_log`` past
+    the captured ``start_seq``. Events already reflected in the
+    projection at ``start_seq`` must NOT be re-emitted by catch-up.
+    """
+    type_id = str(uuid4())
+
+    # Event 1: appended before the snapshot starts. Its instance will
+    # appear in the snapshot's projection rows; catch-up MUST NOT
+    # re-emit it.
+    pre_snapshot_id = str(uuid4())
+    pre = await client.post(
+        "/events",
+        json={
+            "schema_version": 0,
+            "events": [
+                {
+                    "hlc": "0001700000000001-00000-aaa",
+                    "family": "asset",
+                    "type_id": type_id,
+                    "instance_id": pre_snapshot_id,
+                    "body": {
+                        "event": "created",
+                        "values": {"col:name": "Pre-snapshot truck"},
+                    },
+                }
+            ],
+        },
+    )
+    assert pre.status_code == 202, pre.text
+
+    # Drive the snapshot to its terminal batch.
+    snapshot_assets: list[dict] = []
+    terminal_body: dict | None = None
+    page: str | None = None
+    requests = 0
+    while True:
+        params = {"results_per_page": "100"}
+        if page:
+            params["page"] = page
+        resp = await client.get("/snapshot", params=params)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        if body["body"]["table"] == "assets":
+            snapshot_assets.extend(body["body"]["items"])
+        if body["page"] is None:
+            terminal_body = body
+            break
+        page = body["page"]
+        requests += 1
+        assert requests < 20, "runaway-loop guard"
+
+    assert terminal_body is not None
+    # The pre-snapshot asset is in the projection; the snapshot's
+    # terminal `cursor` is the seq captured at the start of transfer.
+    snapshot_cursor: int = terminal_body["cursor"]
+    assert any(a["id"] == pre_snapshot_id for a in snapshot_assets)
+
+    # Events 2 + 3: appended AFTER the snapshot's start_seq is
+    # captured. The projection rows the client just received don't
+    # reflect these; catch-up MUST emit them.
+    post_snapshot_ids = [str(uuid4()) for _ in range(2)]
+    for i, iid in enumerate(post_snapshot_ids):
+        hlc = f"00017000000000{i + 2:02d}-00000-bbb"
+        resp = await client.post(
+            "/events",
+            json={
+                "schema_version": 0,
+                "events": [
+                    {
+                        "hlc": hlc,
+                        "family": "asset",
+                        "type_id": type_id,
+                        "instance_id": iid,
+                        "body": {"event": "created", "values": {}},
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 202, resp.text
+
+    # Drive incremental catch-up from the snapshot's cursor.
+    catchup_events: list[dict] = []
+    next_cursor: int | None = snapshot_cursor
+    requests = 0
+    while True:
+        resp = await client.get(
+            "/events",
+            params={"cursor": str(next_cursor), "results_per_page": "100"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        catchup_events.extend(body["items"])
+        if body["cursor"] is None:
+            break
+        next_cursor = body["cursor"]
+        requests += 1
+        assert requests < 20, "runaway-loop guard"
+
+    # Catch-up returns exactly the two post-snapshot events; the
+    # pre-snapshot one stays out (its effect was already in the
+    # projection at start_seq).
+    catchup_instance_ids = {e["instance_id"] for e in catchup_events}
+    assert catchup_instance_ids == set(post_snapshot_ids)
+    assert pre_snapshot_id not in catchup_instance_ids
+
+
 async def test_tombstoned_assets_are_included(client: AsyncTestClient) -> None:
     type_id = str(uuid4())
     instance_id = str(uuid4())
