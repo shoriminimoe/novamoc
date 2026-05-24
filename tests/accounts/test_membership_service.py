@@ -13,7 +13,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
+from novamoc.db.models._auth import UserTenantMembership
 from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
 from novamoc.domain.accounts._services import (
     TenantService,
@@ -160,3 +162,49 @@ async def test_get_for_user_returns_membership(session: AsyncSession) -> None:
     found = await svc.get_for_user(user.id)
     assert found is not None
     assert found.tenant_id == tenant.id
+
+
+async def test_string_form_uuid_in_dict_payload_is_extracted(
+    session: AsyncSession,
+) -> None:
+    """``GUID`` admits string UUIDs at the column boundary, so the
+    pre-check normalises them rather than silently bypassing the
+    invariant."""
+    user = await _make_user(session, "hugo")
+    tenant_a = await _make_tenant(session, "Alpha")
+    tenant_b = await _make_tenant(session, "Bravo")
+    svc = UserTenantMembershipService(session=session)
+
+    await svc.create(
+        data={"user_id": str(user.id), "tenant_id": str(tenant_a.id)},
+        auto_commit=False,
+    )
+    await session.flush()
+
+    with pytest.raises(UserAlreadyHasTenantError):
+        await svc.create(
+            data={"user_id": str(user.id), "tenant_id": str(tenant_b.id)},
+            auto_commit=False,
+        )
+
+
+async def test_db_unique_backstops_direct_insert(
+    session: AsyncSession,
+) -> None:
+    """``UNIQUE(user_id)`` rejects a second membership inserted
+    directly via the ORM (bypassing the service entirely), proving
+    the structural backstop the service docstring promises."""
+    user = await _make_user(session, "iris")
+    tenant_a = await _make_tenant(session, "Alpha")
+    tenant_b = await _make_tenant(session, "Bravo")
+    svc = UserTenantMembershipService(session=session)
+
+    await svc.create(
+        data={"user_id": user.id, "tenant_id": tenant_a.id},
+        auto_commit=False,
+    )
+    await session.flush()
+
+    session.add(UserTenantMembership(user_id=user.id, tenant_id=tenant_b.id))
+    with pytest.raises(IntegrityError):
+        await session.flush()

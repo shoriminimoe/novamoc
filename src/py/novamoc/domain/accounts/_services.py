@@ -100,9 +100,22 @@ class UserTenantMembershipService(
     ) -> UserTenantMembership:
         """Create a membership, enforcing the 1:1 invariant.
 
+        Two layers of enforcement:
+
+        * Pre-check: extract ``user_id`` from ``data`` and raise the
+          friendly :class:`UserAlreadyHasTenantError` if a membership
+          already exists. Covers the common shapes (dict, ORM
+          instance, anything exposing a ``user_id`` attribute).
+        * Backstop: the ``UNIQUE(user_id)`` constraint on
+          :class:`UserTenantMembership` rejects any insert the
+          pre-check missed (concurrent inserts, exotic payload shapes)
+          with :class:`~sqlalchemy.exc.IntegrityError`. Callers that
+          need the friendly error for those paths must catch the
+          IntegrityError themselves.
+
         Raises:
             UserAlreadyHasTenantError: ``user_id`` already has a
-                membership row.
+                membership row (pre-check path).
         """
         user_id = _extract_user_id(data)
         if user_id is not None and await self.list_for_user(user_id):
@@ -113,11 +126,27 @@ class UserTenantMembershipService(
 def _extract_user_id(
     data: ModelDictT[UserTenantMembership] | UserTenantMembership,
 ) -> uuid.UUID | None:
-    """Pull ``user_id`` out of a create payload regardless of shape."""
-    if isinstance(data, UserTenantMembership):
-        return data.user_id
+    """Best-effort ``user_id`` extraction from a create payload.
+
+    Covers the shapes ``ModelDictT`` actually admits today: ``dict``,
+    ORM instance, and any object exposing a ``user_id`` attribute
+    (msgspec Structs, pydantic models, attrs classes, dataclasses).
+    Accepts UUID or string-form (``GUID.process_bind_param`` admits
+    both, so the DB sees the same value either way). A ``None`` return
+    means "could not extract" — the service-layer pre-check is skipped
+    and the ``UniqueConstraint("user_id")`` on the model is the
+    backstop.
+    """
     if isinstance(data, dict):
-        value = data.get("user_id")
-        if isinstance(value, uuid.UUID):
-            return value
+        d: dict[str, Any] = data  # type: ignore  # ty can't narrow ModelDictT through isinstance
+        value: object = d.get("user_id")
+    else:
+        value = getattr(data, "user_id", None)
+    if isinstance(value, uuid.UUID):
+        return value
+    if isinstance(value, str):
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            return None
     return None

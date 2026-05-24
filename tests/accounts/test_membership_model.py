@@ -95,10 +95,10 @@ async def test_membership_orphan_tenant_fk_rejected(session: AsyncSession) -> No
 
 
 @pytest.mark.no_tenant
-async def test_membership_same_user_distinct_tenants_allowed_at_schema(
+async def test_membership_unique_user_id_rejects_second_tenant(
     session: AsyncSession,
 ) -> None:
-    """The table itself is N-to-N — the 1:1 invariant lives in the service."""
+    """``UNIQUE(user_id)`` backstops the v1 1:1 invariant at the DB level."""
     await _enable_foreign_keys(session)
     user = auth_models.User(username="erin", password_hash="hash")  # noqa: S106
     tenant_a = auth_models.Tenant(display_name="Alpha")
@@ -106,10 +106,72 @@ async def test_membership_same_user_distinct_tenants_allowed_at_schema(
     session.add_all([user, tenant_a, tenant_b])
     await session.flush()
 
+    session.add(
+        auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant_a.id)
+    )
+    await session.flush()
+
+    session.add(
+        auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant_b.id)
+    )
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+@pytest.mark.no_tenant
+async def test_membership_distinct_users_share_a_tenant(
+    session: AsyncSession,
+) -> None:
+    """``UNIQUE(user_id)`` constrains the user side, not the tenant side."""
+    await _enable_foreign_keys(session)
+    tenant = auth_models.Tenant(display_name="Shared")
+    user_a = auth_models.User(username="frank", password_hash="hash")  # noqa: S106
+    user_b = auth_models.User(username="grace", password_hash="hash")  # noqa: S106
+    session.add_all([tenant, user_a, user_b])
+    await session.flush()
+
     session.add_all(
         [
-            auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant_a.id),
-            auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant_b.id),
+            auth_models.UserTenantMembership(user_id=user_a.id, tenant_id=tenant.id),
+            auth_models.UserTenantMembership(user_id=user_b.id, tenant_id=tenant.id),
         ]
     )
     await session.flush()
+
+
+@pytest.mark.no_tenant
+async def test_membership_cascades_on_user_delete(session: AsyncSession) -> None:
+    """``ondelete=CASCADE`` on user FK drops the membership row."""
+    await _enable_foreign_keys(session)
+    user = auth_models.User(username="harry", password_hash="hash")  # noqa: S106
+    tenant = auth_models.Tenant(display_name="Acme")
+    session.add_all([user, tenant])
+    await session.flush()
+
+    session.add(auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant.id))
+    await session.flush()
+
+    await session.delete(user)
+    await session.flush()
+
+    remaining = await session.execute(
+        text("SELECT COUNT(*) FROM user_tenant_memberships")
+    )
+    assert remaining.scalar_one() == 0
+
+
+@pytest.mark.no_tenant
+async def test_membership_restricts_tenant_delete(session: AsyncSession) -> None:
+    """``ondelete=RESTRICT`` on tenant FK requires explicit member cleanup."""
+    await _enable_foreign_keys(session)
+    user = auth_models.User(username="ivy", password_hash="hash")  # noqa: S106
+    tenant = auth_models.Tenant(display_name="Locked")
+    session.add_all([user, tenant])
+    await session.flush()
+
+    session.add(auth_models.UserTenantMembership(user_id=user.id, tenant_id=tenant.id))
+    await session.flush()
+
+    await session.delete(tenant)
+    with pytest.raises(IntegrityError):
+        await session.flush()
