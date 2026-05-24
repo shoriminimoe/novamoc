@@ -63,6 +63,18 @@ test-js-unit:
 test-js-e2e:
 	cd src/js/web && npm run test:e2e
 
+# Run both test suites under coverage and write artifacts
+[parallel]
+coverage: coverage-py coverage-js
+
+# Python coverage: writes coverage.xml + htmlcov/
+coverage-py:
+	uv run pytest --cov --cov-branch --cov-report=xml --cov-report=html --cov-report=term
+
+# JS coverage: writes src/js/web/coverage/
+coverage-js:
+	cd src/js/web && npm run test -- --coverage
+
 # Check ruff violation counts against the committed ratchet baseline
 ratchet:
 	uv run python scripts/ratchet.py
