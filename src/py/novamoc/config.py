@@ -105,6 +105,9 @@ class ServerSettings:
 EVENT_CATCHUP_DEFAULT_BATCH_SIZE = 500
 EVENT_CATCHUP_MAX_BATCH_SIZE = 5000
 
+SNAPSHOT_DEFAULT_BATCH_SIZE = 1000
+SNAPSHOT_MAX_BATCH_SIZE = 5000
+
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
