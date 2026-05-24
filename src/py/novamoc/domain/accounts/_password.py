@@ -19,6 +19,12 @@ from dataclasses import dataclass
 import argon2
 import argon2.exceptions
 
+# ``InvalidHashError`` is a ``ValueError`` rather than an ``Argon2Error``,
+# so both bases must be listed to fold every verify failure into ``False``.
+# Named so the ``except`` clause stays unambiguously a tuple of exception
+# types under both ``except A, B:`` and ``except (A, B):`` parser forms.
+_VERIFY_ERRORS = (argon2.exceptions.Argon2Error, argon2.exceptions.InvalidHashError)
+
 
 @dataclass(frozen=True, slots=True)
 class PasswordHasher:
@@ -81,7 +87,7 @@ class PasswordHasher:
         """
         try:
             return self._inner().verify(encoded, password)
-        except (argon2.exceptions.Argon2Error, argon2.exceptions.InvalidHashError):
+        except _VERIFY_ERRORS:
             return False
 
     def check_needs_rehash(self, encoded: str) -> bool:
