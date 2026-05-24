@@ -23,3 +23,15 @@ class TenantResolutionError(NotAuthorizedException):
     """Raised when the request envelope did not carry a recognized credential."""
 
     detail = "Tenant could not be resolved from request."
+
+
+class UserAlreadyHasTenantError(Exception):
+    """Raised by UserTenantMembershipService.create when the user already
+    has a membership.
+
+    Interim bare ``Exception`` so M5.4 can land without depending on the
+    problem-details work. M5.6 (#88) promotes this to a ``DomainError``
+    subclass with the proper ``ErrorCode`` plumbing; the type identity
+    persists so callers (and the M5.13 CLI) keep working through the
+    swap.
+    """
