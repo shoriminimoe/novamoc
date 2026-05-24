@@ -49,7 +49,7 @@ def _render_stdout(result: RatchetResult) -> str:
             f"  {c.metric}: {c.old} -> {c.new} ({c.new - c.old:+g})"
             for c in result.improvements
         )
-        lines.append("Run `just ratchet-update` to commit the lower baseline.")
+        lines.append("Run `just ratchet-update` to commit the new baseline.")
     else:
         lines.append("Ratchet OK: baseline matches.")
     return "\n".join(lines)
