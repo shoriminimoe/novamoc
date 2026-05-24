@@ -140,10 +140,47 @@ class AppSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthSettings:
+    """Authentication subsystem tunables (ADR-020).
+
+    Attributes:
+        session_ttl_seconds: Absolute lifetime of a session cookie,
+            in seconds (24h by default).
+        session_cookie_name: Name of the cookie carrying the session id.
+        session_cookie_secure: ``Secure`` flag on the session cookie.
+            Must be ``True`` in production (HTTPS-only); ``False`` in
+            development so the cookie is sent over loopback.
+        argon2_time_cost: argon2id ``t`` parameter (iterations).
+        argon2_memory_cost_kib: argon2id ``m`` parameter (memory, KiB).
+        argon2_parallelism: argon2id ``p`` parameter.
+    """
+
+    session_ttl_seconds: int = field(
+        default_factory=_int_env("NOVAMOC_AUTH_SESSION_TTL_SECONDS", 86400)
+    )
+    session_cookie_name: str = field(
+        default_factory=_str_env("NOVAMOC_AUTH_SESSION_COOKIE_NAME", "novamoc_session")
+    )
+    session_cookie_secure: bool = field(
+        default_factory=_bool_env("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", False)
+    )
+    argon2_time_cost: int = field(
+        default_factory=_int_env("NOVAMOC_AUTH_ARGON2_TIME_COST", 3)
+    )
+    argon2_memory_cost_kib: int = field(
+        default_factory=_int_env("NOVAMOC_AUTH_ARGON2_MEMORY_COST_KIB", 65536)
+    )
+    argon2_parallelism: int = field(
+        default_factory=_int_env("NOVAMOC_AUTH_ARGON2_PARALLELISM", 4)
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
     app: AppSettings = field(default_factory=AppSettings)
+    auth: AuthSettings = field(default_factory=AuthSettings)
 
 
 def problem_html_dir() -> Path:

@@ -6,12 +6,22 @@ import pytest
 
 from novamoc.config import (
     AppSettings,
+    AuthSettings,
     DatabaseSettings,
     Settings,
     _bool_env,
     _float_env,
     _int_env,
     _str_env,
+)
+
+_AUTH_ENV_VARS = (
+    "NOVAMOC_AUTH_SESSION_TTL_SECONDS",
+    "NOVAMOC_AUTH_SESSION_COOKIE_NAME",
+    "NOVAMOC_AUTH_SESSION_COOKIE_SECURE",
+    "NOVAMOC_AUTH_ARGON2_TIME_COST",
+    "NOVAMOC_AUTH_ARGON2_MEMORY_COST_KIB",
+    "NOVAMOC_AUTH_ARGON2_PARALLELISM",
 )
 
 
@@ -117,6 +127,34 @@ class TestAppSettings:
         monkeypatch.setenv("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", "not-a-number")
         with pytest.raises(ValueError, match="cannot parse"):
             AppSettings()
+
+
+class TestAuthSettings:
+    def test_defaults_match_adr_020(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in _AUTH_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        s = AuthSettings()
+        assert s.session_ttl_seconds == 86400
+        assert s.session_cookie_name == "novamoc_session"
+        assert s.session_cookie_secure is False
+        assert s.argon2_time_cost == 3
+        assert s.argon2_memory_cost_kib == 65536
+        assert s.argon2_parallelism == 4
+
+    def test_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NOVAMOC_AUTH_SESSION_TTL_SECONDS", "3600")
+        monkeypatch.setenv("NOVAMOC_AUTH_SESSION_COOKIE_NAME", "sid")
+        monkeypatch.setenv("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", "true")
+        monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_TIME_COST", "5")
+        monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_MEMORY_COST_KIB", "131072")
+        monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_PARALLELISM", "8")
+        s = AuthSettings()
+        assert s.session_ttl_seconds == 3600
+        assert s.session_cookie_name == "sid"
+        assert s.session_cookie_secure is True
+        assert s.argon2_time_cost == 5
+        assert s.argon2_memory_cost_kib == 131072
+        assert s.argon2_parallelism == 8
 
 
 class TestSettings:

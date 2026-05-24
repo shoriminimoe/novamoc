@@ -23,6 +23,8 @@ class ErrorCode(StrEnum):
     SCHEMA_VERSION_STALE = "schema_version_stale"
     UNKNOWN_FIELD = "unknown_field"
     VALUE_TYPE_MISMATCH = "value_type_mismatch"
+    LOGIN_FAILED = "login_failed"
+    USER_ALREADY_HAS_TENANT = "user_already_has_tenant"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -44,6 +46,14 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ),
     ErrorCode.VALUE_TYPE_MISMATCH: (
         "Event value's JSON shape does not match the field's declared data type."
+    ),
+    # Anti-enumeration: deliberately does not mention "password" or
+    # "username". Wrong password, unknown user, disabled user, and the
+    # 0-membership transient all share this body byte-for-byte.
+    ErrorCode.LOGIN_FAILED: "The provided credentials were not accepted.",
+    ErrorCode.USER_ALREADY_HAS_TENANT: (
+        "This user already belongs to a tenant. v1 supports only one "
+        "tenant per user; switching active tenant is not yet available."
     ),
 }
 
