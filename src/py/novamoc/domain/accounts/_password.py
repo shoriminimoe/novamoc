@@ -81,7 +81,7 @@ class PasswordHasher:
         """
         try:
             return self._inner().verify(encoded, password)
-        except argon2.exceptions.Argon2Error, argon2.exceptions.InvalidHashError:
+        except (argon2.exceptions.Argon2Error, argon2.exceptions.InvalidHashError):
             return False
 
     def check_needs_rehash(self, encoded: str) -> bool:
