@@ -38,5 +38,15 @@ export default defineConfig({
     globals: true,
     include: ['tests/component/**/*.test.ts'],
     setupFiles: ['./tests/component/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json-summary'],
+      reportsDirectory: 'coverage',
+      include: ['src/**/*.{ts,svelte}'],
+      exclude: ['src/**/*.d.ts', 'tests/**', 'tests/e2e/**'],
+      // No `thresholds:` block — the ratchet does the gating. Setting a
+      // threshold here would either duplicate the ratchet's role or fight it.
+      all: true,
+    },
   },
 })

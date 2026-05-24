@@ -21,6 +21,7 @@
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^24.12.2",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "@vitest/coverage-v8": "^4.1.7",
     "jsdom": "^29.1.1",
     "svelte": "^5.55.4",
     "svelte-check": "^4.4.6",
