@@ -25,7 +25,13 @@ jobs:
           cache: npm
           cache-dependency-path: src/js/web/package-lock.json
 
+      # The uv_build backend walks `build/wheel_data/` (purelib data tree
+      # populated by `just render-problem-docs`) when building novamoc as
+      # part of `uv sync`. Create it empty first so the build succeeds;
+      # then populate it after the venv exists.
+      - run: mkdir -p build/wheel_data
       - run: uv sync
+      - run: just render-problem-docs
       - run: cd src/js/web && npm ci
 
       - run: just lint
