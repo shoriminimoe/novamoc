@@ -6,7 +6,8 @@ themselves tenant-scoped. The storage-layer listeners in
 ``tenant_id`` column.
 """
 
+from ._session import Session
 from ._tenant import Tenant
 from ._user import User
 
-__all__ = ("Tenant", "User")
+__all__ = ("Session", "Tenant", "User")
