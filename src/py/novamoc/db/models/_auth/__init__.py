@@ -7,5 +7,6 @@ themselves tenant-scoped. The storage-layer listeners in
 """
 
 from ._tenant import Tenant
+from ._user import User
 
-__all__ = ("Tenant",)
+__all__ = ("Tenant", "User")
