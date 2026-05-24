@@ -92,6 +92,8 @@ Keep docstrings concise. Use **Napoleon style** (Google-style sections: `Args:`,
 
 **`src/py/novamoc/db/` must not depend on Litestar.** db-layer modules import only `advanced_alchemy.base` / `advanced_alchemy.types` — never `advanced_alchemy.extensions.litestar`. The Litestar-flavored extensions (`SQLAlchemyAsyncConfig`, `repository`, `service`) belong to web-facing code: `domain/**/services/`, `domain/**/controllers/`, `asgi.py`, and `tests/conftest.py`. Keeping db-layer storage-only is what lets us swap or test the storage layer independently.
 
+**One documented exception:** `db/models/_auth/_session.py` imports `SessionModelMixin` from `advanced_alchemy.extensions.litestar.session` because the mixin has no alternative import path outside that package. The mixin is purely a column declaration — it carries no Litestar request/response wiring — so the layering risk is limited to the import path name.
+
 ## Tenant-scoping enforcement (issue #51)
 
 Cross-tenant isolation is enforced structurally by three SQLAlchemy event listeners registered at `db/_listeners.py` import time. The listeners key off `current_tenant_id` (a `ContextVar` in `db/_tenant_context.py`) which `TenantContextMiddleware` (`domain/accounts/_middleware.py`) sets from `request.auth.tenant_id` for HTTP requests; tests use the `tenant` pytest fixture or `use_tenant` directly.
