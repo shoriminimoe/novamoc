@@ -2,8 +2,9 @@
 default:
 	just --list --unsorted
 
-# Check everything
-check: lint format typecheck test ratchet
+# Check everything: `coverage` runs the test suites under coverage so the
+# ratchet has fresh inputs. Fast local loop stays `just test`.
+check: lint format typecheck coverage ratchet
 
 # Lint everything
 [parallel]
@@ -62,6 +63,18 @@ test-js-unit:
 # Playwright browser e2e tests
 test-js-e2e:
 	cd src/js/web && npm run test:e2e
+
+# Run both test suites under coverage and write artifacts
+[parallel]
+coverage: coverage-py coverage-js
+
+# Python coverage: writes coverage.xml + htmlcov/
+coverage-py:
+	uv run pytest --cov --cov-branch --cov-report=xml --cov-report=html --cov-report=term
+
+# JS coverage: writes src/js/web/coverage/
+coverage-js:
+	cd src/js/web && npm run test -- --coverage
 
 # Check ruff violation counts against the committed ratchet baseline
 ratchet:

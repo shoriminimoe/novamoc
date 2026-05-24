@@ -32,6 +32,9 @@ pip-log.txt
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+coverage.xml
+.coverage.*
+src/js/web/coverage/
 
 # TypeScript & Node.js
 *.js
