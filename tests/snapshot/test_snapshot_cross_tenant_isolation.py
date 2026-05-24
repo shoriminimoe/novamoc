@@ -4,9 +4,9 @@ Regression guard for the snapshot endpoint's tenant scoping. The
 paginator carries no tenant predicate of its own — Layer 1 of
 ``db._listeners`` injects ``WHERE tenant_id = <ctx>`` on every ORM
 SELECT against the four projection tables and on the ``current_seq``
-/ ``current_version`` aggregates. Seeds equivalent rows under ``t-a``
-and ``t-b``; under each tenant context, the bulk transfer must see
-only its own data.
+/ ``current_version`` aggregates. Seeds equivalent rows under
+``DEV_TENANT_ID_A`` and ``DEV_TENANT_ID_B``; under each tenant
+context, the bulk transfer must see only its own data.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from novamoc.domain.snapshot.services import (
     MaintenanceRecordFieldValueService,
     MaintenanceRecordService,
 )
+from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -47,7 +48,7 @@ def _paginator(session: AsyncSession) -> SnapshotPaginator:
     )
 
 
-async def _seed_asset(session: AsyncSession, *, tenant_id: str) -> tuple[UUID, UUID]:
+async def _seed_asset(session: AsyncSession, *, tenant_id: UUID) -> tuple[UUID, UUID]:
     """Seed one asset_type + one asset under ``tenant_id``. Returns
     ``(type_id, asset_id)``."""
     type_id = uuid4()
@@ -56,6 +57,9 @@ async def _seed_asset(session: AsyncSession, *, tenant_id: str) -> tuple[UUID, U
         AssetType(id=type_id, tenant_id=tenant_id, name=f"Truck-{type_id}", active=True)
     )
     await session.flush()
+    # HLC node-id suffix needs to be distinct per tenant so the two
+    # seeded rows don't collide. Last three hex chars of the tenant
+    # UUID give "00a" / "00b" for the canonical A / B fixtures.
     session.add(
         Asset(
             id=asset_id,
@@ -64,7 +68,7 @@ async def _seed_asset(session: AsyncSession, *, tenant_id: str) -> tuple[UUID, U
             name=None,
             properties={},
             deleted=False,
-            row_state_hlc=f"0001700000000000-00000-{tenant_id}",
+            row_state_hlc=f"0001700000000000-00000-{str(tenant_id)[-3:]}",
         )
     )
     await session.flush()
@@ -95,16 +99,16 @@ async def test_paginator_isolates_tenants(session: AsyncSession) -> None:
     # Pre-seed both tenants. The asset_type rows must come first so the
     # FK on Asset(type_id, tenant_id) resolves; use ``use_tenant`` so the
     # auto-stamp listener stamps the right tenant.
-    with use_tenant("t-a"):
-        _, asset_a = await _seed_asset(session, tenant_id="t-a")
-    with use_tenant("t-b"):
-        _, asset_b = await _seed_asset(session, tenant_id="t-b")
+    with use_tenant(DEV_TENANT_ID_A):
+        _, asset_a = await _seed_asset(session, tenant_id=DEV_TENANT_ID_A)
+    with use_tenant(DEV_TENANT_ID_B):
+        _, asset_b = await _seed_asset(session, tenant_id=DEV_TENANT_ID_B)
 
     paginator = _paginator(session)
 
-    with use_tenant("t-a"):
+    with use_tenant(DEV_TENANT_ID_A):
         seen_a = await _collect_asset_ids(paginator)
-    with use_tenant("t-b"):
+    with use_tenant(DEV_TENANT_ID_B):
         seen_b = await _collect_asset_ids(paginator)
 
     assert seen_a == {asset_a}

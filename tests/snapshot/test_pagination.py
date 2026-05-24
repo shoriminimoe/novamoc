@@ -44,6 +44,7 @@ from novamoc.domain.snapshot.services import (
     MaintenanceRecordFieldValueService,
     MaintenanceRecordService,
 )
+from tests._constants import DEV_TENANT_ID
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -66,7 +67,7 @@ def paginator(session: AsyncSession) -> SnapshotPaginator:
 
 
 async def _make_asset_type(
-    session: AsyncSession, *, name: str = "Truck", tenant_id: str = "t1"
+    session: AsyncSession, *, name: str = "Truck", tenant_id: UUID = DEV_TENANT_ID
 ) -> AssetType:
     asset_type = AssetType(id=uuid4(), tenant_id=tenant_id, name=name, active=True)
     session.add(asset_type)
@@ -78,7 +79,7 @@ async def _make_maintenance_record_type(
     session: AsyncSession,
     *,
     name: str = "Inspection",
-    tenant_id: str = "t1",
+    tenant_id: UUID = DEV_TENANT_ID,
 ) -> MaintenanceRecordType:
     mrt = MaintenanceRecordType(id=uuid4(), tenant_id=tenant_id, name=name, active=True)
     session.add(mrt)
@@ -90,7 +91,7 @@ async def _make_asset(
     session: AsyncSession,
     *,
     type_id: UUID,
-    tenant_id: str = "t1",
+    tenant_id: UUID = DEV_TENANT_ID,
     deleted: bool = False,
     hlc: str = "0001700000000000-00000-abc",
 ) -> Asset:
@@ -111,7 +112,7 @@ async def _make_asset(
 async def _make_event(  # noqa: PLR0913  # test-helper builder: explicit keyword args > a dict literal
     session: AsyncSession,
     *,
-    tenant_id: str = "t1",
+    tenant_id: UUID = DEV_TENANT_ID,
     hlc: str,
     type_id: UUID,
     entity_id: UUID,
@@ -134,7 +135,9 @@ async def _make_event(  # noqa: PLR0913  # test-helper builder: explicit keyword
     await session.flush()
 
 
-async def _bump_schema_version(session: AsyncSession, *, tenant_id: str = "t1") -> int:
+async def _bump_schema_version(
+    session: AsyncSession, *, tenant_id: UUID = DEV_TENANT_ID
+) -> int:
     """Append a no-op schema_change_log row to bump current_version()."""
     current = await session.execute(
         select(func.coalesce(func.max(SchemaChangeLog.seq), 0)).where(
@@ -229,7 +232,7 @@ async def test_cross_table_walk(
 
     session.add(
         AssetFieldValue(
-            tenant_id="t1",
+            tenant_id=DEV_TENANT_ID,
             asset_id=asset.id,
             field_id="col:name",
             value_json="Truck-1",
@@ -238,7 +241,7 @@ async def test_cross_table_walk(
     )
     mr = MaintenanceRecord(
         id=uuid4(),
-        tenant_id="t1",
+        tenant_id=DEV_TENANT_ID,
         type_id=mr_type.id,
         asset_id=asset.id,
         name=None,
@@ -250,7 +253,7 @@ async def test_cross_table_walk(
     await session.flush()
     session.add(
         MaintenanceRecordFieldValue(
-            tenant_id="t1",
+            tenant_id=DEV_TENANT_ID,
             maintenance_record_id=mr.id,
             field_id="col:name",
             value_json="Inspection-A",
@@ -294,7 +297,7 @@ async def test_skips_empty_intermediate_tables(
     asset = await _make_asset(session, type_id=asset_type.id)
     mr = MaintenanceRecord(
         id=uuid4(),
-        tenant_id="t1",
+        tenant_id=DEV_TENANT_ID,
         type_id=mr_type.id,
         asset_id=asset.id,
         name=None,
