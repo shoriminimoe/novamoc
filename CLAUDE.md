@@ -21,11 +21,11 @@ The schema-change log is **command-grain** (one row per accepted `POST /schema`)
   - `asgi.py` — `create_app()` factory used by Litestar/Granian.
   - `db/models/schema/` — server-authoritative meta-schema tables + `schema_change_log`.
   - `db/models/data/` — synced entity projections, `*_field_values` LWW projections, `event_log`.
-  - `db/models/_auth/` — auth / tenant-registry tables (`Tenant`; users + memberships land later in M5). Not tenant-scoped — rows in these tables *are* the tenants and users.
+  - `db/models/_auth/` — auth / tenant-registry tables (`Tenant`, `User`, `Session`, `UserTenantMembership`). Not tenant-scoped — rows in these tables *are* the tenants and users; the membership's `tenant_id` opts out of the scoping listeners via `info={"registry_fk": True}` because it points at the registry rather than declaring scope.
   - `db/models/_mixins.py` — `TenantScopedMixin` (adds `tenant_id: Mapped[uuid.UUID]` PK column via `GUID` with `sort_order=-200` so the composite PK leads with `tenant_id`, ADR-014/ADR-020).
   - `db/_listeners.py` — three SQLAlchemy event listeners that enforce tenant scoping (issue #51); `db/_tenant_context.py` holds the request-scoped `current_tenant_id` ContextVar and `use_tenant` helper.
   - `domain/schema/` — `POST /schema` endpoint stack (commands, payloads, dispatch, handlers, services, controller). See "Schema endpoint" below.
-  - `domain/accounts/` — authentication middleware + tenant resolver + `TenantService` (advanced-alchemy service for the `tenants` registry).
+  - `domain/accounts/` — authentication middleware + tenant resolver + registry services (`TenantService`, `UserService`, `UserTenantMembershipService`). The membership service enforces the v1 one-membership-per-user invariant at write time via `UserAlreadyHasTenantError` (ADR-020).
 - `src/js/web/` — Svelte 5 + Vite + Tailwind SPA (currently scaffolding only).
 - `tests/` — pytest suite (currently schema endpoint only).
 - `docs/adr/` — accepted/proposed architecture decisions (ADR-000 through ADR-016).
@@ -104,7 +104,7 @@ Cross-tenant isolation is enforced structurally by three SQLAlchemy event listen
 
 Handler call sites consequently pass NO `tenant_id` for reads and creates (auto-handled). They DO pass it inside `item_id=(auth.tenant_id, req.entity_id)` for `update`/`delete` because the composite PK is the WHERE clause. The `SchemaChangeLogService.append`/`current_version` API takes no `tenant_id` arg — Layer 1 supplies the predicate.
 
-Escape hatch: the `SKIP_TENANT_FILTER` execution option suppresses Layer 1 and Layer 3. Greppable, no production callers in v1.
+Escape hatch: the `SKIP_TENANT_FILTER` execution option suppresses Layer 1 and Layer 3. Greppable, no production callers in v1. A separate marker — `info={"registry_fk": True}` on a `tenant_id` column — flags it as a FK into the `tenants` registry rather than a scope predicate, so the listeners ignore the table entirely (used by `user_tenant_memberships`).
 
 Out of scope of these layers: raw `session.execute(text(...))` SELECTs and in-place `obj.tenant_id` mutation. No production code uses these patterns; if added in the future, audit them carefully — they bypass the structural enforcement.
 

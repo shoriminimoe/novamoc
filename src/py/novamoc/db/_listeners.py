@@ -31,8 +31,15 @@ from novamoc.db._errors import CrossTenantWriteError, UnscopedQueryError
 from novamoc.db._tenant_context import SKIP_TENANT_FILTER, current_tenant_id
 
 
+# Columns named ``tenant_id`` that are FKs to the ``tenants`` registry
+# (e.g. ``user_tenant_memberships.tenant_id``) carry
+# ``info={"registry_fk": True}`` to opt out of scope enforcement. The
+# heuristic still keys off column presence; the marker is the documented
+# escape hatch when "this column points at the tenant registry" rather
+# than "this row belongs to one tenant" is the right reading.
 def _is_tenant_scoped(table) -> bool:
-    return "tenant_id" in table.columns
+    col = table.columns.get("tenant_id")
+    return col is not None and not col.info.get("registry_fk", False)
 
 
 def _instance_is_tenant_scoped(obj: object) -> bool:
@@ -81,7 +88,7 @@ def _inject_tenant_filter(state) -> None:
         mapper.class_
         for mapper in state.all_mappers
         if hasattr(mapper.class_, "__table__")
-        and "tenant_id" in mapper.class_.__table__.columns
+        and _is_tenant_scoped(mapper.class_.__table__)
     ]
 
     if tenant_scoped:
