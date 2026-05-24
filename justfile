@@ -2,8 +2,9 @@
 default:
 	just --list --unsorted
 
-# Check everything
-check: lint format typecheck test ratchet
+# Check everything: `coverage` runs the test suites under coverage so the
+# ratchet has fresh inputs. Fast local loop stays `just test`.
+check: lint format typecheck coverage ratchet
 
 # Lint everything
 [parallel]
