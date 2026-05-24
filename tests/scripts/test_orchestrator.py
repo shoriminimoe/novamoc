@@ -97,10 +97,7 @@ def test_step_summary_written_when_env_set(
     assert "FAIL" in md or "regress" in md.lower()
 
 
-def test_step_summary_skipped_without_env(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_step_summary_skipped_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     with (
         patch.object(orchestrator.ruff, "check", return_value=_clean("ruff")),
