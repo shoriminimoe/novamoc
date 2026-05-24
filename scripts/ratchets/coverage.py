@@ -58,7 +58,7 @@ def _write_baseline(
 ) -> None:
     payload = {
         "python": {"line": py[0], "branch": py[1]},
-        "js":     {"line": js[0], "branch": js[1]},
+        "js": {"line": js[0], "branch": js[1]},
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -136,7 +136,7 @@ def check(
     baseline = _load_baseline(baseline_path)
     current: dict[str, dict[str, float]] = {
         "python": {"line": py[0], "branch": py[1]},
-        "js":     {"line": js[0], "branch": js[1]},
+        "js": {"line": js[0], "branch": js[1]},
     }
     regressions, improvements = _diff(baseline, current)
     return RatchetResult(

@@ -23,10 +23,14 @@ def _baseline(
 ) -> Path:
     path = tmp_path / ".coverage-ratchet.json"
     path.write_text(
-        json.dumps({
-            "python": {"line": py_line, "branch": py_branch},
-            "js":     {"line": js_line, "branch": js_branch},
-        }, indent=2) + "\n"
+        json.dumps(
+            {
+                "python": {"line": py_line, "branch": py_branch},
+                "js": {"line": js_line, "branch": js_branch},
+            },
+            indent=2,
+        )
+        + "\n"
     )
     return path
 
@@ -134,7 +138,7 @@ def test_update_writes_current_values(tmp_path: Path) -> None:
     written = json.loads(baseline.read_text())
     assert written == {
         "python": {"line": pytest.approx(88.45), "branch": pytest.approx(76.12)},
-        "js":     {"line": pytest.approx(65.30), "branch": pytest.approx(58.10)},
+        "js": {"line": pytest.approx(65.30), "branch": pytest.approx(58.10)},
     }
 
 
