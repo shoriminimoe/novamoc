@@ -4,6 +4,10 @@ Reads ``coverage.xml`` (Cobertura, from pytest-cov) and the vitest
 ``coverage-summary.json`` from disk, compares the four overall percentages
 against ``.coverage-ratchet.json``, and returns a ``RatchetResult``.
 
+Percentages are rounded to the nearest whole percent (e.g. 88.45 → 88,
+65.30 → 65) before comparing or writing the baseline, so a few tenths of
+a percent of noise doesn't fail CI or constantly demand a ratchet bump.
+
 The checker does **not** run the test suite — producing the artifacts is
 ``just coverage``'s job. When an artifact or the baseline is missing, the
 checker returns a ``RatchetResult`` whose ``setup_error`` tells the user
@@ -31,21 +35,24 @@ def _parse_python_coverage(path: Path) -> tuple[float, float]:
     """Return ``(line_pct, branch_pct)`` from a Cobertura ``coverage.xml``.
 
     coverage.py emits ``line-rate``/``branch-rate`` as fractions in ``[0, 1]``;
-    we expose percentages in ``[0, 100]``.
+    we expose percentages in ``[0, 100]`` rounded to the nearest whole percent.
     """
     tree = ET.parse(path)  # noqa: S314  -- our own coverage.xml, not user input
     root = tree.getroot()
     line = float(root.attrib["line-rate"]) * 100
     branch = float(root.attrib["branch-rate"]) * 100
-    return round(line, 2), round(branch, 2)
+    return float(round(line)), float(round(branch))
 
 
 def _parse_js_coverage(path: Path) -> tuple[float, float]:
-    """Return ``(line_pct, branch_pct)`` from vitest's ``coverage-summary.json``."""
+    """Return ``(line_pct, branch_pct)`` from vitest's ``coverage-summary.json``.
+
+    Percentages are rounded to the nearest whole percent before being returned.
+    """
     data = json.loads(path.read_text())
     total = data["total"]
-    line = round(float(total["lines"]["pct"]), 2)
-    branch = round(float(total["branches"]["pct"]), 2)
+    line = float(round(float(total["lines"]["pct"])))
+    branch = float(round(float(total["branches"]["pct"])))
     return line, branch
 
 
