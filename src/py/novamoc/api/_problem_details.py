@@ -52,6 +52,8 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.SCHEMA_VERSION_STALE: "Schema version stale",
     ErrorCode.UNKNOWN_FIELD: "Unknown field",
     ErrorCode.VALUE_TYPE_MISMATCH: "Value type mismatch",
+    ErrorCode.LOGIN_FAILED: "Login failed",
+    ErrorCode.USER_ALREADY_HAS_TENANT: "User already has a tenant",
 }
 
 
@@ -65,6 +67,8 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.SCHEMA_VERSION_STALE: 409,
     ErrorCode.UNKNOWN_FIELD: 404,
     ErrorCode.VALUE_TYPE_MISMATCH: 400,
+    ErrorCode.LOGIN_FAILED: 401,
+    ErrorCode.USER_ALREADY_HAS_TENANT: 409,
 }
 
 

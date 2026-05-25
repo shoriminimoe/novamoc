@@ -9,12 +9,18 @@ from novamoc.api._problem_details import (
     make_domain_error_converter,
     make_litestar_validation_error_converter,
     make_msgspec_validation_error_converter,
+    make_tenant_resolution_error_converter,
 )
 from novamoc.domain._errors import (
     ConflictError,
     EntityNotFoundError,
     ErrorCode,
     PayloadShapeError,
+)
+from novamoc.domain.accounts import TenantResolutionError
+from novamoc.domain.accounts._errors import (
+    LoginFailedError,
+    UserAlreadyHasTenantError,
 )
 
 _BASE_URL = "http://test"
@@ -96,11 +102,6 @@ def test_litestar_validation_exception_renders_400_invalid_payload_shape() -> No
 
 
 def test_tenant_resolution_error_renders_401() -> None:
-    from novamoc.api._problem_details import (
-        make_tenant_resolution_error_converter,
-    )
-    from novamoc.domain.accounts import TenantResolutionError
-
     convert = make_tenant_resolution_error_converter(_BASE_URL)
     exc = TenantResolutionError()
     pd_exc = convert(exc)
@@ -108,4 +109,29 @@ def test_tenant_resolution_error_renders_401() -> None:
     assert pd_exc.status_code == 401
     assert pd_exc.type_ == "http://test/problems/tenant_not_resolved.html"
     assert pd_exc.title == "Tenant not resolved"
+    assert pd_exc.extra is None
+
+
+def test_login_failed_error_renders_401_with_anti_enumeration_detail() -> None:
+    convert = make_domain_error_converter(_BASE_URL)
+    pd_exc = convert(LoginFailedError())
+
+    assert pd_exc.status_code == 401
+    assert pd_exc.type_ == "http://test/problems/login_failed.html"
+    assert pd_exc.title == "Login failed"
+    # Anti-enumeration: the public detail must not name the credential
+    # field that failed — wrong password and unknown user share a body.
+    assert pd_exc.detail is not None
+    assert "password" not in pd_exc.detail.lower()
+    assert "username" not in pd_exc.detail.lower()
+    assert pd_exc.extra is None
+
+
+def test_user_already_has_tenant_error_renders_409() -> None:
+    convert = make_domain_error_converter(_BASE_URL)
+    pd_exc = convert(UserAlreadyHasTenantError())
+
+    assert pd_exc.status_code == 409
+    assert pd_exc.type_ == "http://test/problems/user_already_has_tenant.html"
+    assert pd_exc.title == "User already has a tenant"
     assert pd_exc.extra is None
