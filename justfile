@@ -68,13 +68,13 @@ test-js-e2e:
 [parallel]
 coverage: coverage-py coverage-js
 
-# Python coverage: writes coverage.xml + htmlcov/
+# Python coverage: writes coverage.xml + htmlcov/ + pytest-junit.xml
 coverage-py:
-	uv run pytest --cov --cov-branch --cov-report=xml --cov-report=html --cov-report=term
+	uv run pytest --cov --cov-branch --cov-report=xml --cov-report=html --cov-report=term --junit-xml=pytest-junit.xml
 
-# JS coverage: writes src/js/web/coverage/
+# JS coverage: writes src/js/web/coverage/ + src/js/web/vitest-junit.xml
 coverage-js:
-	cd src/js/web && npm run test -- --coverage
+	cd src/js/web && npm run test -- --coverage --reporter=default --reporter=junit --outputFile.junit=./vitest-junit.xml
 
 # Check ruff violation counts against the committed ratchet baseline
 ratchet:

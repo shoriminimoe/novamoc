@@ -22,7 +22,14 @@ jobs:
       - run: mkdir -p build/wheel_data
       - run: uv sync
 
-      - run: just lint
+      # `--exit-zero` so the ratchet job is the gate, not this step. The
+      # JSON output drives both the `::error` annotations and the summary
+      # table emitted by ci_summary.py.
+      - name: Run ruff
+        run: uv run ruff check --no-fix --exit-zero --output-format=json . > ruff.json
+      - name: Summarize ruff
+        if: always()
+        run: uv run python scripts/ci_summary.py ruff ruff.json
 
   typecheck-py:
     runs-on: ubuntu-latest
@@ -38,7 +45,19 @@ jobs:
       - run: mkdir -p build/wheel_data
       - run: uv sync
 
-      - run: just typecheck
+      # ty has no `github` output format; we use `gitlab` (JSON) and
+      # convert to annotations + table in ci_summary.py. `--exit-zero`
+      # keeps the tool step from short-circuiting before the summary;
+      # the summary step inspects the file and exits non-zero on error.
+      - name: Run ty
+        run: uv run ty check --output-format=gitlab --exit-zero > ty.json
+      - name: Summarize ty
+        if: always()
+        run: uv run python scripts/ci_summary.py ty ty.json
+      - name: Fail on type errors
+        run: |
+          set -e
+          test "$(cat ty.json)" = "[]"
 
   coverage-py:
     runs-on: ubuntu-latest
@@ -56,6 +75,9 @@ jobs:
       - run: just render-problem-docs
 
       - run: just coverage-py
+      - name: Summarize pytest
+        if: always()
+        run: uv run python scripts/ci_summary.py pytest pytest-junit.xml coverage.xml
 
       - name: Upload python coverage
         if: always()
@@ -73,15 +95,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version-file: .python-version
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: src/js/web/package-lock.json
 
+      # ci_summary.py is a Python script, so the JS job still needs uv +
+      # the venv for that step. The cache makes the sync ~free.
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
       - run: cd src/js/web && npm ci
 
       - run: just coverage-js
+      - name: Summarize vitest
+        if: always()
+        run: uv run python scripts/ci_summary.py vitest src/js/web/vitest-junit.xml src/js/web/coverage/coverage-summary.json
 
       - name: Upload js coverage
         if: always()
@@ -114,4 +147,6 @@ jobs:
           name: coverage-js
           path: src/js/web/coverage/
 
+      # `just ratchet` writes its own table to $GITHUB_STEP_SUMMARY
+      # (see scripts/ratchet.py).
       - run: just ratchet
