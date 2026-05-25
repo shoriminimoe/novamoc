@@ -36,21 +36,21 @@ def _baseline(
 
 
 def test_parse_python_coverage_xml() -> None:
+    # 88.45 -> 88, 76.12 -> 76 after rounding to nearest whole percent.
     line, branch = cov_ratchet._parse_python_coverage(CLEAN_XML)
-    assert line == pytest.approx(88.45)
-    assert branch == pytest.approx(76.12)
+    assert line == pytest.approx(88)
+    assert branch == pytest.approx(76)
 
 
 def test_parse_js_coverage_summary() -> None:
+    # 65.30 -> 65, 58.10 -> 58 after rounding to nearest whole percent.
     line, branch = cov_ratchet._parse_js_coverage(CLEAN_JSON)
-    assert line == pytest.approx(65.30)
-    assert branch == pytest.approx(58.10)
+    assert line == pytest.approx(65)
+    assert branch == pytest.approx(58)
 
 
 def test_check_clean_returns_no_changes(tmp_path: Path) -> None:
-    baseline = _baseline(
-        tmp_path, py_line=88.45, py_branch=76.12, js_line=65.30, js_branch=58.10
-    )
+    baseline = _baseline(tmp_path, py_line=88, py_branch=76, js_line=65, js_branch=58)
     result = cov_ratchet.check(
         baseline_path=baseline,
         coverage_xml=CLEAN_XML,
@@ -63,10 +63,8 @@ def test_check_clean_returns_no_changes(tmp_path: Path) -> None:
 
 
 def test_check_regression_when_python_line_drops(tmp_path: Path) -> None:
-    # Baseline higher than fixture's 88.45 -> python.line is a regression.
-    baseline = _baseline(
-        tmp_path, py_line=90.00, py_branch=76.12, js_line=65.30, js_branch=58.10
-    )
+    # Baseline higher than fixture's rounded 88 -> python.line is a regression.
+    baseline = _baseline(tmp_path, py_line=90, py_branch=76, js_line=65, js_branch=58)
     result = cov_ratchet.check(
         baseline_path=baseline,
         coverage_xml=CLEAN_XML,
@@ -75,15 +73,13 @@ def test_check_regression_when_python_line_drops(tmp_path: Path) -> None:
     metrics = {c.metric for c in result.regressions}
     assert metrics == {"python.line"}
     [change] = result.regressions
-    assert change.old == pytest.approx(90.00)
-    assert change.new == pytest.approx(88.45)
+    assert change.old == pytest.approx(90)
+    assert change.new == pytest.approx(88)
 
 
 def test_check_improvement_when_js_branch_rises(tmp_path: Path) -> None:
-    # Baseline lower than fixture's 58.10 -> js.branch is an improvement.
-    baseline = _baseline(
-        tmp_path, py_line=88.45, py_branch=76.12, js_line=65.30, js_branch=55.00
-    )
+    # Baseline lower than fixture's rounded 58 -> js.branch is an improvement.
+    baseline = _baseline(tmp_path, py_line=88, py_branch=76, js_line=65, js_branch=55)
     result = cov_ratchet.check(
         baseline_path=baseline,
         coverage_xml=CLEAN_XML,
@@ -137,8 +133,8 @@ def test_update_writes_current_values(tmp_path: Path) -> None:
     assert result.setup_error is None
     written = json.loads(baseline.read_text())
     assert written == {
-        "python": {"line": pytest.approx(88.45), "branch": pytest.approx(76.12)},
-        "js": {"line": pytest.approx(65.30), "branch": pytest.approx(58.10)},
+        "python": {"line": pytest.approx(88), "branch": pytest.approx(76)},
+        "js": {"line": pytest.approx(65), "branch": pytest.approx(58)},
     }
 
 
