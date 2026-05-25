@@ -234,9 +234,7 @@ def test_auth_gc_sessions_on_empty_table_prints_count(
     assert "Deleted 0 expired sessions." in result.stdout
 
 
-def test_auth_gc_sessions_deletes_only_expired(
-    runner: CliRunner, db_url: str
-) -> None:
+def test_auth_gc_sessions_deletes_only_expired(runner: CliRunner, db_url: str) -> None:
     """Seed one expired and one live session; only the expired row is deleted."""
 
     async def _seed() -> tuple[uuid.UUID, uuid.UUID]:
