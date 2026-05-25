@@ -201,3 +201,21 @@ def test_auth_gc_sessions_on_empty_table_prints_count(
     result = runner.invoke(main, ["auth", "gc-sessions"])
     assert result.exit_code == 0, (result.output, result.stderr)
     assert "Deleted 0 expired sessions." in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Settings parse-error mapping ([5] in the PR #115 review)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_parse_error_renders_as_clickexception(
+    runner: CliRunner, db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bad env-var value exits with a friendly message, not a raw traceback."""
+    monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_TIME_COST", "not-an-int")
+    result = runner.invoke(main, ["user", "create", "alice", "--password", "x"])
+    assert result.exit_code != 0
+    # Friendly message includes the offending env var; raw ValueError tracebacks
+    # would not appear in click's stderr formatting.
+    assert "NOVAMOC_AUTH_ARGON2_TIME_COST" in result.stderr
+    assert "Traceback" not in result.stderr

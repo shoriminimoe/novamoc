@@ -55,6 +55,20 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def _load_settings() -> Settings:
+    """Construct ``Settings`` with parse errors mapped to ``ClickException``.
+
+    Env-var parsing (``_int_env`` etc.) raises ``ValueError`` on a bad
+    value; surfacing that as a raw traceback contradicts the module
+    docstring's promise of a friendly stderr message. The mapping is
+    central so every command that loads settings benefits.
+    """
+    try:
+        return Settings()
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def _password_hasher(settings: Settings) -> PasswordHasher:
     """Build a ``PasswordHasher`` from the configured auth parameters."""
     return PasswordHasher(
@@ -132,7 +146,7 @@ def tenant() -> None:
 )
 def tenant_create(display_name: str) -> None:
     """Create a tenant and print its UUID."""
-    settings = Settings()
+    settings = _load_settings()
 
     async def work(session: AsyncSession) -> uuid.UUID:
         # Return the UUID directly rather than handing back an ORM
@@ -166,7 +180,7 @@ def user() -> None:
 )
 def user_create(username: str, password: str | None) -> None:
     """Create a user with a hashed password."""
-    settings = Settings()
+    settings = _load_settings()
     hasher = _password_hasher(settings)
     plaintext = _prompt_password_if_missing(password)
     hashed = hasher.hash(plaintext)
@@ -203,7 +217,7 @@ def user_set_password(username: str, password: str | None) -> None:
     Operator-driven: no email-confirmation flow in v1. The new hash
     uses the current cost parameters from :class:`AuthSettings`.
     """
-    settings = Settings()
+    settings = _load_settings()
     hasher = _password_hasher(settings)
     plaintext = _prompt_password_if_missing(password)
     hashed = hasher.hash(plaintext)
@@ -231,7 +245,7 @@ def user_exists(username: str) -> None:
     by ``just bootstrap-dev`` (M5.15) to skip the seed when the
     target user is already provisioned.
     """
-    settings = Settings()
+    settings = _load_settings()
 
     async def work(session: AsyncSession) -> bool:
         svc = UserService(session=session)
@@ -259,7 +273,7 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
         msg = f"'{tenant_uuid}' is not a valid UUID."
         raise click.ClickException(msg) from None
 
-    settings = Settings()
+    settings = _load_settings()
 
     async def work(session: AsyncSession) -> None:
         users = UserService(session=session)
@@ -303,7 +317,7 @@ def auth_gc_sessions() -> None:
     debt (ADR-020). Operators invoke this on a cadence appropriate
     to their session TTL.
     """
-    settings = Settings()
+    settings = _load_settings()
 
     async def work(session: AsyncSession) -> int:
         now = datetime.now(UTC)
