@@ -1,0 +1,86 @@
+name: Bug report
+description: Report something that isn't working the way it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the bug.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of novaMOC does this affect?
+      options:
+        - Server (Python / Litestar)
+        - Client (Svelte SPA)
+        - Sync protocol (event log / HLC / projections)
+        - Schema / ADRs / docs
+        - Tooling (uv / ruff / ty / justfile / CI)
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps that trigger the bug. Paste exact commands, request bodies, and seed data verbatim — not paraphrases — so they can be re-run as-is.
+      placeholder: |
+        1. uv run pytest tests/...
+        2. curl -X POST ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened. Paste stack traces and error responses verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened instead. Skip this if it's obvious from the actual behaviour (e.g. a crash where the expectation is "no crash").
+    validations:
+      required: false
+
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Likely affected files
+      description: Best-guess pointer to the files or modules involved. Saves the assignee from grepping cold. Leave blank if unsure.
+      placeholder: |
+        - src/py/novamoc/...
+        - tests/...
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Anything reproducer-relevant — Python version, OS, browser, commit SHA, etc. Omit fields that don't apply.
+      placeholder: |
+        - novaMOC commit:
+        - Python:
+        - OS:
+        - Browser (for client bugs):
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Related ADRs, issues, or additional context
+      description: Links to ADRs under `docs/adr/`, specs under `docs/superpowers/specs/`, related issues, logs, or screenshots.
+    validations:
+      required: false
