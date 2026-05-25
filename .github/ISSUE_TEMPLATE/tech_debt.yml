@@ -1,0 +1,64 @@
+name: Tech debt
+description: Record an existing shortcut, rough edge, or accumulated cost that should be paid down.
+labels: ["debt"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the debt.
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Where it lives
+      description: Files, modules, or subsystems involved. Link to specific lines if helpful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: pain
+    attributes:
+      label: Why it's debt
+      description: What's painful about the current state? Performance, correctness risk, friction when changing related code, drift from an ADR, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Proposed remediation
+      description: How would you pay it down? A rough sketch is fine — this isn't a plan.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: Urgency
+      description: How load-bearing is paying this down?
+      options:
+        - Low — annoyance, can sit indefinitely
+        - Medium — should be done before related work expands
+        - High — actively blocking or causing bugs
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: adr
+    attributes:
+      label: Architecture impact
+      description: Does fixing this likely touch an ADR under `docs/adr/`?
+      options:
+        - label: Remediation likely warrants a new or revised ADR.
+          required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to related issues, ADRs, prior discussion, or the commit that introduced the shortcut.
+    validations:
+      required: false
