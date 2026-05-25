@@ -1,20 +1,11 @@
-"""Conftest for tests under ``tests/scripts/``.
+"""Apply the ``no_tenant`` marker to every test in this directory.
 
-Two responsibilities:
-
-- Apply the ``no_tenant`` marker to every test in this directory. The
-  script-level tests exercise pure-Python helpers under ``scripts/`` and
-  never touch the database; they have no need for the ambient tenant
-  contextvar the top-level ``tenant`` autouse fixture sets up, and no
-  project tables to scope against.
-- Scrub ``GITHUB_STEP_SUMMARY`` from the environment for every test.
-  ``scripts/ratchet.py`` appends to the file pointed at by that env var,
-  and several tests here call ``orchestrator.main()`` (which calls
-  ``_write_step_summary``). When pytest itself is invoked from a CI job,
-  the runner sets ``GITHUB_STEP_SUMMARY`` to the *job's* real summary
-  file, and an un-monkeypatched test would leak ratchet output into the
-  wrong job's summary. Tests that need the env var (e.g. the one that
-  asserts the summary is written) set it explicitly via ``monkeypatch``.
+The script-level tests under ``tests/scripts/`` exercise pure-Python
+helpers under ``scripts/`` and never touch the database. They have no
+need for the ambient tenant contextvar that the top-level ``tenant``
+autouse fixture sets up, and they have no project tables to scope
+against. Stamping the marker here keeps individual tests free of
+fixture boilerplate.
 """
 
 from __future__ import annotations
@@ -42,8 +33,3 @@ def _items_in_this_dir(items: Iterable[pytest.Item]) -> list[pytest.Item]:
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in _items_in_this_dir(items):
         item.add_marker(pytest.mark.no_tenant)
-
-
-@pytest.fixture(autouse=True)
-def _scrub_github_step_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)

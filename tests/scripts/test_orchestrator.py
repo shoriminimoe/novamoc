@@ -65,7 +65,12 @@ def test_exit_code_regression_beats_setup_error() -> None:
 
 def test_main_runs_every_checker_even_when_one_fails(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # main() appends to $GITHUB_STEP_SUMMARY when set; in CI that points at
+    # the pytest job's real summary file. Clear it so this test doesn't
+    # leak ratchet output into the wrong job's summary.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     with (
         patch.object(orchestrator.ruff, "check", return_value=_regressed("ruff")),
         patch.object(orchestrator.coverage, "check", return_value=_clean("coverage")),
