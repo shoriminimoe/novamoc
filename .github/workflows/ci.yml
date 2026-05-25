@@ -10,12 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-          python-version-file: .python-version
 
       # `uv sync` builds novamoc via uv_build, which walks `build/wheel_data/`.
       # Create the dir first so the sync succeeds on a fresh checkout.
@@ -35,12 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-          python-version-file: .python-version
 
       - run: mkdir -p build/wheel_data
       - run: uv sync
@@ -63,12 +61,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-          python-version-file: .python-version
 
       - run: mkdir -p build/wheel_data
       - run: uv sync
@@ -81,7 +78,7 @@ jobs:
 
       - name: Upload python coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-py
           path: |
@@ -93,13 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-          python-version-file: .python-version
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -118,7 +114,7 @@ jobs:
 
       - name: Upload js coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-js
           path: src/js/web/coverage/
@@ -129,20 +125,19 @@ jobs:
     timeout-minutes: 5
     needs: [coverage-py, coverage-js]
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
-          python-version-file: .python-version
 
       - run: mkdir -p build/wheel_data
       - run: uv sync
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-py
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-js
           path: src/js/web/coverage/
