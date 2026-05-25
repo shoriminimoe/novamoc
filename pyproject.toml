@@ -20,6 +20,9 @@ dependencies = [
     "sqlalchemy[aiosqlite,asyncio]>=2.0.49",
 ]
 
+[project.scripts]
+novamoc = "novamoc.cli:main"
+
 [build-system]
 requires = ["uv_build>=0.10.11,<0.12"]
 build-backend = "uv_build"
