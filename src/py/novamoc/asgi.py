@@ -21,10 +21,15 @@ def create_app(settings: Settings | None = None) -> Litestar:
         SQLAlchemyAsyncConfig,
         SQLAlchemyPlugin,
     )
+    from advanced_alchemy.extensions.litestar.session import (
+        SQLAlchemyAsyncSessionBackend,
+    )
     from litestar import Litestar
     from litestar.datastructures import State
     from litestar.exceptions import ValidationException
     from litestar.middleware.base import DefineMiddleware
+    from litestar.middleware.session import SessionMiddleware
+    from litestar.middleware.session.server_side import ServerSideSessionConfig
     from litestar.openapi.config import OpenAPIConfig
     from litestar.plugins.problem_details import (
         ProblemDetailsConfig,
@@ -43,9 +48,12 @@ def create_app(settings: Settings | None = None) -> Litestar:
         make_tenant_resolution_error_converter,
     )
     from novamoc.config import Settings, problem_html_dir
+    from novamoc.db.models._auth import Session as SessionModel
     from novamoc.domain._errors import DomainError
     from novamoc.domain.accounts import (
+        AuthController,
         AuthenticationMiddleware,
+        PasswordHasher,
         TenantContextMiddleware,
         TenantResolutionError,
     )
@@ -92,25 +100,62 @@ def create_app(settings: Settings | None = None) -> Litestar:
         ProblemDetailsPlugin(config=problem_details_config),
     ]
 
+    # ``SQLAlchemyAsyncSessionBackend`` is constructed directly (rather
+    # than via ``ServerSideSessionConfig.middleware``) because the
+    # config's ``.middleware`` property instantiates the backend with
+    # ``config`` only, whereas this backend requires ``config +
+    # alchemy_config + model``. Mount via
+    # ``DefineMiddleware(SessionMiddleware, backend=...)``.
+    session_config = ServerSideSessionConfig(
+        key=s.auth.session_cookie_name,
+        max_age=s.auth.session_ttl_seconds,
+        secure=s.auth.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    session_backend = SQLAlchemyAsyncSessionBackend(
+        config=session_config,
+        alchemy_config=alchemy_config,
+        model=SessionModel,
+    )
+
+    password_hasher = PasswordHasher(
+        time_cost=s.auth.argon2_time_cost,
+        memory_cost_kib=s.auth.argon2_memory_cost_kib,
+        parallelism=s.auth.argon2_parallelism,
+    )
+
     return Litestar(
         route_handlers=[
+            AuthController,
             SchemaController,
             EventsController,
             SnapshotController,
             problem_docs_router,
         ],
         middleware=[
+            # 1. read/write the session cookie ↔ ``scope["session"]``.
+            DefineMiddleware(SessionMiddleware, backend=session_backend),
+            # 2. read ``scope["session"]`` → ``scope["user"]`` /
+            # ``scope["auth"]``. ``/auth/login`` is excluded because
+            # login is the bootstrap path that *writes* the session;
+            # ``/openapi`` and ``/problems`` stay public.
             DefineMiddleware(
                 AuthenticationMiddleware,
-                exclude=r"^/(openapi|problems)",
+                exclude=r"^/(openapi|problems|auth/login)",
             ),
+            # 3. read ``scope["auth"].tenant_id`` → ContextVar so the
+            # storage-layer listeners have a value for the request.
             TenantContextMiddleware(),
         ],
         plugins=plugins,
         # ``state.settings`` is read by per-controller DI providers
         # (see ``EventsController.dependencies``) so handlers receive
         # only the narrow slice they need rather than the whole tree.
-        state=State({"settings": s}),
+        # ``state.password_hasher`` is the hot-path login dependency
+        # M5.10's ``AuthController`` pulls via DI.
+        state=State({"settings": s, "password_hasher": password_hasher}),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),

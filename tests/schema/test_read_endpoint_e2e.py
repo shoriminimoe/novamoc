@@ -122,9 +122,9 @@ async def test_get_schema_includes_tombstoned_rows(client) -> None:
     assert fields_by_id[field_id]["active"] is False
 
 
-async def test_get_schema_without_authorization_returns_401(client) -> None:
+async def test_get_schema_without_session_returns_401(unauth_client) -> None:
     """Read endpoint goes through the same middleware as POST /schema."""
-    resp = await client.get("/schema", headers={"Authorization": ""})
+    resp = await unauth_client.get("/schema")
     assert resp.status_code == 401, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()

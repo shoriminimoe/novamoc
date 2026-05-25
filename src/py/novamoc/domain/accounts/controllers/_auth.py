@@ -24,6 +24,8 @@ The e2e wire coverage follows in M5.12.
 
 from __future__ import annotations
 
+from typing import Any
+
 from advanced_alchemy.extensions.litestar import providers
 from litestar import Controller, Request, get, post
 from litestar.datastructures import (
@@ -32,6 +34,7 @@ from litestar.datastructures import (
 from litestar.di import Provide
 from litestar.openapi.datastructures import ResponseSpec
 from litestar.status_codes import HTTP_204_NO_CONTENT
+from msgspec_ext import SecretStr
 
 # ``PasswordHasher`` and ``AuthSettings`` are runtime DI provider
 # return-type / handler-parameter annotations Litestar resolves at
@@ -48,6 +51,23 @@ from novamoc.domain.accounts._services import (
     UserService,
     UserTenantMembershipService,
 )
+
+
+def _is_secret_str(typ: Any) -> bool:
+    return typ is SecretStr
+
+
+def _decode_secret_str(_typ: Any, obj: Any) -> SecretStr:
+    """Coerce a JSON string into a :class:`SecretStr`.
+
+    msgspec rejects ``str -> SecretStr`` without help because
+    ``SecretStr`` is a subclass of ``str`` rather than ``str`` itself
+    (see :func:`novamoc.domain.accounts._payloads.decode_hook` for the
+    standalone dec_hook this mirrors). Litestar's ``type_decoders``
+    takes ``(predicate, decoder)`` tuples; the pair is mounted on
+    :class:`AuthController` so the LoginRequest body decodes cleanly.
+    """
+    return SecretStr(obj)
 
 
 async def _provide_password_hasher(state: State) -> PasswordHasher:
@@ -68,6 +88,8 @@ async def _provide_auth_settings(state: State) -> AuthSettings:
 class AuthController(Controller):
     path = "/auth"
     tags = ("auth",)
+
+    type_decoders = ((_is_secret_str, _decode_secret_str),)
 
     dependencies = (
         {

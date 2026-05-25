@@ -6,10 +6,15 @@ a real engine to catch migration-style drift early.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
+from advanced_alchemy.extensions.litestar import (
+    SQLAlchemyAsyncConfig,
+    SQLAlchemyPlugin,
+)
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
@@ -26,13 +31,20 @@ from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.asgi import create_app
 from novamoc.config import (
     AppSettings,
+    AuthSettings,
     DatabaseSettings,
     ServerSettings,
     Settings,
     problem_html_dir,
 )
 from novamoc.db._tenant_context import use_tenant
-from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
+from novamoc.db.models._auth import Tenant
+from novamoc.domain.accounts._password import PasswordHasher
+from novamoc.domain.accounts._services import (
+    TenantService,
+    UserService,
+    UserTenantMembershipService,
+)
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
@@ -41,7 +53,7 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeService,
     SchemaChangeLogService,
 )
-from tests._constants import DEV_TENANT_ID
+from tests._constants import DEV_PASSWORD, DEV_TENANT_ID, DEV_USERNAME
 from tests.data.loader import load_scenario
 
 if TYPE_CHECKING:
@@ -166,6 +178,11 @@ def settings() -> Settings:
     ambient env-var state. ``StaticPool`` keeps the in-memory SQLite engine
     on a single connection so the request-scoped session, the autocommit
     handler, and any background fold see the same database.
+
+    ``AuthSettings`` uses the weakened argon2id parameters from
+    ``tests.accounts.test_handlers._FAST`` so login round-trips stay
+    sub-second; ``session_cookie_secure=False`` lets ``AsyncTestClient``
+    (which uses ``http://`` URLs) round-trip the cookie.
     """
     return Settings(
         db=DatabaseSettings(
@@ -176,6 +193,12 @@ def settings() -> Settings:
         ),
         server=ServerSettings(granian=False),
         app=AppSettings(docs_base_url="http://test"),
+        auth=AuthSettings(
+            argon2_time_cost=1,
+            argon2_memory_cost_kib=8192,
+            argon2_parallelism=1,
+            session_cookie_secure=False,
+        ),
     )
 
 
@@ -191,14 +214,117 @@ async def app(settings: Settings) -> Litestar:
     return create_app(settings=settings)
 
 
+@dataclass(frozen=True, slots=True)
+class DevAdmin:
+    """Identity of the seeded admin user the ``client`` fixture logs in as.
+
+    Tests that need to assert the seeded user's UUID (e.g. the
+    ``GET /auth/me`` response) declare ``dev_admin`` and read
+    ``dev_admin.user_id`` directly. The credentials live in
+    :mod:`tests._constants` and are the single source of truth.
+    """
+
+    username: str
+    password: str
+    user_id: UUID
+    tenant_id: UUID
+
+
+def _async_alchemy_config(app: Litestar) -> SQLAlchemyAsyncConfig:
+    plugin = app.plugins.get(SQLAlchemyPlugin)
+    for cfg in plugin.config:
+        if isinstance(cfg, SQLAlchemyAsyncConfig):
+            return cfg
+    msg = "No SQLAlchemyAsyncConfig registered on the test app"
+    raise RuntimeError(msg)
+
+
 @pytest.fixture
-async def client(app: Litestar):
+async def dev_admin(app: Litestar, settings: Settings) -> DevAdmin:
+    """Seed the canonical admin user + tenant + membership.
+
+    Mirrors what ``just bootstrap-dev`` (M5.15) will run on the CLI
+    side but pins ``tenant_id = DEV_TENANT_ID`` so every e2e test sees
+    the same tenant on ``request.auth.tenant_id``. The CLI never pins
+    a specific tenant UUID — the test fixture is the only place that
+    does, and that's deliberate: scenarios reference the same UUID
+    constant and need a deterministic value across runs.
+
+    Runs *before* ``AsyncTestClient``'s lifespan startup; we create
+    the metadata manually here so the registry writes have tables to
+    land in. ``create_all`` on the SQLAlchemy plugin's startup hook is
+    idempotent (``CREATE TABLE IF NOT EXISTS``) and a no-op when it
+    fires later.
+    """
+    alchemy_config = _async_alchemy_config(app)
+    engine = alchemy_config.get_engine()
+    async with engine.begin() as conn:
+        for key in metadata_registry:
+            await conn.run_sync(metadata_registry[key].create_all)
+
+    hasher = PasswordHasher(
+        time_cost=settings.auth.argon2_time_cost,
+        memory_cost_kib=settings.auth.argon2_memory_cost_kib,
+        parallelism=settings.auth.argon2_parallelism,
+    )
+
+    async with alchemy_config.get_session() as db_session:
+        tenant_service = TenantService(session=db_session)
+        users = UserService(session=db_session)
+        memberships = UserTenantMembershipService(session=db_session)
+
+        # Pin the tenant UUID via repository.add: TenantService.create
+        # would let advanced_alchemy assign a fresh UUIDv7. Tests need
+        # the deterministic DEV_TENANT_ID for cross-fixture consistency.
+        tenant = Tenant(id=DEV_TENANT_ID, display_name="Acme")
+        await tenant_service.repository.add(tenant)
+        user = await users.create(
+            data={
+                "username": DEV_USERNAME,
+                "password_hash": hasher.hash(DEV_PASSWORD),
+            },
+            auto_commit=False,
+        )
+        await memberships.create(
+            data={"user_id": user.id, "tenant_id": tenant.id},
+            auto_commit=False,
+        )
+        await db_session.commit()
+        user_id = user.id
+
+    return DevAdmin(
+        username=DEV_USERNAME,
+        password=DEV_PASSWORD,
+        user_id=user_id,
+        tenant_id=DEV_TENANT_ID,
+    )
+
+
+@pytest.fixture
+async def client(app: Litestar, dev_admin: DevAdmin) -> AsyncIterator[AsyncTestClient]:
+    """An authenticated ``AsyncTestClient``.
+
+    Logs in once on construction; ``httpx`` persists the session
+    cookie across subsequent requests, so the rest of the test runs
+    as the seeded admin. Tests exercising the rejection path use
+    :func:`unauth_client` instead.
+    """
     async with AsyncTestClient(app) as c:
-        # AsyncTestClient does not accept ``headers`` at construction; we set
-        # them on the underlying httpx client so every request carries the dev
-        # bearer by default. Tests that exercise the rejection path override
-        # the header per-request.
-        c.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
+        resp = await c.post(
+            "/auth/login",
+            json={
+                "username": dev_admin.username,
+                "password": dev_admin.password,
+            },
+        )
+        assert resp.status_code == 204, resp.text
+        yield c
+
+
+@pytest.fixture
+async def unauth_client(app: Litestar) -> AsyncIterator[AsyncTestClient]:
+    """An ``AsyncTestClient`` with no session — used by 401 rejection tests."""
+    async with AsyncTestClient(app) as c:
         yield c
 
 
