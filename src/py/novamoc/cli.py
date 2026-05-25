@@ -309,6 +309,14 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
         if target is None:
             msg = f"User '{username}' not found."
             raise click.ClickException(msg)
+        # Explicit tenant existence check: PRAGMA ``foreign_keys=ON``
+        # is not yet wired (see ``_membership.py``), so without this
+        # lookup a phantom tenant UUID would silently produce an
+        # orphan membership row.
+        tenants = TenantService(session=session)
+        if not await tenants.exists(id=tenant_id):
+            msg = f"Tenant '{tenant_id}' not found."
+            raise click.ClickException(msg)
         memberships = UserTenantMembershipService(session=session)
         try:
             await memberships.create(

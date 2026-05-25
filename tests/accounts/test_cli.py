@@ -257,3 +257,20 @@ def test_settings_parse_error_renders_as_clickexception(
     # would not appear in click's stderr formatting.
     assert "NOVAMOC_AUTH_ARGON2_TIME_COST" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Missing tenant on add-to-tenant ([1] in the PR #115 review)
+# ---------------------------------------------------------------------------
+
+
+def test_user_add_to_tenant_unknown_tenant_exits_nonzero(
+    runner: CliRunner, db_url: str
+) -> None:
+    """FK PRAGMA is not wired yet; an explicit lookup must catch a phantom UUID."""
+    runner.invoke(main, ["user", "create", "alice", "--password", "x"])
+    phantom = uuid.uuid4()
+    result = runner.invoke(main, ["user", "add-to-tenant", "alice", str(phantom)])
+    assert result.exit_code != 0
+    assert "not found" in result.stderr.lower()
+    assert str(phantom) in result.stderr
