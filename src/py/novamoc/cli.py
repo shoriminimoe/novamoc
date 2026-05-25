@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 import click
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 # Register tenant-scoping event handlers on SQLAlchemy. Today's CLI
@@ -200,22 +201,29 @@ def user_create(username: str, password: str | None) -> None:
     )
     settings = _load_settings()
     hasher = _password_hasher(settings)
-    hashed = hasher.hash(plaintext)
 
     async def work(session: AsyncSession) -> None:
         svc = UserService(session=session)
-        # Pre-check: the service folds usernames at create-time, so a
-        # case-folded lookup catches duplicates before SQLAlchemy raises
-        # IntegrityError. The UNIQUE constraint on ``users.username``
-        # remains the structural backstop.
+        # Pre-check before hashing: the service folds usernames at
+        # create-time, so a case-folded lookup catches duplicates
+        # before the ~100 ms argon2id cost. The UNIQUE constraint on
+        # ``users.username`` remains the structural backstop.
         existing = await svc.get_by_username(username)
         if existing is not None:
             msg = f"User '{username}' already exists."
             raise click.ClickException(msg)
-        await svc.create(
-            data={"username": username, "password_hash": hashed},
-            auto_commit=False,
-        )
+        hashed = hasher.hash(plaintext)
+        try:
+            await svc.create(
+                data={"username": username, "password_hash": hashed},
+                auto_commit=False,
+            )
+        except IntegrityError as exc:
+            # Concurrent CLI invocations can race past the pre-check;
+            # the UNIQUE backstop's IntegrityError gets the same
+            # friendly message rather than a raw SQLAlchemy traceback.
+            msg = f"User '{username}' already exists."
+            raise click.ClickException(msg) from exc
 
     asyncio.run(_run_in_session(settings, work))
     click.echo(f"Created user {username}.")
@@ -239,15 +247,16 @@ def user_set_password(username: str, password: str | None) -> None:
     )
     settings = _load_settings()
     hasher = _password_hasher(settings)
-    hashed = hasher.hash(plaintext)
 
     async def work(session: AsyncSession) -> None:
         svc = UserService(session=session)
+        # Pre-check before hashing: lookup is far cheaper than the
+        # ~100 ms argon2id work for a username that doesn't exist.
         existing = await svc.get_by_username(username)
         if existing is None:
             msg = f"User '{username}' not found."
             raise click.ClickException(msg)
-        existing.password_hash = hashed
+        existing.password_hash = hasher.hash(plaintext)
         # No explicit flush — ``_run_in_session`` commits, which
         # flushes implicitly.
 
@@ -311,6 +320,12 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
             # both "already" and "tenant" in the message lets the M5.15
             # bootstrap recipe (and the test) grep for the N:1 case
             # without coupling to the full sentence.
+            msg = f"User '{username}' already belongs to a tenant."
+            raise click.ClickException(msg) from exc
+        except IntegrityError as exc:
+            # Concurrent CLI invocations can race past the service-layer
+            # pre-check; the UNIQUE(user_id) backstop's IntegrityError
+            # gets the same friendly message.
             msg = f"User '{username}' already belongs to a tenant."
             raise click.ClickException(msg) from exc
 
