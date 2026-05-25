@@ -204,6 +204,44 @@ def test_auth_gc_sessions_on_empty_table_prints_count(
 
 
 # ---------------------------------------------------------------------------
+# Empty-string rejection ([2] / [8] in the PR #115 review)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("password", ["", "   ", "\t\n"])
+def test_user_create_empty_password_exits_nonzero(
+    runner: CliRunner, db_url: str, password: str
+) -> None:
+    result = runner.invoke(main, ["user", "create", "alice", "--password", password])
+    assert result.exit_code != 0
+    assert "password" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("password", ["", "   ", "\t\n"])
+def test_user_set_password_empty_password_exits_nonzero(
+    runner: CliRunner, db_url: str, password: str
+) -> None:
+    runner.invoke(main, ["user", "create", "alice", "--password", "old"])
+    result = runner.invoke(
+        main, ["user", "set-password", "alice", "--password", password]
+    )
+    assert result.exit_code != 0
+    assert "password" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("display_name", ["", "   ", "\t\n"])
+def test_tenant_create_empty_display_name_exits_nonzero(
+    runner: CliRunner, db_url: str, display_name: str
+) -> None:
+    result = runner.invoke(main, ["tenant", "create", "--display-name", display_name])
+    assert result.exit_code != 0
+    assert (
+        "display-name" in result.stderr.lower()
+        or "display_name" in result.stderr.lower()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Settings parse-error mapping ([5] in the PR #115 review)
 # ---------------------------------------------------------------------------
 

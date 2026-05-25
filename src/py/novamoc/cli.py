@@ -118,6 +118,20 @@ def _prompt_password_if_missing(password: str | None) -> str:
     return click.prompt("Password", hide_input=True, confirmation_prompt=True)
 
 
+def _require_nonblank(value: str, *, label: str) -> str:
+    """Return ``value`` if non-blank; else raise ``ClickException``.
+
+    Click's ``required=True`` only rejects absent options; the prompt
+    fallback similarly accepts empty input when ``--password ''`` is
+    explicitly passed. This helper is the single chokepoint for
+    rejecting whitespace-only or empty strings on operator inputs.
+    """
+    if not value.strip():
+        msg = f"{label} must not be empty."
+        raise click.ClickException(msg)
+    return value
+
+
 @click.group()
 def main() -> None:
     """novaMOC operator CLI.
@@ -146,6 +160,7 @@ def tenant() -> None:
 )
 def tenant_create(display_name: str) -> None:
     """Create a tenant and print its UUID."""
+    _require_nonblank(display_name, label="--display-name")
     settings = _load_settings()
 
     async def work(session: AsyncSession) -> uuid.UUID:
@@ -180,9 +195,11 @@ def user() -> None:
 )
 def user_create(username: str, password: str | None) -> None:
     """Create a user with a hashed password."""
+    plaintext = _require_nonblank(
+        _prompt_password_if_missing(password), label="Password"
+    )
     settings = _load_settings()
     hasher = _password_hasher(settings)
-    plaintext = _prompt_password_if_missing(password)
     hashed = hasher.hash(plaintext)
 
     async def work(session: AsyncSession) -> None:
@@ -217,9 +234,11 @@ def user_set_password(username: str, password: str | None) -> None:
     Operator-driven: no email-confirmation flow in v1. The new hash
     uses the current cost parameters from :class:`AuthSettings`.
     """
+    plaintext = _require_nonblank(
+        _prompt_password_if_missing(password), label="Password"
+    )
     settings = _load_settings()
     hasher = _password_hasher(settings)
-    plaintext = _prompt_password_if_missing(password)
     hashed = hasher.hash(plaintext)
 
     async def work(session: AsyncSession) -> None:
