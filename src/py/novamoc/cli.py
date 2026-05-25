@@ -269,19 +269,31 @@ def user_set_password(username: str, password: str | None) -> None:
 @user.command("exists")
 @click.argument("username")
 def user_exists(username: str) -> None:
-    """Exit 0 if ``<username>`` exists, 1 otherwise.
+    """Exit 0 if ``<username>`` exists, 1 if absent, 2 on CLI error.
 
     Produces no stdout output — the contract is the exit code. Used
     by ``just bootstrap-dev`` (M5.15) to skip the seed when the
-    target user is already provisioned.
+    target user is already provisioned. The three-way exit lets the
+    bootstrap recipe distinguish "user absent, seed now" (exit 1)
+    from "CLI errored, abort" (exit 2).
     """
-    settings = _load_settings()
 
     async def work(session: AsyncSession) -> bool:
         svc = UserService(session=session)
         return (await svc.get_by_username(username)) is not None
 
-    found = asyncio.run(_run_in_session(settings, work))
+    try:
+        settings = _load_settings()
+        found = asyncio.run(_run_in_session(settings, work))
+    except click.ClickException as exc:
+        # Translate the standard ClickException exit (1) into exit 2
+        # so the absent-user case (exit 1, below) stays distinct.
+        click.echo(f"Error: {exc.format_message()}", err=True)
+        sys.exit(2)
+    except Exception as exc:  # noqa: BLE001 — terminal CLI handler, exit-code contract
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(2)
+
     if not found:
         sys.exit(1)
 

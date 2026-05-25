@@ -308,3 +308,20 @@ def test_user_add_to_tenant_echoes_folded_username(
     assert result.exit_code == 0, (result.output, result.stderr)
     assert "ALICE" not in result.stdout
     assert "alice" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# user exists exit-code semantics ([7] in the PR #115 review)
+# ---------------------------------------------------------------------------
+
+
+def test_user_exists_returns_two_on_db_error(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exit 2 distinguishes 'CLI errored' from 'user absent' (exit 1)."""
+    # Point at a directory that exists but a path that is the directory itself,
+    # so the SQLite connection cannot open it.
+    bad_url = f"sqlite+aiosqlite:///{tmp_path}"
+    monkeypatch.setenv("NOVAMOC_DB_URL", bad_url)
+    result = runner.invoke(main, ["user", "exists", "ghost"])
+    assert result.exit_code == 2, (result.exit_code, result.output, result.stderr)
