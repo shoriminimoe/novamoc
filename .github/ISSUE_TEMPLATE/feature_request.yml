@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new capability or an enhancement to existing behaviour.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What is the user-visible problem or limitation? Why does this matter now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Sketch the change. APIs, wire formats, UX, or behavioural changes as applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed and why you didn't pick them. "None considered" is a valid answer for small changes.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: adr
+    attributes:
+      label: Architecture impact
+      description: novaMOC's architecture is governed by ADRs (`docs/adr/`). Check the box if this change likely needs one.
+      options:
+        - label: This change likely warrants a new or revised ADR.
+          required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to related issues, ADRs, specs, or external references.
+    validations:
+      required: false
