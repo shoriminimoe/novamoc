@@ -18,17 +18,21 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
 from click.testing import CliRunner
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Importing the models registers their tables on the shared metadata
 # registry so ``create_all`` below picks them up.
 import novamoc.db.models  # noqa: F401
 from novamoc.cli import main
+from novamoc.db.models._auth import Session, User
+from novamoc.domain.accounts._password import PasswordHasher
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -123,6 +127,33 @@ def test_user_set_password_succeeds(runner: CliRunner, db_url: str) -> None:
     assert result.exit_code == 0, (result.output, result.stderr)
 
 
+def test_user_set_password_persists_new_hash(runner: CliRunner, db_url: str) -> None:
+    """The new hash actually persists — a missing flush/commit would regress this."""
+    runner.invoke(main, ["user", "create", "alice", "--password", "old"])
+    result = runner.invoke(main, ["user", "set-password", "alice", "--password", "new"])
+    assert result.exit_code == 0, (result.output, result.stderr)
+
+    async def _hash() -> str:
+        eng = create_async_engine(db_url)
+        try:
+            async with eng.connect() as conn:
+                row = (
+                    await conn.execute(
+                        select(User.__table__.c.password_hash).where(
+                            User.__table__.c.username == "alice"
+                        )
+                    )
+                ).one()
+                return row[0]
+        finally:
+            await eng.dispose()
+
+    stored = asyncio.run(_hash())
+    hasher = PasswordHasher()
+    assert hasher.verify(stored, "new") is True
+    assert hasher.verify(stored, "old") is False
+
+
 def test_user_set_password_missing_user_exits_nonzero(
     runner: CliRunner, db_url: str
 ) -> None:
@@ -201,6 +232,58 @@ def test_auth_gc_sessions_on_empty_table_prints_count(
     result = runner.invoke(main, ["auth", "gc-sessions"])
     assert result.exit_code == 0, (result.output, result.stderr)
     assert "Deleted 0 expired sessions." in result.stdout
+
+
+def test_auth_gc_sessions_deletes_only_expired(
+    runner: CliRunner, db_url: str
+) -> None:
+    """Seed one expired and one live session; only the expired row is deleted."""
+
+    async def _seed() -> tuple[uuid.UUID, uuid.UUID]:
+        eng = create_async_engine(db_url)
+        try:
+            async with eng.begin() as conn:
+                now = datetime.now(UTC)
+                expired_id = uuid.uuid4()
+                live_id = uuid.uuid4()
+                await conn.execute(
+                    insert(Session).values(
+                        id=expired_id,
+                        session_id="expired-sid",
+                        data=b"",
+                        expires_at=now - timedelta(hours=1),
+                    )
+                )
+                await conn.execute(
+                    insert(Session).values(
+                        id=live_id,
+                        session_id="live-sid",
+                        data=b"",
+                        expires_at=now + timedelta(hours=1),
+                    )
+                )
+                return expired_id, live_id
+        finally:
+            await eng.dispose()
+
+    expired_id, live_id = asyncio.run(_seed())
+
+    result = runner.invoke(main, ["auth", "gc-sessions"])
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "Deleted 1 expired sessions." in result.stdout
+
+    async def _remaining() -> list[uuid.UUID]:
+        eng = create_async_engine(db_url)
+        try:
+            async with eng.connect() as conn:
+                rows = await conn.execute(select(Session.__table__.c.id))
+                return [r[0] for r in rows.all()]
+        finally:
+            await eng.dispose()
+
+    remaining = asyncio.run(_remaining())
+    assert expired_id not in remaining
+    assert live_id in remaining
 
 
 # ---------------------------------------------------------------------------
