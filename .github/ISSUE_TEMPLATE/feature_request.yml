@@ -10,6 +10,21 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of novaMOC does this primarily affect?
+      options:
+        - Server (Python / Litestar)
+        - Client (Svelte SPA)
+        - Sync protocol (event log / HLC / projections)
+        - Schema / ADRs / docs
+        - Tooling (uv / ruff / ty / justfile / CI)
+        - Other / unsure
+    validations:
+      required: true
+
   - type: textarea
     id: proposal
     attributes:
@@ -17,6 +32,33 @@ body:
       description: Sketch the change. APIs, wire formats, UX, or behavioural changes as applicable.
     validations:
       required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know this is done? Concrete, verifiable bullets — tests that should pass, endpoints that should return X, behaviours a user should observe.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Explicit non-goals. What should the implementer NOT touch or extend into? Reduces scope creep on agent-driven work.
+    validations:
+      required: false
+
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Likely affected files
+      description: Best-guess pointer to the files or modules involved. Leave blank if unsure.
+    validations:
+      required: false
 
   - type: textarea
     id: alternatives
@@ -38,7 +80,7 @@ body:
   - type: textarea
     id: context
     attributes:
-      label: Additional context
-      description: Links to related issues, ADRs, specs, or external references.
+      label: Related ADRs, specs, plans, or additional context
+      description: Links to ADRs under `docs/adr/`, specs under `docs/superpowers/specs/`, plans under `docs/superpowers/plans/`, related issues, or external references.
     validations:
       required: false

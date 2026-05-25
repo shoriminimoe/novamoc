@@ -29,18 +29,11 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Minimal steps that trigger the bug. Include commands, request bodies, or seed data where relevant.
+      description: Minimal steps that trigger the bug. Paste exact commands, request bodies, and seed data verbatim — not paraphrases — so they can be re-run as-is.
       placeholder: |
-        1. ...
-        2. ...
+        1. uv run pytest tests/...
+        2. curl -X POST ...
         3. ...
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected behaviour
     validations:
       required: true
 
@@ -48,9 +41,28 @@ body:
     id: actual
     attributes:
       label: Actual behaviour
-      description: What happened instead. Paste stack traces or error responses verbatim.
+      description: What happened. Paste stack traces and error responses verbatim.
     validations:
       required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened instead. Skip this if it's obvious from the actual behaviour (e.g. a crash where the expectation is "no crash").
+    validations:
+      required: false
+
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Likely affected files
+      description: Best-guess pointer to the files or modules involved. Saves the assignee from grepping cold. Leave blank if unsure.
+      placeholder: |
+        - src/py/novamoc/...
+        - tests/...
+    validations:
+      required: false
 
   - type: textarea
     id: environment
@@ -68,7 +80,7 @@ body:
   - type: textarea
     id: context
     attributes:
-      label: Additional context
-      description: Logs, screenshots, links to related issues / ADRs, anything else useful.
+      label: Related ADRs, issues, or additional context
+      description: Links to ADRs under `docs/adr/`, specs under `docs/superpowers/specs/`, related issues, logs, or screenshots.
     validations:
       required: false

@@ -22,7 +22,7 @@ body:
     id: pain
     attributes:
       label: Why it's debt
-      description: What's painful about the current state? Performance, correctness risk, friction when changing related code, drift from an ADR, etc.
+      description: What's painful or risky about the current state? Performance, correctness risk, friction when changing related code, drift from an ADR, etc.
     validations:
       required: true
 
@@ -38,13 +38,13 @@ body:
     id: urgency
     attributes:
       label: Urgency
-      description: How load-bearing is paying this down?
+      description: How load-bearing is paying this down? Leave blank if you don't want to take a position — the triager will decide.
       options:
         - Low — annoyance, can sit indefinitely
         - Medium — should be done before related work expands
         - High — actively blocking or causing bugs
     validations:
-      required: true
+      required: false
 
   - type: checkboxes
     id: adr
@@ -58,7 +58,7 @@ body:
   - type: textarea
     id: context
     attributes:
-      label: Additional context
-      description: Links to related issues, ADRs, prior discussion, or the commit that introduced the shortcut.
+      label: Related ADRs, specs, issues, or additional context
+      description: Links to ADRs under `docs/adr/`, specs under `docs/superpowers/specs/`, related issues, prior discussion, or the commit that introduced the shortcut.
     validations:
       required: false
