@@ -130,13 +130,17 @@ class TestAppSettings:
 
 
 class TestAuthSettings:
-    def test_defaults_match_adr_020(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_defaults_are_production_safe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         for var in _AUTH_ENV_VARS:
             monkeypatch.delenv(var, raising=False)
         s = AuthSettings()
         assert s.session_ttl_seconds == 86400
         assert s.session_cookie_name == "novamoc_session"
-        assert s.session_cookie_secure is False
+        # Production-safe default: Secure cookies (HTTPS-only). Local
+        # dev opts out via NOVAMOC_AUTH_SESSION_COOKIE_SECURE=false.
+        assert s.session_cookie_secure is True
         assert s.argon2_time_cost == 3
         assert s.argon2_memory_cost_kib == 65536
         assert s.argon2_parallelism == 4
@@ -144,14 +148,14 @@ class TestAuthSettings:
     def test_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NOVAMOC_AUTH_SESSION_TTL_SECONDS", "3600")
         monkeypatch.setenv("NOVAMOC_AUTH_SESSION_COOKIE_NAME", "sid")
-        monkeypatch.setenv("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", "true")
+        monkeypatch.setenv("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", "false")
         monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_TIME_COST", "5")
         monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_MEMORY_COST_KIB", "131072")
         monkeypatch.setenv("NOVAMOC_AUTH_ARGON2_PARALLELISM", "8")
         s = AuthSettings()
         assert s.session_ttl_seconds == 3600
         assert s.session_cookie_name == "sid"
-        assert s.session_cookie_secure is True
+        assert s.session_cookie_secure is False
         assert s.argon2_time_cost == 5
         assert s.argon2_memory_cost_kib == 131072
         assert s.argon2_parallelism == 8

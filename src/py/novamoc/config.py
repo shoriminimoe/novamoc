@@ -143,15 +143,21 @@ class AppSettings:
 class AuthSettings:
     """Authentication subsystem tunables (ADR-020).
 
+    Defaults are the production-safe values throughout: dev relaxes
+    them via env vars rather than the other way around.
+
     Attributes:
         session_ttl_seconds: Absolute lifetime of a session cookie,
-            in seconds (24h by default).
+            in seconds (24h).
         session_cookie_name: Name of the cookie carrying the session id.
         session_cookie_secure: ``Secure`` flag on the session cookie.
-            Must be ``True`` in production (HTTPS-only); ``False`` in
-            development so the cookie is sent over loopback.
-        argon2_time_cost: argon2id ``t`` parameter (iterations).
-        argon2_memory_cost_kib: argon2id ``m`` parameter (memory, KiB).
+            Defaults to ``True`` (HTTPS-only); local development over
+            loopback opts out with
+            ``NOVAMOC_AUTH_SESSION_COOKIE_SECURE=false``.
+        argon2_time_cost: argon2id ``t`` parameter (iterations) —
+            OWASP "Argon2id" recommendation rounded up.
+        argon2_memory_cost_kib: argon2id ``m`` parameter (memory, KiB)
+            — 64 MiB, OWASP minimum for the (t=3, p=4) profile.
         argon2_parallelism: argon2id ``p`` parameter.
     """
 
@@ -162,7 +168,7 @@ class AuthSettings:
         default_factory=_str_env("NOVAMOC_AUTH_SESSION_COOKIE_NAME", "novamoc_session")
     )
     session_cookie_secure: bool = field(
-        default_factory=_bool_env("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", False)
+        default_factory=_bool_env("NOVAMOC_AUTH_SESSION_COOKIE_SECURE", True)
     )
     argon2_time_cost: int = field(
         default_factory=_int_env("NOVAMOC_AUTH_ARGON2_TIME_COST", 3)
