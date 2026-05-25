@@ -16,7 +16,9 @@ tenant's UUID so the M5.15 recipe can ``awk`` it out.
 The CLI runs outside the request lifecycle so it does not use the
 tenant-scoping middleware or contextvar. The auth-registry tables
 are not tenant-scoped (they have no ``tenant_id`` column), so the
-listeners short-circuit naturally.
+listeners short-circuit naturally. We still import the listeners
+module so any future CLI command that touches a synced table goes
+through the same structural enforcement as the web layer.
 """
 
 from __future__ import annotations
@@ -31,6 +33,12 @@ import click
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+# Register tenant-scoping event handlers on SQLAlchemy. Today's CLI
+# commands only touch the non-scoped auth-registry tables so the
+# listeners short-circuit, but importing here keeps the production
+# CLI path aligned with ``asgi.create_app`` for any future command
+# that touches a synced table.
+import novamoc.db._listeners  # noqa: F401
 from novamoc.config import Settings
 from novamoc.db.models._auth import Session
 from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
@@ -45,8 +53,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
-
-    from novamoc.db.models._auth import Tenant
 
 
 def _password_hasher(settings: Settings) -> PasswordHasher:
@@ -67,7 +73,10 @@ async def _run_in_session[T](
     Commits on success, rolls back on any exception (which then
     propagates to the caller for the click error mapping). The
     engine is disposed before returning so the CLI process exits
-    cleanly.
+    cleanly. ``commit`` runs inside the same ``try`` as ``work`` so
+    a commit-time failure (deferred constraint, future commit-hook)
+    follows the explicit rollback path rather than relying on
+    ``AsyncSession.close()``'s implicit rollback.
     """
     engine = create_async_engine(settings.db.url)
     try:
@@ -75,10 +84,10 @@ async def _run_in_session[T](
         async with factory() as session:
             try:
                 result = await work(session)
+                await session.commit()
             except BaseException:
                 await session.rollback()
                 raise
-            await session.commit()
             return result
     finally:
         await engine.dispose()
@@ -93,11 +102,6 @@ def _prompt_password_if_missing(password: str | None) -> str:
     if password is not None:
         return password
     return click.prompt("Password", hide_input=True, confirmation_prompt=True)
-
-
-def _fail(message: str) -> None:
-    """Emit ``message`` on stderr and exit non-zero."""
-    raise click.ClickException(message)
 
 
 @click.group()
@@ -130,12 +134,17 @@ def tenant_create(display_name: str) -> None:
     """Create a tenant and print its UUID."""
     settings = Settings()
 
-    async def work(session: AsyncSession) -> Tenant:
+    async def work(session: AsyncSession) -> uuid.UUID:
+        # Return the UUID directly rather than handing back an ORM
+        # instance whose attributes would be read after ``engine.dispose()``.
         svc = TenantService(session=session)
-        return await svc.create(data={"display_name": display_name}, auto_commit=False)
+        created = await svc.create(
+            data={"display_name": display_name}, auto_commit=False
+        )
+        return created.id
 
-    created = asyncio.run(_run_in_session(settings, work))
-    click.echo(f"Created tenant {created.id}.")
+    created_id = asyncio.run(_run_in_session(settings, work))
+    click.echo(f"Created tenant {created_id}.")
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +215,8 @@ def user_set_password(username: str, password: str | None) -> None:
             msg = f"User '{username}' not found."
             raise click.ClickException(msg)
         existing.password_hash = hashed
-        await session.flush()
+        # No explicit flush — ``_run_in_session`` commits, which
+        # flushes implicitly.
 
     asyncio.run(_run_in_session(settings, work))
     click.echo(f"Password updated for user {username}.")
