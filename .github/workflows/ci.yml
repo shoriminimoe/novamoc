@@ -6,46 +6,142 @@ on:
   pull_request:
 
 jobs:
-  check:
+  lint-py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # `uv sync` builds novamoc via uv_build, which walks `build/wheel_data/`.
+      # Create the dir first so the sync succeeds on a fresh checkout.
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      # `--exit-zero` so the ratchet job is the gate, not this step. The
+      # JSON output drives both the `::error` annotations and the summary
+      # table emitted by ci_summary.py.
+      - name: Run ruff
+        run: uv run ruff check --no-fix --exit-zero --output-format=json . > ruff.json
+      - name: Summarize ruff
+        if: always()
+        run: uv run python scripts/ci_summary.py ruff ruff.json
+
+  typecheck-py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      # ty has no `github` output format; we use `gitlab` (JSON) and
+      # convert to annotations + table in ci_summary.py. `--exit-zero`
+      # keeps the tool step from short-circuiting before the summary;
+      # the summary step inspects the file and exits non-zero on error.
+      - name: Run ty
+        run: uv run ty check --output-format=gitlab --exit-zero > ty.json
+      - name: Summarize ty
+        if: always()
+        run: uv run python scripts/ci_summary.py ty ty.json
+      - name: Fail on type errors
+        run: |
+          set -e
+          test "$(cat ty.json)" = "[]"
+
+  coverage-py:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: extractions/setup-just@v3
-
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version-file: .python-version
 
-      - uses: actions/setup-node@v4
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+      - run: just render-problem-docs
+
+      - run: just coverage-py
+      - name: Summarize pytest
+        if: always()
+        run: uv run python scripts/ci_summary.py pytest pytest-junit.xml coverage.xml
+
+      - name: Upload python coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-py
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 14
+
+  coverage-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: src/js/web/package-lock.json
 
-      # The uv_build backend walks `build/wheel_data/` (purelib data tree
-      # populated by `just render-problem-docs`) when building novamoc as
-      # part of `uv sync`. Create it empty first so the build succeeds;
-      # then populate it after the venv exists.
+      # ci_summary.py is a Python script, so the JS job still needs uv +
+      # the venv for that step. The cache makes the sync ~free.
       - run: mkdir -p build/wheel_data
       - run: uv sync
-      - run: just render-problem-docs
       - run: cd src/js/web && npm ci
 
-      - run: just lint
-      - run: just typecheck
-      - run: just coverage
-      - run: just ratchet
-
-      - name: Upload coverage reports
+      - run: just coverage-js
+      - name: Summarize vitest
         if: always()
-        uses: actions/upload-artifact@v4
+        run: uv run python scripts/ci_summary.py vitest src/js/web/vitest-junit.xml src/js/web/coverage/coverage-summary.json
+
+      - name: Upload js coverage
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          name: coverage-reports
-          path: |
-            htmlcov/
-            coverage.xml
-            src/js/web/coverage/
+          name: coverage-js
+          path: src/js/web/coverage/
           retention-days: 14
+
+  ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [coverage-py, coverage-js]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-py
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-js
+          path: src/js/web/coverage/
+
+      # `just ratchet` writes its own table to $GITHUB_STEP_SUMMARY
+      # (see scripts/ratchet.py).
+      - run: just ratchet

@@ -35,6 +35,8 @@ htmlcov/
 coverage.xml
 .coverage.*
 src/js/web/coverage/
+pytest-junit.xml
+src/js/web/vitest-junit.xml
 
 # TypeScript & Node.js
 *.js

@@ -1,8 +1,0 @@
-<?xml version="1.0" ?>
-<coverage line-rate="0.8845" branch-rate="0.7612" version="7.0" timestamp="0">
-  <packages>
-    <package name="novamoc" line-rate="0.8845" branch-rate="0.7612">
-      <classes/>
-    </package>
-  </packages>
-</coverage>
