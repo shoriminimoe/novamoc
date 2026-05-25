@@ -6,46 +6,112 @@ on:
   pull_request:
 
 jobs:
-  check:
+  lint-py:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
       - uses: extractions/setup-just@v3
-
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           python-version-file: .python-version
 
+      # `uv sync` builds novamoc via uv_build, which walks `build/wheel_data/`.
+      # Create the dir first so the sync succeeds on a fresh checkout.
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      - run: just lint
+
+  typecheck-py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version-file: .python-version
+
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      - run: just typecheck
+
+  coverage-py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version-file: .python-version
+
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+      - run: just render-problem-docs
+
+      - run: just coverage-py
+
+      - name: Upload python coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 14
+
+  coverage-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: src/js/web/package-lock.json
 
-      # The uv_build backend walks `build/wheel_data/` (purelib data tree
-      # populated by `just render-problem-docs`) when building novamoc as
-      # part of `uv sync`. Create it empty first so the build succeeds;
-      # then populate it after the venv exists.
-      - run: mkdir -p build/wheel_data
-      - run: uv sync
-      - run: just render-problem-docs
       - run: cd src/js/web && npm ci
 
-      - run: just lint
-      - run: just typecheck
-      - run: just coverage
-      - run: just ratchet
+      - run: just coverage-js
 
-      - name: Upload coverage reports
+      - name: Upload js coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-reports
-          path: |
-            htmlcov/
-            coverage.xml
-            src/js/web/coverage/
+          name: coverage-js
+          path: src/js/web/coverage/
           retention-days: 14
+
+  ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [coverage-py, coverage-js]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v3
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version-file: .python-version
+
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-py
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-js
+          path: src/js/web/coverage/
+
+      - run: just ratchet
