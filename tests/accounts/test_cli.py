@@ -274,3 +274,37 @@ def test_user_add_to_tenant_unknown_tenant_exits_nonzero(
     assert result.exit_code != 0
     assert "not found" in result.stderr.lower()
     assert str(phantom) in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Echoed username uses the folded form ([9] in the PR #115 review)
+# ---------------------------------------------------------------------------
+
+
+def test_user_create_echoes_folded_username(runner: CliRunner, db_url: str) -> None:
+    result = runner.invoke(main, ["user", "create", "ALICE", "--password", "x"])
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "ALICE" not in result.stdout
+    assert "alice" in result.stdout
+
+
+def test_user_set_password_echoes_folded_username(
+    runner: CliRunner, db_url: str
+) -> None:
+    runner.invoke(main, ["user", "create", "alice", "--password", "old"])
+    result = runner.invoke(main, ["user", "set-password", "ALICE", "--password", "new"])
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "ALICE" not in result.stdout
+    assert "alice" in result.stdout
+
+
+def test_user_add_to_tenant_echoes_folded_username(
+    runner: CliRunner, db_url: str
+) -> None:
+    tenant_res = runner.invoke(main, ["tenant", "create", "--display-name", "Acme"])
+    tenant_id = _extract_uuid(tenant_res.stdout)
+    runner.invoke(main, ["user", "create", "alice", "--password", "x"])
+    result = runner.invoke(main, ["user", "add-to-tenant", "ALICE", str(tenant_id)])
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "ALICE" not in result.stdout
+    assert "alice" in result.stdout

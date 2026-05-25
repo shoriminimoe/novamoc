@@ -202,7 +202,7 @@ def user_create(username: str, password: str | None) -> None:
     settings = _load_settings()
     hasher = _password_hasher(settings)
 
-    async def work(session: AsyncSession) -> None:
+    async def work(session: AsyncSession) -> str:
         svc = UserService(session=session)
         # Pre-check before hashing: the service folds usernames at
         # create-time, so a case-folded lookup catches duplicates
@@ -214,7 +214,7 @@ def user_create(username: str, password: str | None) -> None:
             raise click.ClickException(msg)
         hashed = hasher.hash(plaintext)
         try:
-            await svc.create(
+            created = await svc.create(
                 data={"username": username, "password_hash": hashed},
                 auto_commit=False,
             )
@@ -224,9 +224,10 @@ def user_create(username: str, password: str | None) -> None:
             # friendly message rather than a raw SQLAlchemy traceback.
             msg = f"User '{username}' already exists."
             raise click.ClickException(msg) from exc
+        return created.username
 
-    asyncio.run(_run_in_session(settings, work))
-    click.echo(f"Created user {username}.")
+    folded = asyncio.run(_run_in_session(settings, work))
+    click.echo(f"Created user {folded}.")
 
 
 @user.command("set-password")
@@ -248,7 +249,7 @@ def user_set_password(username: str, password: str | None) -> None:
     settings = _load_settings()
     hasher = _password_hasher(settings)
 
-    async def work(session: AsyncSession) -> None:
+    async def work(session: AsyncSession) -> str:
         svc = UserService(session=session)
         # Pre-check before hashing: lookup is far cheaper than the
         # ~100 ms argon2id work for a username that doesn't exist.
@@ -259,9 +260,10 @@ def user_set_password(username: str, password: str | None) -> None:
         existing.password_hash = hasher.hash(plaintext)
         # No explicit flush — ``_run_in_session`` commits, which
         # flushes implicitly.
+        return existing.username
 
-    asyncio.run(_run_in_session(settings, work))
-    click.echo(f"Password updated for user {username}.")
+    folded = asyncio.run(_run_in_session(settings, work))
+    click.echo(f"Password updated for user {folded}.")
 
 
 @user.command("exists")
@@ -303,7 +305,7 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
 
     settings = _load_settings()
 
-    async def work(session: AsyncSession) -> None:
+    async def work(session: AsyncSession) -> str:
         users = UserService(session=session)
         target = await users.get_by_username(username)
         if target is None:
@@ -336,9 +338,10 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
             # gets the same friendly message.
             msg = f"User '{username}' already belongs to a tenant."
             raise click.ClickException(msg) from exc
+        return target.username
 
-    asyncio.run(_run_in_session(settings, work))
-    click.echo(f"Added user {username} to tenant {tenant_id}.")
+    folded = asyncio.run(_run_in_session(settings, work))
+    click.echo(f"Added user {folded} to tenant {tenant_id}.")
 
 
 # ---------------------------------------------------------------------------
