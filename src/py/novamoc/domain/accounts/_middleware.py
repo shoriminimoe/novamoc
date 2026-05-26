@@ -9,14 +9,23 @@ opt-key bypass (``exclude_from_auth``), HTTP-method exclusion (``OPTIONS``
 by default), and ASGI scope filtering. Our
 :meth:`AuthenticationMiddleware.authenticate_request` reads the session
 payload off ``connection.session`` (populated upstream by the
-SessionMiddleware mounted in :mod:`novamoc.asgi`), opens a transient
-SQLAlchemy session via the ``async_sessionmaker`` stashed at
-``connection.app.state.session_maker`` by ``create_app``, and forwards
-to :func:`resolve_principal_from_session` (M5.11, ADR-020). DI
-providers are not reachable from middleware (they resolve at
-route-handler invocation time), so the maker travels via ``app.state``
-for the same reason :class:`PasswordHasher` does. The ``Principal``
-lands on ``scope["user"]``; the ``RequestAuth`` on ``scope["auth"]``.
+SessionMiddleware mounted in :mod:`novamoc.asgi`), acquires a SQLAlchemy
+session via
+``alchemy_config.provide_session(connection.app.state, connection.scope)``
+— the pattern advanced-alchemy documents for guards/middleware (see
+https://advanced-alchemy.litestar.dev/latest/usage/frameworks/litestar.html#sessions-in-application).
+``provide_session`` is idempotent per scope: any handler that later
+binds ``db_session: AsyncSession`` via DI receives the same session,
+and the plugin's ``before_send_handler="autocommit"`` hook handles
+commit/rollback at response time. The middleware does not own the
+session lifecycle. ``Principal`` lands on ``scope["user"]``;
+``RequestAuth`` on ``scope["auth"]``.
+
+The ``alchemy_config`` reference is injected at app-construction time
+via ``DefineMiddleware(AuthenticationMiddleware, alchemy_config=...)``
+— DI providers are not reachable from middleware (they resolve at
+route-handler invocation time), and a constructor-time inject is the
+documented Litestar idiom for "middleware needs a singleton."
 
 :class:`TenantContextMiddleware` runs after authentication and binds
 ``scope["auth"].tenant_id`` to the storage-layer ``current_tenant_id``
@@ -27,7 +36,7 @@ unwound on exit including the exception path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from litestar.middleware import ASGIMiddleware
 from litestar.middleware.authentication import (
@@ -43,22 +52,32 @@ from novamoc.domain.accounts._services import (
 )
 
 if TYPE_CHECKING:
+    from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
     from litestar.connection import ASGIConnection
     from litestar.types import ASGIApp, Receive, Scope, Send
 
 
 class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
+    def __init__(
+        self,
+        app: ASGIApp,
+        alchemy_config: SQLAlchemyAsyncConfig,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(app=app, **kwargs)
+        self._alchemy_config = alchemy_config
+
     async def authenticate_request(
         self, connection: ASGIConnection
     ) -> AuthenticationResult:
-        payload = connection.session
-        session_maker = connection.app.state.session_maker
-        async with session_maker() as db_session:
-            users = UserService(session=db_session)
-            memberships = UserTenantMembershipService(session=db_session)
-            principal, auth = await resolve_principal_from_session(
-                payload, users=users, memberships=memberships
-            )
+        db_session = self._alchemy_config.provide_session(
+            connection.app.state, connection.scope
+        )
+        users = UserService(session=db_session)
+        memberships = UserTenantMembershipService(session=db_session)
+        principal, auth = await resolve_principal_from_session(
+            connection.session, users=users, memberships=memberships
+        )
         return AuthenticationResult(user=principal, auth=auth)
 
 

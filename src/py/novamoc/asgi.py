@@ -138,13 +138,18 @@ def create_app(settings: Settings | None = None) -> Litestar:
             # 1. read/write the session cookie ↔ ``scope["session"]``.
             DefineMiddleware(SessionMiddleware, backend=session_backend),
             # 2. read ``scope["session"]`` → ``scope["user"]`` /
-            # ``scope["auth"]``. ``/auth/login`` is excluded because
-            # login is the bootstrap path that *writes* the session;
+            # ``scope["auth"]``. ``alchemy_config`` is injected here so
+            # the middleware can call ``provide_session(state, scope)``
+            # — the advanced-alchemy-documented pattern for guards /
+            # middleware. ``/auth/login`` is excluded because login
+            # is the bootstrap path that *writes* the session;
             # ``/openapi`` and ``/problems`` stay public. The trailing
-            # ``(/|$)`` anchors each entry so a future ``/auth/login/oauth``
-            # (or similar) doesn't silently inherit the bypass.
+            # ``(/|$)`` anchors each entry so a future
+            # ``/auth/login/oauth`` (or similar) doesn't silently
+            # inherit the bypass.
             DefineMiddleware(
                 AuthenticationMiddleware,
+                alchemy_config=alchemy_config,
                 exclude=r"^/(openapi|problems|auth/login)(/|$)",
             ),
             # 3. read ``scope["auth"].tenant_id`` → ContextVar so the
@@ -157,25 +162,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
         # only the narrow slice they need rather than the whole tree.
         # ``state.password_hasher`` is the hot-path login dependency
         # M5.10's ``AuthController`` pulls via DI.
-        # ``state.session_maker`` is the per-request DB-session source
-        # ``AuthenticationMiddleware`` opens its transient session
-        # against — it runs before route resolution so the standard
-        # ``provide_session`` DI provider is not yet reachable, and
-        # ``alchemy_config.create_session_maker()`` returns the same
-        # cached maker the plugin's lifespan startup uses. We stash
-        # under our own key rather than ``state.session_maker_class``
-        # because advanced_alchemy auto-suffixes its own keys per
-        # config instance (``session_maker_class``,
-        # ``session_maker_class_1``, ...) to avoid collisions across
-        # multiple configs — fine for that purpose, fatal for a
-        # hard-coded read.
-        state=State(
-            {
-                "settings": s,
-                "password_hasher": password_hasher,
-                "session_maker": alchemy_config.create_session_maker(),
-            }
-        ),
+        state=State({"settings": s, "password_hasher": password_hasher}),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),

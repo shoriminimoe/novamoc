@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
+from advanced_alchemy.extensions.litestar import (
+    SQLAlchemyAsyncConfig,
+    SQLAlchemyPlugin,
+)
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
@@ -233,18 +237,23 @@ async def seed_dev_admin(app: Litestar) -> None:
     """Seed the canonical admin tenant + user + membership into ``app``.
 
     Call **inside** a live ``AsyncTestClient`` context — the plugin's
-    lifespan startup must have run so the registry tables exist and
-    ``app.state.session_maker`` points at the active engine. The
-    ``tenant_id`` is pinned to :data:`DEV_TENANT_ID` so every test
-    sees the same value on ``request.auth.tenant_id``; the production
-    CLI never pins a specific UUID (the fixture is the only place
-    that does, and that's deliberate — scenarios reference the same
-    constant and need a deterministic value across runs).
+    lifespan startup must have run so the registry tables exist. We
+    use ``alchemy_config.get_session()`` (the advanced-alchemy
+    documented helper for code outside the request lifecycle) since
+    seeding is not request-scoped. The ``tenant_id`` is pinned to
+    :data:`DEV_TENANT_ID` so every test sees the same value on
+    ``request.auth.tenant_id``; the production CLI never pins a
+    specific UUID (the fixture is the only place that does, and
+    that's deliberate — scenarios reference the same constant and
+    need a deterministic value across runs).
     """
-    session_maker = app.state.session_maker
+    plugin = app.plugins.get(SQLAlchemyPlugin)
+    alchemy_config = next(
+        c for c in plugin.config if isinstance(c, SQLAlchemyAsyncConfig)
+    )
     hasher = app.state.password_hasher
 
-    async with session_maker() as db_session:
+    async with alchemy_config.get_session() as db_session:
         tenants = TenantService(session=db_session)
         users = UserService(session=db_session)
         memberships = UserTenantMembershipService(session=db_session)

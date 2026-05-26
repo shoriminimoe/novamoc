@@ -95,46 +95,66 @@ These ride forward unchanged from the issue brief:
 
 ### 1. How `AuthenticationMiddleware.authenticate_request` acquires the SQLAlchemy session
 
-The middleware runs **before** route resolution, so the controller's `dependencies` map is not yet bound — Litestar DI providers (including `advanced_alchemy`'s shipped `provide_session`) cannot supply the session. Three options were considered:
+The middleware runs **before** route resolution, so the controller's `dependencies` map is not yet bound — Litestar DI providers can't be wired by parameter name. But advanced-alchemy's `SQLAlchemyAsyncConfig.provide_session(state, scope)` — the same method registered as the DI provider — is a regular method that can be called directly, and the [advanced-alchemy docs](https://advanced-alchemy.litestar.dev/latest/usage/frameworks/litestar.html#sessions-in-application) explicitly recommend it for guards and middleware:
 
-1. **Pull an `async_sessionmaker` off `app.state` and `async with maker() as db_session:`.** Chosen.
-2. **Reach into the request-scoped session that `before_send_handler="autocommit"` will commit at response time.**
-3. **Defer resolution by writing the session payload into `scope["state"]` and resolving inside a controller `before_request` hook.**
+> "provide_session is useful in places where you are already in the request/response context such as guards and middleware."
 
-Chosen: option 1, with one wrinkle. `create_app` calls `alchemy_config.create_session_maker()` once and stashes the returned `async_sessionmaker` under our own key, `state.session_maker`:
+Chosen: use `provide_session(state, scope)`. The middleware receives `alchemy_config` at construction time via `DefineMiddleware`:
 
 ```python
 # asgi.create_app
-state=State({
-    "settings": s,
-    "password_hasher": password_hasher,
-    "session_maker": alchemy_config.create_session_maker(),
-})
+middleware=[
+    DefineMiddleware(SessionMiddleware, backend=session_backend),
+    DefineMiddleware(
+        AuthenticationMiddleware,
+        alchemy_config=alchemy_config,                             # ← injected
+        exclude=r"^/(openapi|problems|auth/login)(/|$)",
+    ),
+    TenantContextMiddleware(),
+]
 
-# AuthenticationMiddleware.authenticate_request
-async def authenticate_request(self, connection: ASGIConnection) -> AuthenticationResult:
-    payload = connection.session  # dict, populated by SessionMiddleware
-    session_maker = connection.app.state.session_maker
-    async with session_maker() as db_session:
+# AuthenticationMiddleware
+class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
+    def __init__(self, app, alchemy_config, exclude=None, ...):
+        super().__init__(app=app, exclude=exclude, ...)
+        self._alchemy_config = alchemy_config
+
+    async def authenticate_request(self, connection):
+        db_session = self._alchemy_config.provide_session(
+            connection.app.state, connection.scope,
+        )
         users = UserService(session=db_session)
         memberships = UserTenantMembershipService(session=db_session)
         principal, auth = await resolve_principal_from_session(
-            payload, users=users, memberships=memberships,
+            connection.session, users=users, memberships=memberships,
         )
-    return AuthenticationResult(user=principal, auth=auth)
+        return AuthenticationResult(user=principal, auth=auth)
 ```
 
-**Why our own key rather than the plugin's `session_maker_class`?** `advanced_alchemy` auto-suffixes the plugin's state keys per `SQLAlchemyAsyncConfig` instance to avoid collisions when multiple configs are registered on one app — the first instance gets `session_maker_class`, the second `session_maker_class_1`, and so on. In tests, each test calls `create_app` and instantiates a fresh config, so test 2 onwards reads under `session_maker_class_1`. A middleware that hardcodes `state.session_maker_class` works for test 1 and breaks for the rest. Picking our own key sidesteps that mangling entirely; the maker we cache is the same `async_sessionmaker` instance the plugin's own lifespan startup will reuse (via `create_session_maker()`'s `self.session_maker` cache).
+Properties this gives us:
 
-The `app.state` pattern matches how the hot-path `PasswordHasher` is wired for the same DI-unavailability reason. We deliberately do **not** walk `app.plugins.get(SQLAlchemyPlugin).config[]`: the plugin stores its registered configs as a list (multi-binding support), and reaching in is two indirections for what is conceptually one shared dependency.
+- **The session is shared with the handler.** `provide_session` is idempotent per `scope` — it stashes the session on a private scope-state key and returns the same session on subsequent calls. If the route handler later binds `db_session: AsyncSession` via DI, it gets the same session the middleware opened.
+- **Lifecycle is the plugin's.** The `before_send_handler="autocommit"` hook commits on 2xx responses and rolls back on 4xx/5xx. The middleware does not own the session lifecycle. The resolver's reads are SELECT-only, so the commit-or-rollback at response time is effectively a no-op for the auth path; the rule is still useful when the handler subsequently writes through the same session.
+- **No state stash.** `alchemy_config` arrives via constructor injection, not via `app.state`. The only thing we put on state is `password_hasher`, which is what's actually a hot-path login dependency the controller pulls via DI.
 
-What the chosen path skips: `SQLAlchemyAsyncConfig.get_session()` wraps the same `async with session_maker() as session: ...` in a `set_async_context(True)` call. That flag is internal advanced_alchemy bookkeeping for mixed sync/async session detection; the resolver does only read-only async `SELECT`s, so bypassing the flag is fine. The clearer signature (`async with session_maker() as db_session`) and the reduced indirection win.
+Two alternative options were considered and rejected:
 
-Option 2 was rejected because the auth middleware runs *before* the controller, before `before_send_handler` has set up the request-scoped session — there is nothing on the scope to reach for yet. Option 3 was rejected because it puts authentication behind route resolution: an unauthenticated request to a non-existent route would 404, not 401, breaking the byte-identical 401-on-credential-failure contract ADR-020 cares about.
+- **Reach into the request-scoped session that `before_send_handler="autocommit"` will commit at response time.** That session is created on first DI access; the middleware runs before DI. (`provide_session` is the right form of this idea — it creates the session if absent, returns the existing one otherwise.)
+- **Defer resolution by writing the session payload into `scope["state"]` and resolving inside a controller `before_request` hook.** That puts authentication *behind* route resolution: an unauthenticated request to a non-existent route would 404, not 401, breaking the byte-identical 401-on-credential-failure contract ADR-020 cares about.
 
-Lifecycle pin: the session opened inside `authenticate_request` does **not** participate in the autocommit hook; it commits or rolls back independently. The only writes the resolver performs are read-only `SELECT`s, so this is fine — no transactional dependency on the route handler exists.
+**Earlier dead-ends.** Two intermediate iterations stashed something on `app.state` (first `alchemy_config`, then a freshly-created `session_maker`) and had the middleware read from there. Both worked, but `provide_session` is the documented pattern and obsoletes both — constructor-time injection avoids the state stash entirely. A third iteration tried to read the plugin's auto-populated `state.session_maker_class`; that broke under test because `advanced_alchemy` auto-suffixes its per-config state keys (`session_maker_class`, `session_maker_class_1`, …) and a hardcoded read works for the first test and fails from the second onward.
 
-The `dev_admin` test fixture is just credentials (`DevAdmin(username, password, tenant_id)`). The actual seed lives in a `seed_dev_admin(app)` helper called **inside** the `AsyncTestClient` context that needs the admin row — at that point the plugin's lifespan has already fired, so `create_all` has run and `state.session_maker` points at the active engine. The helper reads `state.session_maker` and writes the rows; the fixture writes nothing. This keeps the fixture's surface minimal and avoids any pre-lifespan engine/metadata reach (an earlier draft tried to do the seed at fixture-setup time and ended up grabbing the engine off `session_maker.kw["bind"]` — production code stayed simple but the fixture wore the awkwardness; pushing the seed inside the lifespan deletes both).
+The `dev_admin` test fixture is just credentials (`DevAdmin(username, password, tenant_id)`). The actual seed lives in a `seed_dev_admin(app)` helper called **inside** the `AsyncTestClient` context that needs the admin row. The helper walks the plugin to find the async config (the docs recommend `get_session()` for "outside the request lifecycle" — fixtures qualify) and opens a transient session:
+
+```python
+async def seed_dev_admin(app: Litestar) -> None:
+    plugin = app.plugins.get(SQLAlchemyPlugin)
+    alchemy_config = next(c for c in plugin.config if isinstance(c, SQLAlchemyAsyncConfig))
+    async with alchemy_config.get_session() as db_session:
+        ...  # write tenant + user + membership
+```
+
+The plugin walk is fine here: it's a one-shot test helper, not the per-request hot path. Both middleware and helper now use the documented patterns the docs spell out for the two contexts (in-request vs. out-of-request).
 
 ### 2. Where `PasswordHasher` lives on the app
 
@@ -357,10 +377,12 @@ landed; no further action.
   site) but not all. The SPA is same-origin and not exposed
   third-party today; a CSRF token spec is the right follow-up when
   any non-SPA caller appears.
-- **Single SQLAlchemyAsyncConfig assumption.** `create_app` stashes
-  one `async_sessionmaker` under `state.session_maker`. If a second
-  config lands (read-replica, audit DB), the key needs to grow into
-  a per-config namespace — revisit when multi-DB shows up.
+- **Single SQLAlchemyAsyncConfig assumption.** `create_app` passes
+  exactly one `alchemy_config` to ``AuthenticationMiddleware``; the
+  ``seed_dev_admin`` helper picks the only async config off the
+  plugin. If a second async config lands (read-replica, audit DB),
+  the middleware needs an explicit selection rule for *which* config
+  the auth resolver targets — revisit when multi-DB shows up.
 - **Resolver timing side-channel.** `resolve_principal_from_session`
   issues 0/1/2 SELECTs depending on which check fails (malformed UUID
   short-circuits, unknown user adds one query, missing membership adds
