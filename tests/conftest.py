@@ -236,23 +236,22 @@ async def dev_admin(app: Litestar) -> DevAdmin:
     does, and that's deliberate: scenarios reference the same UUID
     constant and need a deterministic value across runs.
 
-    Runs *before* ``AsyncTestClient``'s lifespan startup; we call
-    ``create_all_metadata`` directly (the same helper the plugin's
-    startup hook fires) so the registry writes have tables to land
-    in. ``CREATE TABLE IF NOT EXISTS`` makes the lifespan re-run a
+    Runs *before* ``AsyncTestClient``'s lifespan startup; we use the
+    ``async_sessionmaker`` ``create_app`` seeded on ``app.state``.
+    Tables are created inline (via the engine bound to the maker)
+    because the plugin's ``create_all`` lifespan hook hasn't fired
+    yet; ``CREATE TABLE IF NOT EXISTS`` makes the lifespan re-run a
     no-op.
-
-    Pulls the ``SQLAlchemyAsyncConfig`` and the ``PasswordHasher`` off
-    ``app.state`` — both are stashed there by ``create_app`` so the
-    auth middleware (and this fixture) can reach them without walking
-    the plugin list.
     """
-    alchemy_config = app.state.alchemy_config
-    await alchemy_config.create_all_metadata(app)
+    session_maker = app.state.session_maker
+    engine = session_maker.kw["bind"]
+    async with engine.begin() as conn:
+        for key in metadata_registry:
+            await conn.run_sync(metadata_registry[key].create_all)
 
     hasher = app.state.password_hasher
 
-    async with alchemy_config.get_session() as db_session:
+    async with session_maker() as db_session:
         tenant_service = TenantService(session=db_session)
         users = UserService(session=db_session)
         memberships = UserTenantMembershipService(session=db_session)

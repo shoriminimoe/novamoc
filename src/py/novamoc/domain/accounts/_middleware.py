@@ -10,14 +10,13 @@ by default), and ASGI scope filtering. Our
 :meth:`AuthenticationMiddleware.authenticate_request` reads the session
 payload off ``connection.session`` (populated upstream by the
 SessionMiddleware mounted in :mod:`novamoc.asgi`), opens a transient
-SQLAlchemy session via ``connection.app.state.alchemy_config`` — the
-``SQLAlchemyAsyncConfig`` :mod:`novamoc.asgi` stashes there at app
-construction — and forwards to :func:`resolve_principal_from_session`
-(M5.11, ADR-020). DI providers are not reachable from middleware
-(they resolve at route-handler invocation time), so the alchemy config
-travels via ``app.state`` for the same reason :class:`PasswordHasher`
-does. The ``Principal`` lands on ``scope["user"]``; the ``RequestAuth``
-on ``scope["auth"]``.
+SQLAlchemy session via the ``async_sessionmaker`` stashed at
+``connection.app.state.session_maker`` by ``create_app``, and forwards
+to :func:`resolve_principal_from_session` (M5.11, ADR-020). DI
+providers are not reachable from middleware (they resolve at
+route-handler invocation time), so the maker travels via ``app.state``
+for the same reason :class:`PasswordHasher` does. The ``Principal``
+lands on ``scope["user"]``; the ``RequestAuth`` on ``scope["auth"]``.
 
 :class:`TenantContextMiddleware` runs after authentication and binds
 ``scope["auth"].tenant_id`` to the storage-layer ``current_tenant_id``
@@ -53,8 +52,8 @@ class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
         self, connection: ASGIConnection
     ) -> AuthenticationResult:
         payload = connection.session
-        alchemy_config = connection.app.state.alchemy_config
-        async with alchemy_config.get_session() as db_session:
+        session_maker = connection.app.state.session_maker
+        async with session_maker() as db_session:
             users = UserService(session=db_session)
             memberships = UserTenantMembershipService(session=db_session)
             principal, auth = await resolve_principal_from_session(

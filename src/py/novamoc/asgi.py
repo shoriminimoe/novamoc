@@ -157,16 +157,23 @@ def create_app(settings: Settings | None = None) -> Litestar:
         # only the narrow slice they need rather than the whole tree.
         # ``state.password_hasher`` is the hot-path login dependency
         # M5.10's ``AuthController`` pulls via DI.
-        # ``state.alchemy_config`` is the per-request DB-session source
+        # ``state.session_maker`` is the per-request DB-session source
         # ``AuthenticationMiddleware`` opens its transient session
         # against — it runs before route resolution so the standard
         # ``provide_session`` DI provider is not yet reachable, and
-        # this is the same object the SQLAlchemyPlugin wraps.
+        # ``alchemy_config.create_session_maker()`` returns the same
+        # cached maker the plugin's lifespan startup uses. We stash
+        # under our own key rather than ``state.session_maker_class``
+        # because advanced_alchemy auto-suffixes its own keys per
+        # config instance (``session_maker_class``,
+        # ``session_maker_class_1``, ...) to avoid collisions across
+        # multiple configs — fine for that purpose, fatal for a
+        # hard-coded read.
         state=State(
             {
                 "settings": s,
                 "password_hasher": password_hasher,
-                "alchemy_config": alchemy_config,
+                "session_maker": alchemy_config.create_session_maker(),
             }
         ),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
