@@ -4,7 +4,7 @@ default:
 
 # Check everything: `coverage` runs the test suites under coverage so the
 # ratchet has fresh inputs. Fast local loop stays `just test`.
-check: lint format typecheck coverage ratchet
+check: lint format typecheck coverage ratchet db-check
 
 # Lint everything
 [parallel]
@@ -25,6 +25,18 @@ test: test-py test-js
 # Run the backend server
 serve: render-problem-docs
 	uv run litestar --app novamoc.asgi:create_app run
+
+# Apply all pending migrations against $NOVAMOC_DB_URL.
+db-init:
+	uv run alchemy --config novamoc.db.config.alchemy_config upgrade head --no-prompt
+
+# Generate a new revision from the current models.
+db-revision message:
+	uv run alchemy --config novamoc.db.config.alchemy_config make-migrations -m "{{message}}" --autogenerate --no-prompt
+
+# CI gate: fail if models drift from the migration tree.
+db-check:
+	uv run alchemy --config novamoc.db.config.alchemy_config check
 
 # Build python packages
 build-py: render-problem-docs
