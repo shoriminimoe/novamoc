@@ -9,6 +9,7 @@ import pytest
 
 from novamoc.config import (
     AppSettings,
+    AuthSettings,
     DatabaseSettings,
     ServerSettings,
     Settings,
@@ -34,6 +35,10 @@ def _event(hlc: str) -> dict[str, object]:
 
 @pytest.fixture
 def settings() -> Settings:
+    # Override of the conftest ``settings`` fixture — must keep the
+    # ``auth`` field in sync so the ``client`` fixture's login round-trip
+    # uses the same weakened argon2id parameters and the non-Secure
+    # session cookie travels over the AsyncTestClient's http:// URL.
     return Settings(
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
@@ -43,6 +48,12 @@ def settings() -> Settings:
         ),
         server=ServerSettings(granian=False),
         app=AppSettings(docs_base_url="http://test", hlc_drift_limit_seconds=5.0),
+        auth=AuthSettings(
+            argon2_time_cost=1,
+            argon2_memory_cost_kib=8192,
+            argon2_parallelism=1,
+            session_cookie_secure=False,
+        ),
     )
 
 

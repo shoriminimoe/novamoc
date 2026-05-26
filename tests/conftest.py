@@ -6,10 +6,15 @@ a real engine to catch migration-style drift early.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
+from advanced_alchemy.extensions.litestar import (
+    SQLAlchemyAsyncConfig,
+    SQLAlchemyPlugin,
+)
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
@@ -26,13 +31,19 @@ from novamoc.api._problem_codes import PROBLEM_CODES
 from novamoc.asgi import create_app
 from novamoc.config import (
     AppSettings,
+    AuthSettings,
     DatabaseSettings,
     ServerSettings,
     Settings,
     problem_html_dir,
 )
 from novamoc.db._tenant_context import use_tenant
-from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
+from novamoc.db.models._auth import Tenant
+from novamoc.domain.accounts._services import (
+    TenantService,
+    UserService,
+    UserTenantMembershipService,
+)
 from novamoc.domain.schema._bundle import ServiceBundle
 from novamoc.domain.schema.services import (
     AssetTypeFieldService,
@@ -41,7 +52,7 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeService,
     SchemaChangeLogService,
 )
-from tests._constants import DEV_TENANT_ID
+from tests._constants import DEV_PASSWORD, DEV_TENANT_ID, DEV_USERNAME
 from tests.data.loader import load_scenario
 
 if TYPE_CHECKING:
@@ -166,6 +177,11 @@ def settings() -> Settings:
     ambient env-var state. ``StaticPool`` keeps the in-memory SQLite engine
     on a single connection so the request-scoped session, the autocommit
     handler, and any background fold see the same database.
+
+    ``AuthSettings`` uses the weakened argon2id parameters from
+    ``tests.accounts.test_handlers._FAST`` so login round-trips stay
+    sub-second; ``session_cookie_secure=False`` lets ``AsyncTestClient``
+    (which uses ``http://`` URLs) round-trip the cookie.
     """
     return Settings(
         db=DatabaseSettings(
@@ -176,6 +192,12 @@ def settings() -> Settings:
         ),
         server=ServerSettings(granian=False),
         app=AppSettings(docs_base_url="http://test"),
+        auth=AuthSettings(
+            argon2_time_cost=1,
+            argon2_memory_cost_kib=8192,
+            argon2_parallelism=1,
+            session_cookie_secure=False,
+        ),
     )
 
 
@@ -191,14 +213,101 @@ async def app(settings: Settings) -> Litestar:
     return create_app(settings=settings)
 
 
+@dataclass(frozen=True, slots=True)
+class DevAdmin:
+    """Credentials for the canonical admin user the e2e tests log in as.
+
+    Tests use :func:`seed_dev_admin` to write the matching user row
+    into a running app, then post these credentials to ``/auth/login``.
+    """
+
+    username: str
+    password: str
+    tenant_id: UUID
+
+
+_DEV_ADMIN = DevAdmin(
+    username=DEV_USERNAME,
+    password=DEV_PASSWORD,
+    tenant_id=DEV_TENANT_ID,
+)
+
+
+async def seed_dev_admin(app: Litestar) -> None:
+    """Seed the canonical admin tenant + user + membership into ``app``.
+
+    Call **inside** a live ``AsyncTestClient`` context — the plugin's
+    lifespan startup must have run so the registry tables exist. We
+    use ``alchemy_config.get_session()`` (the advanced-alchemy
+    documented helper for code outside the request lifecycle) since
+    seeding is not request-scoped. The ``tenant_id`` is pinned to
+    :data:`DEV_TENANT_ID` so every test sees the same value on
+    ``request.auth.tenant_id``; the production CLI never pins a
+    specific UUID (the fixture is the only place that does, and
+    that's deliberate — scenarios reference the same constant and
+    need a deterministic value across runs).
+    """
+    plugin = app.plugins.get(SQLAlchemyPlugin)
+    alchemy_config = next(
+        c for c in plugin.config if isinstance(c, SQLAlchemyAsyncConfig)
+    )
+    hasher = app.state.password_hasher
+
+    async with alchemy_config.get_session() as db_session:
+        tenants = TenantService(session=db_session)
+        users = UserService(session=db_session)
+        memberships = UserTenantMembershipService(session=db_session)
+
+        # Pin the tenant UUID via repository.add: TenantService.create
+        # would let advanced_alchemy assign a fresh UUIDv7. Tests need
+        # the deterministic DEV_TENANT_ID for cross-fixture consistency.
+        tenant = Tenant(id=DEV_TENANT_ID, display_name="Acme")
+        await tenants.repository.add(tenant)
+        user = await users.create(
+            data={
+                "username": DEV_USERNAME,
+                "password_hash": hasher.hash(DEV_PASSWORD),
+            },
+            auto_commit=False,
+        )
+        await memberships.create(
+            data={"user_id": user.id, "tenant_id": tenant.id},
+            auto_commit=False,
+        )
+        await db_session.commit()
+
+
 @pytest.fixture
-async def client(app: Litestar):
+def dev_admin() -> DevAdmin:
+    """The canonical admin credentials. Pair with :func:`seed_dev_admin`."""
+    return _DEV_ADMIN
+
+
+@pytest.fixture
+async def client(app: Litestar) -> AsyncIterator[AsyncTestClient]:
+    """An authenticated ``AsyncTestClient``.
+
+    Enters the ``AsyncTestClient`` context (the plugin's lifespan
+    fires, ``create_all`` runs, ``session_maker`` lands on state),
+    seeds the admin, then logs in. ``httpx`` persists the session
+    cookie across subsequent requests, so the rest of the test runs
+    as the seeded admin. Tests exercising the rejection path use
+    :func:`unauth_client` instead.
+    """
     async with AsyncTestClient(app) as c:
-        # AsyncTestClient does not accept ``headers`` at construction; we set
-        # them on the underlying httpx client so every request carries the dev
-        # bearer by default. Tests that exercise the rejection path override
-        # the header per-request.
-        c.headers["Authorization"] = f"Bearer {_TENANT_T1_DEV_TOKEN}"
+        await seed_dev_admin(app)
+        resp = await c.post(
+            "/auth/login",
+            json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
+        )
+        assert resp.status_code == 204, resp.text
+        yield c
+
+
+@pytest.fixture
+async def unauth_client(app: Litestar) -> AsyncIterator[AsyncTestClient]:
+    """An ``AsyncTestClient`` with no session — used by 401 rejection tests."""
+    async with AsyncTestClient(app) as c:
         yield c
 
 

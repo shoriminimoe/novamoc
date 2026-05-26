@@ -128,12 +128,10 @@ async def test_rollback_on_4xx_does_not_append_change_log(client) -> None:
     assert deact.json()["schema_version"] == sv_after_create + 1
 
 
-async def test_post_schema_without_authorization_returns_401(client) -> None:
-    """Middleware rejects requests with no credential before the route runs."""
-    # The default `client` fixture attaches Authorization; we explicitly clear it.
-    resp = await client.post(
+async def test_post_schema_without_session_returns_401(unauth_client) -> None:
+    """Middleware rejects requests with no session cookie before the route runs."""
+    resp = await unauth_client.post(
         "/schema",
-        headers={"Authorization": ""},
         json={
             "type": "create_asset_type",
             "entity_id": "00000000-0000-0000-0000-000000000999",

@@ -1,48 +1,93 @@
-"""Tenant resolution from the request envelope.
+"""Tenant + principal resolution from the session payload (ADR-020, M5.11).
 
-v1: read the ``Authorization`` header, expect a ``Bearer <token>`` value,
-match the token against a single hardcoded constant. On match return the
-single dev-tenant UUID; on any failure raise ``TenantResolutionError``.
+The swap point ADR-017 designed for. The v1 implementation read a
+bearer token off the ``Authorization`` header; v2 reads
+``{"user_id", "active_tenant_id"}`` off the request's session payload,
+loads the user, confirms membership, and returns the
+``(Principal, RequestAuth)`` pair that lands on ``scope["user"]`` and
+``scope["auth"]`` respectively.
 
-This module is the swap point. The v2 resolver will look up the session
-cookie in the ``sessions`` table and load the user / membership it points
-at (ADR-020); the middleware and DI layers do not change.
+Five failure paths fold into a single :class:`TenantResolutionError`
+so the wire byte-pattern is identical across shapes (analogous to
+ADR-020's anti-enumeration login fold): missing session keys, unknown
+user, disabled user, membership absent for the active tenant. The
+caller renders that error as 401 via the
+``TenantResolutionError -> tenant_resolution_error_to_problem_details``
+mapper registered in :mod:`novamoc.asgi`.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from novamoc.domain.accounts._auth import RequestAuth
 from novamoc.domain.accounts._errors import TenantResolutionError
+from novamoc.domain.accounts._principal import Principal
 
 if TYPE_CHECKING:
-    from litestar.datastructures import Headers
-
-# Development-only credential. Anyone with checkout access can read it; that is
-# the trust model for the dev period (ADR-017). Replaced by a real per-tenant
-# token registry — see issue #19.
-_TENANT_T1_DEV_TOKEN = "t1-dev-token"  # noqa: S105 — dev-only credential, see issue #19
-# Pinned to match ``tests._constants.DEV_TENANT_ID`` so the test suite's
-# canonical tenant resolves through the same code path production uses.
-# The v2 resolver (M5.11) replaces this whole module with a session-cookie
-# lookup against the ``tenants`` registry.
-_TENANT_T1 = UUID("01900000-0000-7000-8000-000000000001")
-
-_BEARER_PREFIX = "Bearer "
+    from novamoc.domain.accounts._services import (
+        UserService,
+        UserTenantMembershipService,
+    )
 
 
-def resolve_tenant(headers: Headers) -> UUID:
-    """Return the tenant ID for this request, or raise.
+def _parse_uuid(value: Any) -> UUID | None:
+    """Coerce a session-payload value to a UUID, returning ``None`` on any failure.
+
+    Session payloads round-trip through JSON, so both UUIDs ride as
+    strings. A non-string or malformed value is treated the same as
+    "key absent" — the resolver raises the single
+    :class:`TenantResolutionError` either way.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+async def resolve_principal_from_session(
+    session_payload: dict[str, Any],
+    *,
+    users: UserService,
+    memberships: UserTenantMembershipService,
+) -> tuple[Principal, RequestAuth]:
+    """Resolve the request's principal and active tenant from the session payload.
+
+    Args:
+        session_payload: The dict Litestar's SessionMiddleware populates
+            on ``scope["session"]``. Expected to carry ``user_id`` and
+            ``active_tenant_id`` as UUID strings (login writes them
+            this way; see :func:`domain.accounts._handlers.login`).
+        users: The registry-side user service, bound to the per-request
+            transient session opened by the authentication middleware.
+        memberships: The registry-side membership service, same binding.
+
+    Returns:
+        ``(Principal, RequestAuth)`` — the principal lands on
+        ``scope["user"]``, the auth scope on ``scope["auth"]``.
 
     Raises:
-        TenantResolutionError: when the ``Authorization`` header is missing,
-            uses a non-Bearer scheme, or carries an unrecognized token.
+        TenantResolutionError: Any failure path (missing session keys,
+            unknown user, disabled user, membership absent). The single
+            error type is the anti-enumeration contract.
     """
-    value = headers.get("authorization")
-    if value is None or not value.startswith(_BEARER_PREFIX):
+    user_id = _parse_uuid(session_payload.get("user_id"))
+    tenant_id = _parse_uuid(session_payload.get("active_tenant_id"))
+    if user_id is None or tenant_id is None:
         raise TenantResolutionError
-    token = value[len(_BEARER_PREFIX) :]
-    if token != _TENANT_T1_DEV_TOKEN:
+
+    user = await users.get_one_or_none(id=user_id)
+    if user is None or user.disabled_at is not None:
         raise TenantResolutionError
-    return _TENANT_T1
+
+    membership = await memberships.get_one_or_none(user_id=user_id, tenant_id=tenant_id)
+    if membership is None:
+        raise TenantResolutionError
+
+    return (
+        Principal(id=str(user.id), username=user.username),
+        RequestAuth(tenant_id=tenant_id),
+    )

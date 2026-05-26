@@ -223,8 +223,8 @@ async def test_non_integer_query_returns_400(client) -> None:
     assert body["type"].endswith("/invalid_payload_shape.html")
 
 
-async def test_without_authorization_returns_401(client) -> None:
-    resp = await client.get("/schema/changes", headers={"Authorization": ""})
+async def test_without_session_returns_401(unauth_client) -> None:
+    resp = await unauth_client.get("/schema/changes")
     assert resp.status_code == 401, resp.text
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()

@@ -1,67 +1,88 @@
-"""TenantContextMiddleware sets the storage-layer tenant ContextVar."""
+"""``TenantContextMiddleware`` binds ``request.auth.tenant_id`` to the ContextVar.
+
+The middleware reads ``scope["auth"]`` (populated by
+``AuthenticationMiddleware``) and calls
+:func:`novamoc.db._tenant_context.use_tenant` for the lifetime of the
+request, so the tenant-scoping listeners have a value to read. These
+tests pin the in-request behaviour and the post-request reset.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import pytest
-from litestar import Litestar, get
-from litestar.middleware.base import DefineMiddleware
+from litestar import get
 from litestar.testing import AsyncTestClient
 
 from novamoc.db._tenant_context import current_tenant_id
-from novamoc.domain.accounts import (
-    AuthenticationMiddleware,
-    TenantContextMiddleware,
-)
-from novamoc.domain.accounts._resolver import _TENANT_T1_DEV_TOKEN
 from tests._constants import DEV_TENANT_ID
+from tests.conftest import seed_dev_admin
 
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from litestar import Litestar
 
-async def test_middleware_sets_contextvar_during_request() -> None:
-    seen: list[UUID | None] = []
+    from tests.conftest import DevAdmin
 
-    @get("/__probe")
+
+@pytest.fixture
+def probe_seen() -> list[UUID | None]:
+    """Per-test scratch list the probe handler appends the contextvar to.
+
+    Closed over by the handler defined inside each test so the state
+    is per-test (xdist-safe) rather than module-global.
+    """
+    return []
+
+
+async def test_middleware_sets_contextvar_during_request(
+    app: Litestar, dev_admin: DevAdmin, probe_seen: list[UUID | None]
+) -> None:
+    @get("/__probe_tenant")
     async def probe() -> dict[str, str]:
-        seen.append(current_tenant_id.get())
+        probe_seen.append(current_tenant_id.get())
         return {"ok": "yes"}
 
-    app = Litestar(
-        route_handlers=[probe],
-        middleware=[
-            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
-            TenantContextMiddleware(),
-        ],
-    )
-    async with AsyncTestClient(app) as client:
-        response = await client.get(
-            "/__probe", headers={"Authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"}
+    app.register(probe)
+    async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
+        resp = await c.post(
+            "/auth/login",
+            json={"username": dev_admin.username, "password": dev_admin.password},
         )
+        assert resp.status_code == 204, resp.text
+
+        response = await c.get("/__probe_tenant")
         assert response.status_code == 200
-        assert seen == [DEV_TENANT_ID]
+        assert probe_seen == [DEV_TENANT_ID]
 
 
 @pytest.mark.no_tenant
-async def test_middleware_resets_contextvar_after_request() -> None:
-    """After a request returns, the calling code's contextvar is unchanged."""
+async def test_middleware_resets_contextvar_after_request(
+    app: Litestar, dev_admin: DevAdmin, probe_seen: list[UUID | None]
+) -> None:
+    """After a request returns, the calling code's contextvar is unchanged.
 
-    @get("/__probe")
+    Opts out of the autouse ``tenant`` fixture so the test process
+    enters the request with ``current_tenant_id == None`` and we can
+    assert the middleware did not leak its bound value.
+    """
+
+    @get("/__probe_tenant")
     async def probe() -> dict[str, str]:
+        probe_seen.append(current_tenant_id.get())
         return {"ok": "yes"}
 
-    app = Litestar(
-        route_handlers=[probe],
-        middleware=[
-            DefineMiddleware(AuthenticationMiddleware, exclude=r"^/openapi"),
-            TenantContextMiddleware(),
-        ],
-    )
-    async with AsyncTestClient(app) as client:
-        await client.get(
-            "/__probe", headers={"Authorization": f"Bearer {_TENANT_T1_DEV_TOKEN}"}
+    app.register(probe)
+    async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
+        resp = await c.post(
+            "/auth/login",
+            json={"username": dev_admin.username, "password": dev_admin.password},
         )
+        assert resp.status_code == 204, resp.text
+        await c.get("/__probe_tenant")
     # Contextvar in the test process is unchanged after the request.
     assert current_tenant_id.get() is None
