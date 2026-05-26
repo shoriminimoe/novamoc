@@ -17,6 +17,7 @@ from litestar.testing import AsyncTestClient
 
 from novamoc.db._tenant_context import current_tenant_id
 from tests._constants import DEV_TENANT_ID
+from tests.conftest import seed_dev_admin
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -46,6 +47,7 @@ async def test_middleware_sets_contextvar_during_request(
 
     app.register(probe)
     async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
         resp = await c.post(
             "/auth/login",
             json={"username": dev_admin.username, "password": dev_admin.password},
@@ -75,6 +77,7 @@ async def test_middleware_resets_contextvar_after_request(
 
     app.register(probe)
     async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
         resp = await c.post(
             "/auth/login",
             json={"username": dev_admin.username, "password": dev_admin.password},

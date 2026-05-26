@@ -25,6 +25,7 @@ from litestar import Request, get
 from litestar.testing import AsyncTestClient
 
 from tests._constants import DEV_TENANT_ID, DEV_USERNAME
+from tests.conftest import seed_dev_admin
 
 if TYPE_CHECKING:
     from litestar import Litestar
@@ -68,6 +69,7 @@ async def test_authenticated_request_populates_user_and_auth(
 ) -> None:
     _attach_probe(app)
     async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
         resp = await c.post(
             "/auth/login",
             json={"username": dev_admin.username, "password": dev_admin.password},
@@ -127,6 +129,7 @@ async def test_login_path_is_excluded_from_authentication(
     session it would otherwise need to read.
     """
     async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
         resp = await c.post(
             "/auth/login",
             json={"username": dev_admin.username, "password": dev_admin.password},

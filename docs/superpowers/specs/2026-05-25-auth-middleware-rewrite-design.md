@@ -134,7 +134,7 @@ Option 2 was rejected because the auth middleware runs *before* the controller, 
 
 Lifecycle pin: the session opened inside `authenticate_request` does **not** participate in the autocommit hook; it commits or rolls back independently. The only writes the resolver performs are read-only `SELECT`s, so this is fine — no transactional dependency on the route handler exists.
 
-The `dev_admin` test fixture reads the same `state.session_maker` for its seed and pulls the engine off the maker via `session_maker.kw["bind"]` — `async_sessionmaker` exposes its constructor kwargs as a public `kw` mapping. The fixture needs the engine for one thing only: running `metadata.create_all` before the plugin's lifespan hook would (since `dev_admin` runs at fixture-setup time, pre-lifespan).
+The `dev_admin` test fixture is just credentials (`DevAdmin(username, password, tenant_id)`). The actual seed lives in a `seed_dev_admin(app)` helper called **inside** the `AsyncTestClient` context that needs the admin row — at that point the plugin's lifespan has already fired, so `create_all` has run and `state.session_maker` points at the active engine. The helper reads `state.session_maker` and writes the rows; the fixture writes nothing. This keeps the fixture's surface minimal and avoids any pre-lifespan engine/metadata reach (an earlier draft tried to do the seed at fixture-setup time and ended up grabbing the engine off `session_maker.kw["bind"]` — production code stayed simple but the fixture wore the awkwardness; pushing the seed inside the lifespan deletes both).
 
 ### 2. Where `PasswordHasher` lives on the app
 
@@ -153,32 +153,33 @@ This matches the existing `State({"settings": s})` pattern in `asgi.py` (which `
 
 The `PasswordHasher` is a frozen, slotted dataclass that constructs a fresh `argon2.PasswordHasher` on each call (`_inner()` in `_password.py:54`). The wrapper itself is cheap and effectively stateless, but `state` is the right home anyway: it is read on every login request and constructing the wrapper once at startup is one less allocation per request.
 
-### 3. The `dev_admin` test fixture's exact write path
+### 3. How the admin user / tenant / membership are seeded for e2e tests
 
-Direct service calls, in this order, against the per-test session:
+A small `seed_dev_admin(app)` async helper in `tests/conftest.py`, called from within an active `AsyncTestClient` context, does the writes. Service calls in order, against a session opened off `app.state.session_maker`:
 
-1. `TenantService(session).repository.add(Tenant(id=DEV_TENANT_ID, display_name="Acme"))` — uses the repository's `add` directly so the UUIDv7 default is overridden by our pinned constant. The CLI never does this; the fixture is the *only* place that pins a specific tenant UUID, because the test suite needs deterministic `tenant_id` values across runs.
-2. `UserService(session).create(data={"username": "admin", "password_hash": hasher.hash(DEV_PASSWORD)}, auto_commit=False)` — folds the username through `_fold_username` automatically. The hash is the *real* argon2id hash (with `_FAST` test parameters: `t=1, m=8 MiB, p=1`) so the login round-trip exercises the verify path end-to-end.
+1. `TenantService(session).repository.add(Tenant(id=DEV_TENANT_ID, display_name="Acme"))` — uses the repository's `add` directly so the UUIDv7 default is overridden by our pinned constant. The CLI never does this; the helper is the *only* place that pins a specific tenant UUID, because the test suite needs deterministic `tenant_id` values across runs.
+2. `UserService(session).create(data={"username": "admin", "password_hash": hasher.hash(DEV_PASSWORD)}, auto_commit=False)` — folds the username through `_fold_username` automatically. The hash uses the `PasswordHasher` already on `app.state` (which the test `settings` fixture configures with the `_FAST` parameters `t=1, m=8 MiB, p=1`) so the login round-trip exercises the verify path end-to-end.
 3. `UserTenantMembershipService(session).create(data={"user_id": user.id, "tenant_id": DEV_TENANT_ID}, auto_commit=False)` — picks up the v1 1:1 invariant check for free.
-4. `await session.flush()` so the rows are visible to the AuthenticationMiddleware's fresh session (since the in-memory engine uses `StaticPool`, both sessions hit the same physical DB).
+4. `await db_session.commit()` so the rows are visible to subsequent requests through the same engine.
 
-The fixture exposes the values the `client` fixture needs to log in:
+The fixture is a tiny constant-returning wrapper:
 
 ```python
 @dataclass(frozen=True, slots=True)
 class DevAdmin:
     username: str
     password: str
-    user_id: uuid.UUID
     tenant_id: uuid.UUID  # == DEV_TENANT_ID
 
 @pytest.fixture
-async def dev_admin(session: AsyncSession, settings: Settings) -> DevAdmin: ...
+def dev_admin() -> DevAdmin: ...
 ```
 
-`DEV_PASSWORD` lives in `tests/_constants.py` next to `DEV_TENANT_ID` — same single-source-of-truth pattern. The fixture's `_FAST` hasher is built locally; `tests/accounts/test_handlers.py` already uses the same `(t=1, m=8 MiB, p=1)` parameters and we copy them rather than share to avoid a cross-test-file import dependency.
+`DEV_PASSWORD` lives in `tests/_constants.py` next to `DEV_TENANT_ID`. `client` calls `seed_dev_admin(app)` inside its `AsyncTestClient` context and then logs in; tests that open their own `AsyncTestClient` (probe handlers, etc.) do the same one-liner.
 
-**Tenant fixture interaction.** `dev_admin` depends on `session`, which depends on `engine`. The autouse `tenant` fixture sets the contextvar to `DEV_TENANT_ID` for the test's duration — but the auth-registry tables are not tenant-scoped, so the contextvar value is irrelevant to the seed itself. The fixture works fine under the default ambient `tenant` value and does not need to override or skip it.
+**Why a helper rather than a self-seeding fixture.** Pre-lifespan, `state.session_maker` exists but the tables don't (the plugin's `create_all` hook runs in lifespan startup). Seeding inside the live lifespan keeps the helper to "open a session, write the rows" — no manual `create_all`, no engine reach.
+
+**Tenant fixture interaction.** The autouse `tenant` fixture sets the contextvar to `DEV_TENANT_ID` for the test's duration — but the auth-registry tables are not tenant-scoped, so the contextvar value is irrelevant to the seed. The helper works fine under the default ambient `tenant` value and does not need to override or skip it.
 
 ### 4. The `/auth/login` exclusion in the authentication-middleware regex
 

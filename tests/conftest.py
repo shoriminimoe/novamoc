@@ -211,48 +211,41 @@ async def app(settings: Settings) -> Litestar:
 
 @dataclass(frozen=True, slots=True)
 class DevAdmin:
-    """Identity of the seeded admin user the ``client`` fixture logs in as.
+    """Credentials for the canonical admin user the e2e tests log in as.
 
-    Tests that need to assert the seeded user's UUID (e.g. the
-    ``GET /auth/me`` response) declare ``dev_admin`` and read
-    ``dev_admin.user_id`` directly. The credentials live in
-    :mod:`tests._constants` and are the single source of truth.
+    Tests use :func:`seed_dev_admin` to write the matching user row
+    into a running app, then post these credentials to ``/auth/login``.
     """
 
     username: str
     password: str
-    user_id: UUID
     tenant_id: UUID
 
 
-@pytest.fixture
-async def dev_admin(app: Litestar) -> DevAdmin:
-    """Seed the canonical admin user + tenant + membership.
+_DEV_ADMIN = DevAdmin(
+    username=DEV_USERNAME,
+    password=DEV_PASSWORD,
+    tenant_id=DEV_TENANT_ID,
+)
 
-    Mirrors what ``just bootstrap-dev`` (M5.15) will run on the CLI
-    side but pins ``tenant_id = DEV_TENANT_ID`` so every e2e test sees
-    the same tenant on ``request.auth.tenant_id``. The CLI never pins
-    a specific tenant UUID — the test fixture is the only place that
-    does, and that's deliberate: scenarios reference the same UUID
-    constant and need a deterministic value across runs.
 
-    Runs *before* ``AsyncTestClient``'s lifespan startup; we use the
-    ``async_sessionmaker`` ``create_app`` seeded on ``app.state``.
-    Tables are created inline (via the engine bound to the maker)
-    because the plugin's ``create_all`` lifespan hook hasn't fired
-    yet; ``CREATE TABLE IF NOT EXISTS`` makes the lifespan re-run a
-    no-op.
+async def seed_dev_admin(app: Litestar) -> None:
+    """Seed the canonical admin tenant + user + membership into ``app``.
+
+    Call **inside** a live ``AsyncTestClient`` context — the plugin's
+    lifespan startup must have run so the registry tables exist and
+    ``app.state.session_maker`` points at the active engine. The
+    ``tenant_id`` is pinned to :data:`DEV_TENANT_ID` so every test
+    sees the same value on ``request.auth.tenant_id``; the production
+    CLI never pins a specific UUID (the fixture is the only place
+    that does, and that's deliberate — scenarios reference the same
+    constant and need a deterministic value across runs).
     """
     session_maker = app.state.session_maker
-    engine = session_maker.kw["bind"]
-    async with engine.begin() as conn:
-        for key in metadata_registry:
-            await conn.run_sync(metadata_registry[key].create_all)
-
     hasher = app.state.password_hasher
 
     async with session_maker() as db_session:
-        tenant_service = TenantService(session=db_session)
+        tenants = TenantService(session=db_session)
         users = UserService(session=db_session)
         memberships = UserTenantMembershipService(session=db_session)
 
@@ -260,7 +253,7 @@ async def dev_admin(app: Litestar) -> DevAdmin:
         # would let advanced_alchemy assign a fresh UUIDv7. Tests need
         # the deterministic DEV_TENANT_ID for cross-fixture consistency.
         tenant = Tenant(id=DEV_TENANT_ID, display_name="Acme")
-        await tenant_service.repository.add(tenant)
+        await tenants.repository.add(tenant)
         user = await users.create(
             data={
                 "username": DEV_USERNAME,
@@ -273,32 +266,30 @@ async def dev_admin(app: Litestar) -> DevAdmin:
             auto_commit=False,
         )
         await db_session.commit()
-        user_id = user.id
-
-    return DevAdmin(
-        username=DEV_USERNAME,
-        password=DEV_PASSWORD,
-        user_id=user_id,
-        tenant_id=DEV_TENANT_ID,
-    )
 
 
 @pytest.fixture
-async def client(app: Litestar, dev_admin: DevAdmin) -> AsyncIterator[AsyncTestClient]:
+def dev_admin() -> DevAdmin:
+    """The canonical admin credentials. Pair with :func:`seed_dev_admin`."""
+    return _DEV_ADMIN
+
+
+@pytest.fixture
+async def client(app: Litestar) -> AsyncIterator[AsyncTestClient]:
     """An authenticated ``AsyncTestClient``.
 
-    Logs in once on construction; ``httpx`` persists the session
+    Enters the ``AsyncTestClient`` context (the plugin's lifespan
+    fires, ``create_all`` runs, ``session_maker`` lands on state),
+    seeds the admin, then logs in. ``httpx`` persists the session
     cookie across subsequent requests, so the rest of the test runs
     as the seeded admin. Tests exercising the rejection path use
     :func:`unauth_client` instead.
     """
     async with AsyncTestClient(app) as c:
+        await seed_dev_admin(app)
         resp = await c.post(
             "/auth/login",
-            json={
-                "username": dev_admin.username,
-                "password": dev_admin.password,
-            },
+            json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
         )
         assert resp.status_code == 204, resp.text
         yield c
