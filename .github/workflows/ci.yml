@@ -57,6 +57,25 @@ jobs:
           set -e
           test "$(cat ty.json)" = "[]"
 
+  typecheck-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/js/web/package-lock.json
+
+      - run: cd src/js/web && npm ci
+
+      # `just typecheck-js` runs `svelte-kit sync` (generates ambient
+      # declarations the typecheck needs), `svelte-check`, and `tsc -p
+      # tsconfig.node.json`. Failures from any of the three fail this step.
+      - run: just typecheck-js
+
   coverage-py:
     runs-on: ubuntu-latest
     timeout-minutes: 15

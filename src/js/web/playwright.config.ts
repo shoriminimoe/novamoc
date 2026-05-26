@@ -54,7 +54,6 @@ export default defineConfig({
       command: `npm run dev -- --port ${APP_PORT} --strictPort`,
       env: {
         NOVAMOC_API_URL: API_URL,
-        VITE_DEFAULT_BEARER_TOKEN: 't1-dev-token',
       },
       url: APP_URL,
       ignoreHTTPSErrors: true,
