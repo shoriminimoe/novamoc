@@ -195,7 +195,7 @@ should get a 401 rather than a no-op success.
 
 Numbers below pin the count claim in the acceptance criteria.
 
-### Modified (7)
+### Modified (8)
 
 - `src/py/novamoc/domain/accounts/_resolver.py` — full rewrite. The
   module-private `_TENANT_T1_DEV_TOKEN` constant and `resolve_tenant`
@@ -213,6 +213,12 @@ Numbers below pin the count claim in the acceptance criteria.
   exist after the swap). Add `Principal`, `PasswordHasher`,
   `UserAlreadyHasTenantError`, and `AuthController` to `__all__` so
   the package-level imports are stable for tests and `asgi.py`.
+- `src/py/novamoc/domain/accounts/controllers/_auth.py` — wire a
+  `SecretStr` `type_decoder` onto the controller so `LoginRequest`
+  bodies decode end-to-end. M5.10 defined the matching `decode_hook`
+  in `_payloads.py` but never registered it; the leftover surfaces
+  here because M5.11 is the first commit where `/auth/login` is
+  reachable through the live mount.
 - `src/py/novamoc/asgi.py` — build a
   `SQLAlchemyAsyncSessionBackend(config=ServerSideSessionConfig(...),
   alchemy_config=alchemy_config, model=Session)` and mount it via
@@ -344,6 +350,16 @@ landed; no further action.
   (read-replica, audit DB), the resolver picks one arbitrarily. Not a
   v1 concern; the wider work is a separate spec when multi-DB shows
   up.
+- **Resolver timing side-channel.** `resolve_principal_from_session`
+  issues 0/1/2 SELECTs depending on which check fails (malformed UUID
+  short-circuits, unknown user adds one query, missing membership adds
+  two). Every path renders the same `401 tenant_not_resolved` body, so
+  ADR-020's anti-enumeration claim about *response bytes* holds, but
+  per-path latency differs. Network jitter generally swamps the
+  difference and v1 ships as-is; a defensible hardening step is to
+  issue both queries unconditionally and fold the results — the right
+  follow-up when we add login rate-limiting (also recorded under
+  ADR-020 §"Consequences" as a non-shipped concern).
 
 ## Notable non-changes
 

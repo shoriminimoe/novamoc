@@ -140,10 +140,12 @@ def create_app(settings: Settings | None = None) -> Litestar:
             # 2. read ``scope["session"]`` → ``scope["user"]`` /
             # ``scope["auth"]``. ``/auth/login`` is excluded because
             # login is the bootstrap path that *writes* the session;
-            # ``/openapi`` and ``/problems`` stay public.
+            # ``/openapi`` and ``/problems`` stay public. The trailing
+            # ``(/|$)`` anchors each entry so a future ``/auth/login/oauth``
+            # (or similar) doesn't silently inherit the bypass.
             DefineMiddleware(
                 AuthenticationMiddleware,
-                exclude=r"^/(openapi|problems|auth/login)",
+                exclude=r"^/(openapi|problems|auth/login)(/|$)",
             ),
             # 3. read ``scope["auth"].tenant_id`` → ContextVar so the
             # storage-layer listeners have a value for the request.

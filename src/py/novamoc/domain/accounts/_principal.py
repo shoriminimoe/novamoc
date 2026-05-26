@@ -17,5 +17,12 @@ import msgspec
 
 
 class Principal(msgspec.Struct, frozen=True):
+    # ``id`` is intentionally ``str`` (not ``uuid.UUID``) even though the
+    # underlying ``users.id`` column is a UUIDv7. ``Principal`` lands on
+    # ``scope["user"]`` and is consumed by :class:`MePrincipal` (the
+    # ``/auth/me`` wire shape, also ``id: str``); keeping both ``str``
+    # avoids stringifying twice per request. ``RequestAuth.tenant_id``
+    # stays a ``uuid.UUID`` because it travels into the storage-layer
+    # ContextVar — that side wants the native type.
     id: str
     username: str

@@ -11,10 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
-from advanced_alchemy.extensions.litestar import (
-    SQLAlchemyAsyncConfig,
-    SQLAlchemyPlugin,
-)
+from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
@@ -39,7 +36,7 @@ from novamoc.config import (
 )
 from novamoc.db._tenant_context import use_tenant
 from novamoc.db.models._auth import Tenant
-from novamoc.domain.accounts._password import PasswordHasher
+from novamoc.domain.accounts._middleware import pick_async_alchemy_config
 from novamoc.domain.accounts._services import (
     TenantService,
     UserService,
@@ -230,17 +227,8 @@ class DevAdmin:
     tenant_id: UUID
 
 
-def _async_alchemy_config(app: Litestar) -> SQLAlchemyAsyncConfig:
-    plugin = app.plugins.get(SQLAlchemyPlugin)
-    for cfg in plugin.config:
-        if isinstance(cfg, SQLAlchemyAsyncConfig):
-            return cfg
-    msg = "No SQLAlchemyAsyncConfig registered on the test app"
-    raise RuntimeError(msg)
-
-
 @pytest.fixture
-async def dev_admin(app: Litestar, settings: Settings) -> DevAdmin:
+async def dev_admin(app: Litestar) -> DevAdmin:
     """Seed the canonical admin user + tenant + membership.
 
     Mirrors what ``just bootstrap-dev`` (M5.15) will run on the CLI
@@ -250,23 +238,20 @@ async def dev_admin(app: Litestar, settings: Settings) -> DevAdmin:
     does, and that's deliberate: scenarios reference the same UUID
     constant and need a deterministic value across runs.
 
-    Runs *before* ``AsyncTestClient``'s lifespan startup; we create
-    the metadata manually here so the registry writes have tables to
-    land in. ``create_all`` on the SQLAlchemy plugin's startup hook is
-    idempotent (``CREATE TABLE IF NOT EXISTS``) and a no-op when it
-    fires later.
+    Runs *before* ``AsyncTestClient``'s lifespan startup; we call
+    ``create_all_metadata`` directly (the same helper the plugin's
+    startup hook fires) so the registry writes have tables to land
+    in. ``CREATE TABLE IF NOT EXISTS`` makes the lifespan re-run a
+    no-op.
     """
-    alchemy_config = _async_alchemy_config(app)
-    engine = alchemy_config.get_engine()
-    async with engine.begin() as conn:
-        for key in metadata_registry:
-            await conn.run_sync(metadata_registry[key].create_all)
+    alchemy_config = pick_async_alchemy_config(app.plugins.get(SQLAlchemyPlugin))
+    await alchemy_config.create_all_metadata(app)
 
-    hasher = PasswordHasher(
-        time_cost=settings.auth.argon2_time_cost,
-        memory_cost_kib=settings.auth.argon2_memory_cost_kib,
-        parallelism=settings.auth.argon2_parallelism,
-    )
+    # Reuse the ``PasswordHasher`` ``create_app`` stashed on
+    # ``app.state`` — it was built from the test ``settings``
+    # ``AuthSettings`` cost params, so a local rebuild would be
+    # identical bytes for more allocation.
+    hasher = app.state.password_hasher
 
     async with alchemy_config.get_session() as db_session:
         tenant_service = TenantService(session=db_session)

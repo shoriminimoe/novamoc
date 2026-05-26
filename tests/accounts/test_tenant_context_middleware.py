@@ -26,20 +26,25 @@ if TYPE_CHECKING:
     from tests.conftest import DevAdmin
 
 
-_seen: list[UUID | None] = []
+@pytest.fixture
+def probe_seen() -> list[UUID | None]:
+    """Per-test scratch list the probe handler appends the contextvar to.
 
-
-@get("/__probe_tenant")
-async def _probe() -> dict[str, str]:
-    _seen.append(current_tenant_id.get())
-    return {"ok": "yes"}
+    Closed over by the handler defined inside each test so the state
+    is per-test (xdist-safe) rather than module-global.
+    """
+    return []
 
 
 async def test_middleware_sets_contextvar_during_request(
-    app: Litestar, dev_admin: DevAdmin
+    app: Litestar, dev_admin: DevAdmin, probe_seen: list[UUID | None]
 ) -> None:
-    _seen.clear()
-    app.register(_probe)
+    @get("/__probe_tenant")
+    async def probe() -> dict[str, str]:
+        probe_seen.append(current_tenant_id.get())
+        return {"ok": "yes"}
+
+    app.register(probe)
     async with AsyncTestClient(app) as c:
         resp = await c.post(
             "/auth/login",
@@ -49,12 +54,12 @@ async def test_middleware_sets_contextvar_during_request(
 
         response = await c.get("/__probe_tenant")
         assert response.status_code == 200
-        assert _seen == [DEV_TENANT_ID]
+        assert probe_seen == [DEV_TENANT_ID]
 
 
 @pytest.mark.no_tenant
 async def test_middleware_resets_contextvar_after_request(
-    app: Litestar, dev_admin: DevAdmin
+    app: Litestar, dev_admin: DevAdmin, probe_seen: list[UUID | None]
 ) -> None:
     """After a request returns, the calling code's contextvar is unchanged.
 
@@ -62,8 +67,13 @@ async def test_middleware_resets_contextvar_after_request(
     enters the request with ``current_tenant_id == None`` and we can
     assert the middleware did not leak its bound value.
     """
-    _seen.clear()
-    app.register(_probe)
+
+    @get("/__probe_tenant")
+    async def probe() -> dict[str, str]:
+        probe_seen.append(current_tenant_id.get())
+        return {"ok": "yes"}
+
+    app.register(probe)
     async with AsyncTestClient(app) as c:
         resp = await c.post(
             "/auth/login",

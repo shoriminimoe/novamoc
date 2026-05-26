@@ -30,6 +30,17 @@ from sqlalchemy.sql.elements import BinaryExpression
 from novamoc.db._errors import CrossTenantWriteError, UnscopedQueryError
 from novamoc.db._tenant_context import SKIP_TENANT_FILTER, current_tenant_id
 
+# Documentation-as-code pin for the auth/registry tables. These rows
+# are global identity records, not tenant-scoped data; ``_is_tenant_scoped``
+# below already short-circuits on them because none carry a non-``registry_fk``
+# ``tenant_id`` column. The constant exists so a future contributor adding
+# an auth-layer table that *does* carry a tenant column has one greppable
+# place to verify intent before it silently bypasses the structural
+# enforcement.
+_AUTH_LAYER_TABLE_NAMES = frozenset(
+    {"tenants", "users", "user_tenant_memberships", "sessions"}
+)
+
 
 # Columns named ``tenant_id`` that are FKs to the ``tenants`` registry
 # (e.g. ``user_tenant_memberships.tenant_id``) carry

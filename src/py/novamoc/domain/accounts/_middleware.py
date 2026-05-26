@@ -48,20 +48,36 @@ if TYPE_CHECKING:
     from litestar.types import ASGIApp, Receive, Scope, Send
 
 
+def pick_async_alchemy_config(plugin: SQLAlchemyPlugin) -> SQLAlchemyAsyncConfig:
+    """Return the single async config registered on ``plugin``.
+
+    ``SQLAlchemyPlugin.config`` is a list (multi-binding support); we
+    register exactly one async config and the isinstance check narrows
+    the union for both ty and the runtime path. A second config landing
+    later (read-replica, audit DB) would require disambiguating here —
+    see the M5.11 spec's recorded tech debt.
+
+    Shared with the test ``conftest`` so the production middleware and
+    the ``dev_admin`` fixture both reach for the alchemy config the
+    same way.
+
+    Raises:
+        RuntimeError: if no ``SQLAlchemyAsyncConfig`` is registered.
+    """
+    for cfg in plugin.config:
+        if isinstance(cfg, SQLAlchemyAsyncConfig):
+            return cfg
+    msg = "No SQLAlchemyAsyncConfig registered on the SQLAlchemyPlugin"
+    raise RuntimeError(msg)
+
+
 class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
     async def authenticate_request(
         self, connection: ASGIConnection
     ) -> AuthenticationResult:
         payload = connection.session
         plugin = connection.app.plugins.get(SQLAlchemyPlugin)
-        # ``SQLAlchemyPlugin.config`` is a list (multi-binding support);
-        # we register exactly one async config and the isinstance check
-        # narrows the union for both ty and the runtime path. A second
-        # config landing later (read-replica, audit DB) would require
-        # disambiguating here — see the spec's recorded tech debt.
-        alchemy_config = next(
-            c for c in plugin.config if isinstance(c, SQLAlchemyAsyncConfig)
-        )
+        alchemy_config = pick_async_alchemy_config(plugin)
         async with alchemy_config.get_session() as db_session:
             users = UserService(session=db_session)
             memberships = UserTenantMembershipService(session=db_session)
