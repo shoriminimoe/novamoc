@@ -15,12 +15,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
     """Create the ASGI app."""
 
     import msgspec
-    from advanced_alchemy.extensions.litestar import (
-        AsyncSessionConfig,
-        EngineConfig,
-        SQLAlchemyAsyncConfig,
-        SQLAlchemyPlugin,
-    )
+    from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
     from advanced_alchemy.extensions.litestar.session import (
         SQLAlchemyAsyncSessionBackend,
     )
@@ -37,7 +32,6 @@ def create_app(settings: Settings | None = None) -> Litestar:
     )
     from litestar.static_files import create_static_files_router
     from litestar_granian import GranianPlugin
-    from sqlalchemy.pool import StaticPool
 
     # Register tenant-scoping event handlers on SQLAlchemy.
     import novamoc.db._listeners  # noqa: F401
@@ -48,6 +42,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
         make_tenant_resolution_error_converter,
     )
     from novamoc.config import Settings, problem_html_dir
+    from novamoc.db.config import build_alchemy_config
     from novamoc.db.models._auth import Session as SessionModel
     from novamoc.domain._errors import DomainError
     from novamoc.domain.accounts import (
@@ -63,19 +58,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
 
     s = settings if settings is not None else Settings()
 
-    engine_config = (
-        EngineConfig(poolclass=StaticPool) if s.db.static_pool else EngineConfig()
-    )
-    alchemy_config = SQLAlchemyAsyncConfig(
-        connection_string=s.db.url,
-        # ty narrows the literal-arg type to ``Literal["autocommit", ...]``;
-        # ``s.db.before_send_handler`` is a plain ``str`` from the
-        # ``DatabaseSettings`` field, validated by advanced_alchemy at runtime.
-        before_send_handler=s.db.before_send_handler,  # ty: ignore[invalid-argument-type]
-        session_config=AsyncSessionConfig(expire_on_commit=False),
-        create_all=s.db.create_all,
-        engine_config=engine_config,
-    )
+    alchemy_config = build_alchemy_config(s)
 
     base_url = s.app.docs_base_url
     problem_details_config = ProblemDetailsConfig(
