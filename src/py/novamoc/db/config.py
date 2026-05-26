@@ -10,7 +10,10 @@ documented carve-out to the "db/ must not depend on Litestar" rule
 
 from __future__ import annotations
 
+from importlib.resources import files
+
 from advanced_alchemy.extensions.litestar import (
+    AlembicAsyncConfig,
     AsyncSessionConfig,
     EngineConfig,
     SQLAlchemyAsyncConfig,
@@ -18,6 +21,11 @@ from advanced_alchemy.extensions.litestar import (
 from sqlalchemy.pool import StaticPool
 
 from novamoc.config import Settings
+
+
+def _migrations_dir() -> str:
+    """Resolve ``src/py/novamoc/db/migrations`` for both wheel and editable installs."""
+    return str(files("novamoc.db") / "migrations")
 
 
 def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
@@ -36,11 +44,12 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         session_config=AsyncSessionConfig(expire_on_commit=False),
         engine_config=engine_config,
         create_all=settings.db.create_all,
+        alembic_config=AlembicAsyncConfig(script_location=_migrations_dir()),
     )
 
 
 alchemy_config = build_alchemy_config(Settings())
-"""Module-level instance for ``alchemy --config novamoc.db.config:alchemy_config``.
+"""Module-level instance for ``alchemy --config novamoc.db.config.alchemy_config``.
 
 ``Settings()`` reads env vars at import time. CLI processes pick up
 ``NOVAMOC_DB_URL`` etc. without ceremony; the test process imports

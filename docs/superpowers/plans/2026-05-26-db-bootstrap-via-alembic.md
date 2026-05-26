@@ -4,7 +4,7 @@
 
 **Goal:** Invert the "boot the app, get tables" contract — the Litestar app becomes a consumer of an already-initialized DB; schema lives behind an Alembic migration tree managed by the advanced-alchemy CLI; and the milestone-closing `just bootstrap-dev` + README arrive in the same PR (M5.15 / #96).
 
-**Architecture:** A new `src/py/novamoc/db/config.py` owns `SQLAlchemyAsyncConfig` construction and exposes a module-level instance the `alchemy` CLI resolves via `--config novamoc.db.config:alchemy_config`. Migrations live at `src/py/novamoc/db/migrations/` and ship in the wheel. `create_app` stops creating tables; a fail-fast `on_startup` hook refuses to serve when the DB is not at HEAD. Tests sidestep migrations by running `metadata.create_all` + `AlembicCommands.stamp("head")` against a pre-built engine and handing it to `create_app` via a new `alchemy_config` keyword.
+**Architecture:** A new `src/py/novamoc/db/config.py` owns `SQLAlchemyAsyncConfig` construction and exposes a module-level instance the `alchemy` CLI resolves via `--config novamoc.db.config.alchemy_config`. Migrations live at `src/py/novamoc/db/migrations/` and ship in the wheel. `create_app` stops creating tables; a fail-fast `on_startup` hook refuses to serve when the DB is not at HEAD. Tests sidestep migrations by running `metadata.create_all` + `AlembicCommands.stamp("head")` against a pre-built engine and handing it to `create_app` via a new `alchemy_config` keyword.
 
 **Tech Stack:** Python 3.14, advanced-alchemy 1.9.x (`AlembicAsyncConfig`, `AlembicCommands`), SQLAlchemy 2.x + aiosqlite, Litestar 2.21, `just`, `uv`.
 
@@ -46,7 +46,7 @@
 
 ## Task 1: Extract `SQLAlchemyAsyncConfig` construction into `db/config.py`
 
-Lift the inline `SQLAlchemyAsyncConfig(...)` from `asgi.py` into a dedicated module so the alchemy CLI can resolve it via `--config novamoc.db.config:alchemy_config`. **No behavior change** — `create_all=True` is preserved at the call site for now.
+Lift the inline `SQLAlchemyAsyncConfig(...)` from `asgi.py` into a dedicated module so the alchemy CLI can resolve it via `--config novamoc.db.config.alchemy_config`. **No behavior change** — `create_all=True` is preserved at the call site for now.
 
 **Files:**
 - Create: `src/py/novamoc/db/config.py`
@@ -69,7 +69,7 @@ import pytest
 
 @pytest.mark.no_tenant
 def test_alchemy_config_is_resolvable_via_dotted_path() -> None:
-    """The CLI's ``--config novamoc.db.config:alchemy_config`` must resolve."""
+    """The CLI's ``--config novamoc.db.config.alchemy_config`` must resolve."""
     from novamoc.db.config import alchemy_config
 
     assert isinstance(alchemy_config, SQLAlchemyAsyncConfig)
@@ -134,7 +134,7 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
 
 
 alchemy_config = build_alchemy_config(Settings())
-"""Module-level instance for ``alchemy --config novamoc.db.config:alchemy_config``.
+"""Module-level instance for ``alchemy --config novamoc.db.config.alchemy_config``.
 
 ``Settings()`` reads env vars at import time. CLI processes pick up
 ``NOVAMOC_DB_URL`` etc. without ceremony; the test process imports
@@ -265,21 +265,17 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
     )
 ```
 
-Now create the directory shell so `files("novamoc.db") / "migrations"` resolves at import time:
+Run `alchemy init` to scaffold the tree. The CLI insists on an empty (or absent) target directory and writes its own `__init__.py` markers, so do **not** pre-create the directory:
 
 ```bash
-mkdir -p src/py/novamoc/db/migrations/versions
-touch src/py/novamoc/db/migrations/__init__.py
-touch src/py/novamoc/db/migrations/versions/__init__.py
+uv run alchemy --config novamoc.db.config.alchemy_config init src/py/novamoc/db/migrations --no-prompt
 ```
 
-Run alchemy init against the *parent* migrations directory (it scaffolds env.py / script.py.mako into the existing dir):
+The `--no-prompt` flag suppresses the interactive "are you sure?" confirmation. The CLI also writes a stub `alembic.ini` and a `README` into the target — delete both, since advanced-alchemy reads its configuration from the `AlembicAsyncConfig` instance (not from a file):
 
 ```bash
-uv run alchemy init src/py/novamoc/db/migrations --config novamoc.db.config:alchemy_config --no-package
+rm src/py/novamoc/db/migrations/alembic.ini src/py/novamoc/db/migrations/README
 ```
-
-`--no-package` because we already wrote `__init__.py` files (advanced-alchemy's `init` writes them too, which would clobber our markers; the `--no-package` flag skips that).
 
 - [ ] **Step 4: Customize the scaffolded `env.py`**
 
@@ -342,7 +338,7 @@ Autogenerate the single revision that creates every existing table, review it fo
 
 ```bash
 uv run alchemy make-migrations \
-    --config novamoc.db.config:alchemy_config \
+    --config novamoc.db.config.alchemy_config \
     -m "baseline" \
     --autogenerate
 ```
@@ -366,10 +362,10 @@ Edit anything autogenerate got wrong (e.g. column server defaults, index names t
 ```bash
 rm -f /tmp/baseline-check.sqlite
 NOVAMOC_DB_URL="sqlite+aiosqlite:////tmp/baseline-check.sqlite" \
-    uv run alchemy upgrade head --config novamoc.db.config:alchemy_config
+    uv run alchemy upgrade head --config novamoc.db.config.alchemy_config
 
 NOVAMOC_DB_URL="sqlite+aiosqlite:////tmp/baseline-check.sqlite" \
-    uv run alchemy check --config novamoc.db.config:alchemy_config
+    uv run alchemy check --config novamoc.db.config.alchemy_config
 ```
 Expected: `upgrade` runs cleanly; `check` exits 0 (no pending model→migration drift).
 
@@ -421,15 +417,15 @@ Insert after the existing `serve` recipe (around line 27):
 ```just
 # Apply all pending migrations against $NOVAMOC_DB_URL.
 db-init:
-	uv run alchemy upgrade head --config novamoc.db.config:alchemy_config
+	uv run alchemy upgrade head --config novamoc.db.config.alchemy_config
 
 # Generate a new revision from the current models.
 db-revision message:
-	uv run alchemy make-migrations --config novamoc.db.config:alchemy_config -m "{{message}}" --autogenerate
+	uv run alchemy make-migrations --config novamoc.db.config.alchemy_config -m "{{message}}" --autogenerate
 
 # CI gate: fail if models drift from the migration tree.
 db-check:
-	uv run alchemy check --config novamoc.db.config:alchemy_config
+	uv run alchemy check --config novamoc.db.config.alchemy_config
 ```
 
 - [ ] **Step 2: Add `db-check` to the `check` composite recipe**
@@ -772,7 +768,7 @@ async def test_gate_raises_when_alembic_version_table_missing() -> None:
             await assert_alembic_at_head(cfg)
         message = str(exc_info.value)
         assert "alchemy upgrade head" in message
-        assert "novamoc.db.config:alchemy_config" in message
+        assert "novamoc.db.config.alchemy_config" in message
     finally:
         await engine.dispose()
 
@@ -827,7 +823,7 @@ if TYPE_CHECKING:
 
 
 _REMEDIATION = (
-    "uv run alchemy upgrade head --config novamoc.db.config:alchemy_config"
+    "uv run alchemy upgrade head --config novamoc.db.config.alchemy_config"
 )
 
 
@@ -1091,7 +1087,7 @@ Until now, `asgi.create_app` built `SQLAlchemyAsyncConfig` inline with `create_a
 
 ## Decision Outcome
 
-Chosen option: **Alembic via the advanced-alchemy CLI**, because it provides migration discipline starting at day one (long-lived dev databases survive schema changes), gives us a model↔schema drift check that fits naturally into CI, and reuses the CLI surface advanced-alchemy already ships (`alchemy upgrade`, `alchemy make-migrations`, `alchemy check`, ...). The migration tree lives at `src/py/novamoc/db/migrations/`, shipped inside the wheel via uv_build's module-root, so wheel-installed deployments find the script tree at the same package path the running code uses. A fail-fast startup gate (`db/_startup.assert_alembic_at_head`) reads the DB's current revision on `on_startup` and refuses to serve when it doesn't match the script tree's HEAD; the error message names the exact `alchemy upgrade head --config novamoc.db.config:alchemy_config` command.
+Chosen option: **Alembic via the advanced-alchemy CLI**, because it provides migration discipline starting at day one (long-lived dev databases survive schema changes), gives us a model↔schema drift check that fits naturally into CI, and reuses the CLI surface advanced-alchemy already ships (`alchemy upgrade`, `alchemy make-migrations`, `alchemy check`, ...). The migration tree lives at `src/py/novamoc/db/migrations/`, shipped inside the wheel via uv_build's module-root, so wheel-installed deployments find the script tree at the same package path the running code uses. A fail-fast startup gate (`db/_startup.assert_alembic_at_head`) reads the DB's current revision on `on_startup` and refuses to serve when it doesn't match the script tree's HEAD; the error message names the exact `alchemy upgrade head --config novamoc.db.config.alchemy_config` command.
 
 ### Consequences
 
@@ -1151,13 +1147,13 @@ Insert immediately after the "Commands" section (before "Linting and the ratchet
 The Litestar app **always connects to an already-initialized database** (ADR-021). Schema is managed by Alembic via the advanced-alchemy CLI; the app's `on_startup` hook refuses to serve when the DB is not at HEAD. Operator-facing recipes wrap the upstream CLI:
 
 ```sh
-just db-init                                   # = uv run alchemy upgrade head --config novamoc.db.config:alchemy_config
+just db-init                                   # = uv run alchemy upgrade head --config novamoc.db.config.alchemy_config
 just db-revision "<message>"                   # generate a new revision (autogenerate from model state)
 just db-check                                  # gate model↔migration drift; runs as part of `just check`
 just bootstrap-dev                             # db-init + create the Development tenant + admin/admin user (idempotent)
 ```
 
-Migrations live at `src/py/novamoc/db/migrations/` and ship inside the wheel via uv_build's module-root. The dotted-path `novamoc.db.config:alchemy_config` is what the alchemy CLI's `--config` flag resolves; production init containers run the same invocation.
+Migrations live at `src/py/novamoc/db/migrations/` and ship inside the wheel via uv_build's module-root. The dotted-path `novamoc.db.config.alchemy_config` is what the alchemy CLI's `--config` flag resolves; production init containers run the same invocation.
 
 Tests do **not** run migrations — the conftest's `app` fixture runs `metadata.create_all` against a pre-built engine, stamps Alembic HEAD via `AlembicCommands(cfg).stamp("head")`, then hands the config to `create_app(settings, alchemy_config=...)`. The startup gate sees a matched revision and lets the app serve.
 ```
@@ -1232,7 +1228,7 @@ rm -f /tmp/gate-check.sqlite
 NOVAMOC_DB_URL="sqlite+aiosqlite:////tmp/gate-check.sqlite" \
     uv run litestar --app novamoc.asgi:create_app run --port 8002 2>&1 | head -20
 ```
-Expected: process exits non-zero; stderr mentions `alchemy upgrade head --config novamoc.db.config:alchemy_config`.
+Expected: process exits non-zero; stderr mentions `alchemy upgrade head --config novamoc.db.config.alchemy_config`.
 
 - [ ] **Step 4: Update the ratchet if coverage shifted**
 

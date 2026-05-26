@@ -11,7 +11,7 @@ from novamoc.db.config import alchemy_config, build_alchemy_config
 
 @pytest.mark.no_tenant
 def test_alchemy_config_is_resolvable_via_dotted_path() -> None:
-    """The CLI's ``--config novamoc.db.config:alchemy_config`` must resolve."""
+    """The CLI's ``--config novamoc.db.config.alchemy_config`` must resolve."""
     assert isinstance(alchemy_config, SQLAlchemyAsyncConfig)
 
 
