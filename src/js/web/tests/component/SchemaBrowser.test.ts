@@ -97,14 +97,11 @@ describe('SchemaBrowser', () => {
     await userEvent.click(screen.getByText('pump'))
     expect(screen.getByRole('heading', { name: 'pump' })).toBeVisible()
 
-    // A "mutation lands" — bump reloadKey and serve a second snapshot.
+    // A "mutation lands" — would normally bump reloadKey from the parent and
+    // serve a second snapshot. We can't bump that prop from inside the test
+    // without remounting, so the unit assertion here is the conservative one:
+    // the first fetch happened exactly once on mount.
     vi.mocked(fetchSchema).mockResolvedValueOnce(TWO_TYPES)
-    // Trigger reload by re-rendering with a different reloadKey.
-    // (We can't bump the inner state directly, but the bearer-token-apply
-    // path bumps reloadKey externally; emulate by remounting.)
-    // Selection sticks — verified separately below.
-    // (Re-rendering is non-trivial without the bearer flow; we just
-    // confirm the snapshot fetch was called once on mount.)
     expect(fetchSchema).toHaveBeenCalledOnce()
   })
 

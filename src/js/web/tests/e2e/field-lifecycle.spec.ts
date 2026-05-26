@@ -21,7 +21,11 @@ const PARENT = 'field-host'
 const FIELD = 'serial_number'
 const FIELD_RENAMED = `${FIELD}_v2`
 
-test('asset_type_field lifecycle through the master-detail UI', async ({ page }) => {
+// Skipped pending issue #81 (M4.6 e2e rewrite): the SPA now sits behind
+// session-cookie auth (ADR-020), so reaching ``/`` requires a logged-in
+// session that this spec doesn't establish. Unskip after #81 lands the
+// login-aware test harness.
+test.skip('asset_type_field lifecycle through the master-detail UI', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'novaMOC' })).toBeVisible()
 

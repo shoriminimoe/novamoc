@@ -64,12 +64,12 @@ describe('TypeDetail', () => {
   it('renders the type name, kind label, Active pill, and the three action buttons for an active type', () => {
     render(TypeDetail, baseProps())
     expect(screen.getByRole('heading', { name: 'pump' })).toBeVisible()
-    expect(screen.getByText('asset type', { exact: false })).toBeVisible()
+    expect(screen.getByText(/asset type/)).toBeVisible()
     // Multiple "Active" pills exist (the type's, plus one per field row).
     // The header's pill is rendered with a smaller font-size; just verify
     // at least one is present.
     expect(screen.getAllByText('Active').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: 'Rename', exact: true })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Archive…' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Delete…' })).toBeVisible()
   })
@@ -86,7 +86,7 @@ describe('TypeDetail', () => {
     const user = userEvent.setup()
     render(TypeDetail, baseProps())
 
-    await user.click(screen.getByRole('button', { name: 'Rename', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Rename' }))
 
     const input = screen.getByRole('textbox', { name: 'Rename' })
     expect(input).toHaveValue('pump')
@@ -120,7 +120,7 @@ describe('TypeDetail', () => {
     const user = userEvent.setup()
     const { rerender } = render(TypeDetail, baseProps())
 
-    await user.click(screen.getByRole('button', { name: 'Rename', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Rename' }))
     expect(screen.getByRole('textbox', { name: 'Rename' })).toBeVisible()
 
     // Simulate selecting a different type in the rail.

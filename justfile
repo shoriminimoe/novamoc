@@ -16,7 +16,7 @@ format: format-py
 
 # Typecheck everything
 [parallel]
-typecheck: typecheck-py
+typecheck: typecheck-py typecheck-js
 
 # Test everything
 [parallel]
@@ -48,6 +48,12 @@ format-py:
 # Typecheck python
 typecheck-py:
 	uv run ty check
+
+# Typecheck SPA (svelte-check + tsc for vite.config / playwright.config /
+# svelte.config); `svelte-kit sync` runs first to generate $app, $lib, and
+# $types ambient declarations the typecheck depends on.
+typecheck-js:
+	cd src/js/web && npm run check
 
 # Test python
 test-py:

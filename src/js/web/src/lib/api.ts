@@ -1,15 +1,12 @@
 /**
  * Typed fetch wrapper for the novaMOC HTTP API.
  *
- * Requests carry the bearer token from {@link getBearerToken} via the
- * `Authorization: Bearer <token>` header (ADR-017). Error responses with a
- * `Content-Type: application/problem+json` body (ADR-016) are parsed into a
- * {@link ProblemDetailsError} whose `.code` getter exposes the leaf segment
- * of `type` (with the `.html` suffix stripped) — the stable identifier
- * clients branch on.
+ * Requests carry the session cookie via ``credentials: 'include'``
+ * (ADR-020). Error responses with a ``Content-Type: application/problem+json``
+ * body (ADR-016) are parsed into a {@link ProblemDetailsError} whose
+ * ``.code`` getter exposes the leaf segment of ``type`` (with the
+ * ``.html`` suffix stripped) — the stable identifier clients branch on.
  */
-
-import { getBearerToken } from './token'
 
 const ENV_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
@@ -44,7 +41,6 @@ export class ProblemDetailsError extends Error {
 
 export interface ApiClientOptions {
   baseUrl?: string
-  getToken?: () => string | null
 }
 
 export interface ApiClient {
@@ -54,7 +50,6 @@ export interface ApiClient {
 
 export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   const baseUrl = options.baseUrl ?? ENV_BASE_URL
-  const getToken = options.getToken ?? getBearerToken
 
   async function request<T>(
     method: string,
@@ -62,13 +57,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     body?: unknown,
   ): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
-    const token = getToken()
-    if (token !== null) headers.Authorization = `Bearer ${token}`
     if (body !== undefined) headers['Content-Type'] = 'application/json'
 
     const response = await fetch(`${baseUrl}${path}`, {
       method,
       headers,
+      credentials: 'include',
       body: body === undefined ? undefined : JSON.stringify(body),
     })
 
