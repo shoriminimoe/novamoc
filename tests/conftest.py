@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from advanced_alchemy.base import metadata_registry
-from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
 from litestar.testing import AsyncTestClient
 from render_problem_docs import _default_src_dir, _default_titles, render_all
 from sqlalchemy.ext.asyncio import (
@@ -36,7 +35,6 @@ from novamoc.config import (
 )
 from novamoc.db._tenant_context import use_tenant
 from novamoc.db.models._auth import Tenant
-from novamoc.domain.accounts._middleware import pick_async_alchemy_config
 from novamoc.domain.accounts._services import (
     TenantService,
     UserService,
@@ -243,14 +241,15 @@ async def dev_admin(app: Litestar) -> DevAdmin:
     startup hook fires) so the registry writes have tables to land
     in. ``CREATE TABLE IF NOT EXISTS`` makes the lifespan re-run a
     no-op.
+
+    Pulls the ``SQLAlchemyAsyncConfig`` and the ``PasswordHasher`` off
+    ``app.state`` — both are stashed there by ``create_app`` so the
+    auth middleware (and this fixture) can reach them without walking
+    the plugin list.
     """
-    alchemy_config = pick_async_alchemy_config(app.plugins.get(SQLAlchemyPlugin))
+    alchemy_config = app.state.alchemy_config
     await alchemy_config.create_all_metadata(app)
 
-    # Reuse the ``PasswordHasher`` ``create_app`` stashed on
-    # ``app.state`` — it was built from the test ``settings``
-    # ``AuthSettings`` cost params, so a local rebuild would be
-    # identical bytes for more allocation.
     hasher = app.state.password_hasher
 
     async with alchemy_config.get_session() as db_session:

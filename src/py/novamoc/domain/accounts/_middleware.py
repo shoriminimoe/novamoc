@@ -10,10 +10,14 @@ by default), and ASGI scope filtering. Our
 :meth:`AuthenticationMiddleware.authenticate_request` reads the session
 payload off ``connection.session`` (populated upstream by the
 SessionMiddleware mounted in :mod:`novamoc.asgi`), opens a transient
-SQLAlchemy session via the registered ``SQLAlchemyPlugin``, and forwards
-to :func:`resolve_principal_from_session` (M5.11, ADR-020). The
-``Principal`` lands on ``scope["user"]``; the ``RequestAuth`` on
-``scope["auth"]``.
+SQLAlchemy session via ``connection.app.state.alchemy_config`` — the
+``SQLAlchemyAsyncConfig`` :mod:`novamoc.asgi` stashes there at app
+construction — and forwards to :func:`resolve_principal_from_session`
+(M5.11, ADR-020). DI providers are not reachable from middleware
+(they resolve at route-handler invocation time), so the alchemy config
+travels via ``app.state`` for the same reason :class:`PasswordHasher`
+does. The ``Principal`` lands on ``scope["user"]``; the ``RequestAuth``
+on ``scope["auth"]``.
 
 :class:`TenantContextMiddleware` runs after authentication and binds
 ``scope["auth"].tenant_id`` to the storage-layer ``current_tenant_id``
@@ -26,10 +30,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from advanced_alchemy.extensions.litestar import (
-    SQLAlchemyAsyncConfig,
-    SQLAlchemyPlugin,
-)
 from litestar.middleware import ASGIMiddleware
 from litestar.middleware.authentication import (
     AbstractAuthenticationMiddleware,
@@ -48,36 +48,12 @@ if TYPE_CHECKING:
     from litestar.types import ASGIApp, Receive, Scope, Send
 
 
-def pick_async_alchemy_config(plugin: SQLAlchemyPlugin) -> SQLAlchemyAsyncConfig:
-    """Return the single async config registered on ``plugin``.
-
-    ``SQLAlchemyPlugin.config`` is a list (multi-binding support); we
-    register exactly one async config and the isinstance check narrows
-    the union for both ty and the runtime path. A second config landing
-    later (read-replica, audit DB) would require disambiguating here —
-    see the M5.11 spec's recorded tech debt.
-
-    Shared with the test ``conftest`` so the production middleware and
-    the ``dev_admin`` fixture both reach for the alchemy config the
-    same way.
-
-    Raises:
-        RuntimeError: if no ``SQLAlchemyAsyncConfig`` is registered.
-    """
-    for cfg in plugin.config:
-        if isinstance(cfg, SQLAlchemyAsyncConfig):
-            return cfg
-    msg = "No SQLAlchemyAsyncConfig registered on the SQLAlchemyPlugin"
-    raise RuntimeError(msg)
-
-
 class AuthenticationMiddleware(AbstractAuthenticationMiddleware):
     async def authenticate_request(
         self, connection: ASGIConnection
     ) -> AuthenticationResult:
         payload = connection.session
-        plugin = connection.app.plugins.get(SQLAlchemyPlugin)
-        alchemy_config = pick_async_alchemy_config(plugin)
+        alchemy_config = connection.app.state.alchemy_config
         async with alchemy_config.get_session() as db_session:
             users = UserService(session=db_session)
             memberships = UserTenantMembershipService(session=db_session)

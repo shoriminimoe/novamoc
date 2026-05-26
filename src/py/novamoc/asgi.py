@@ -157,7 +157,18 @@ def create_app(settings: Settings | None = None) -> Litestar:
         # only the narrow slice they need rather than the whole tree.
         # ``state.password_hasher`` is the hot-path login dependency
         # M5.10's ``AuthController`` pulls via DI.
-        state=State({"settings": s, "password_hasher": password_hasher}),
+        # ``state.alchemy_config`` is the per-request DB-session source
+        # ``AuthenticationMiddleware`` opens its transient session
+        # against — it runs before route resolution so the standard
+        # ``provide_session`` DI provider is not yet reachable, and
+        # this is the same object the SQLAlchemyPlugin wraps.
+        state=State(
+            {
+                "settings": s,
+                "password_hasher": password_hasher,
+                "alchemy_config": alchemy_config,
+            }
+        ),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),

@@ -95,21 +95,27 @@ These ride forward unchanged from the issue brief:
 
 ### 1. How `AuthenticationMiddleware.authenticate_request` acquires the SQLAlchemy session
 
-The middleware runs **before** route resolution, so the controller's `dependencies` map is not yet bound — DI cannot supply the session. Three options were considered:
+The middleware runs **before** route resolution, so the controller's `dependencies` map is not yet bound — Litestar DI providers (including `advanced_alchemy`'s shipped `provide_session`) cannot supply the session. Three options were considered:
 
-1. **Open a fresh session via the plugin's `SQLAlchemyAsyncConfig.get_session()` context manager.** Chosen.
+1. **Open a fresh session via `SQLAlchemyAsyncConfig.get_session()`, with the config read off `app.state`.** Chosen.
 2. **Reach into the request-scoped session that `before_send_handler="autocommit"` will commit at response time.**
 3. **Defer resolution by writing the session payload into `scope["state"]` and resolving inside a controller `before_request` hook.**
 
-Chosen: option 1. The pattern is exactly what `SQLAlchemyAsyncSessionBackend` itself does internally (it calls `self.alchemy.get_session()` on every read), so the resolver's session has the same lifecycle as the backend's — `async with self.alchemy.get_session() as db_session: ...`, opened on entry, closed on exit, no leakage past the middleware call. The pattern is verified in `advanced_alchemy/extensions/litestar/session.py:252`.
-
-Mechanics:
+Chosen: option 1. `get_session()` is exactly what `SQLAlchemyAsyncSessionBackend` itself does internally on every read (`advanced_alchemy/extensions/litestar/session.py:252`), so the resolver's session has the same lifecycle as the backend's — `async with alchemy_config.get_session() as db_session: ...`, opened on entry, closed on exit, no leakage past the middleware call. The `alchemy_config` itself rides on `app.state`:
 
 ```python
+# asgi.create_app
+state=State({
+    "settings": s,
+    "password_hasher": password_hasher,
+    "alchemy_config": alchemy_config,  # ← here
+})
+
+# AuthenticationMiddleware.authenticate_request
 async def authenticate_request(self, connection: ASGIConnection) -> AuthenticationResult:
     payload = connection.session  # dict, populated by SessionMiddleware
-    plugin = connection.app.plugins.get(SQLAlchemyPlugin)
-    async with plugin.config.get_session() as db_session:
+    alchemy_config = connection.app.state.alchemy_config
+    async with alchemy_config.get_session() as db_session:
         users = UserService(session=db_session)
         memberships = UserTenantMembershipService(session=db_session)
         principal, auth = await resolve_principal_from_session(
@@ -118,11 +124,11 @@ async def authenticate_request(self, connection: ASGIConnection) -> Authenticati
     return AuthenticationResult(user=principal, auth=auth)
 ```
 
+The `app.state` pattern matches how the hot-path `PasswordHasher` is wired for the same DI-unavailability reason. We deliberately do **not** walk `app.plugins.get(SQLAlchemyPlugin).config[]`: the plugin stores its registered configs as a list (multi-binding support), and reaching in via `next(... if isinstance(c, SQLAlchemyAsyncConfig))` is two indirections for what is conceptually one shared object. Stashing it on state once at construction and reading it directly per-request is the cleanest expression of "this is a shared dependency the middleware needs but DI cannot supply."
+
 Option 2 was rejected because the auth middleware runs *before* the controller, before `before_send_handler` has set up the request-scoped session — there is nothing on the scope to reach for yet. Option 3 was rejected because it puts authentication behind route resolution: an unauthenticated request to a non-existent route would 404, not 401, breaking the byte-identical 401-on-credential-failure contract ADR-020 cares about.
 
 Lifecycle pin: the session opened inside `authenticate_request` does **not** participate in the autocommit hook; it commits or rolls back independently. The only writes the resolver performs are read-only `SELECT`s, so this is fine — no transactional dependency on the route handler exists.
-
-`plugin.config` returns a `SQLAlchemyAsyncConfig` (we only register the async variant); `get_session()` returns an `_AsyncGeneratorContextManager[AsyncSession]`. We rely on the single-config invariant and pull `config` directly. If we ever register multiple SQLAlchemyAsyncConfigs (e.g. a separate read-replica), the resolver picks the first; that is acceptable until it isn't, and the issue can be revisited then.
 
 ### 2. Where `PasswordHasher` lives on the app
 
@@ -344,12 +350,11 @@ landed; no further action.
   site) but not all. The SPA is same-origin and not exposed
   third-party today; a CSRF token spec is the right follow-up when
   any non-SPA caller appears.
-- **Single SQLAlchemyAsyncConfig assumption in the middleware.** The
-  resolver calls `connection.app.plugins.get(SQLAlchemyPlugin)` which
-  returns the only registered plugin. If a second config lands
-  (read-replica, audit DB), the resolver picks one arbitrarily. Not a
-  v1 concern; the wider work is a separate spec when multi-DB shows
-  up.
+- **Single SQLAlchemyAsyncConfig assumption.** The middleware reads
+  `app.state.alchemy_config` and `create_app` stashes exactly one
+  there. If a second config lands (read-replica, audit DB), the
+  middleware needs a more elaborate selection rule; revisit when
+  multi-DB shows up.
 - **Resolver timing side-channel.** `resolve_principal_from_session`
   issues 0/1/2 SELECTs depending on which check fails (malformed UUID
   short-circuits, unknown user adds one query, missing membership adds
