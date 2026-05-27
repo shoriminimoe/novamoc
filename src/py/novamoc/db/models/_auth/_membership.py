@@ -36,9 +36,9 @@ class UserTenantMembership(DefaultBase):
     # ``ondelete="CASCADE"``: deleting a user account drops their
     # memberships (the join is meaningless without a user). ``RESTRICT``
     # on the tenant FK because tenant deletion is a sensitive admin
-    # operation that should require explicit member cleanup. Both fire
-    # only when ``PRAGMA foreign_keys=ON``; ADR-004 specifies it should
-    # be on, production wiring is a separate follow-up.
+    # operation that should require explicit member cleanup. Both
+    # fire because the ``foreign_keys=ON`` pragma is set per-connection
+    # by ``db._pragmas.register_sqlite_pragmas`` (ADR-004).
     user_id: Mapped[uuid.UUID] = mapped_column(
         GUID,
         ForeignKey("users.id", ondelete="CASCADE"),

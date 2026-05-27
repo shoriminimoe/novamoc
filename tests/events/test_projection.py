@@ -17,6 +17,7 @@ from novamoc.domain.events._fold import FieldUpsert
 from novamoc.domain.events._payloads import EntityFamily
 from novamoc.domain.events._projection import apply_entity_projection
 from tests._constants import DEV_TENANT_ID
+from tests.data.seed_helpers import seed_asset_type, seed_mr_type
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -29,8 +30,12 @@ _ANY_HLC = "0000000000000001-00000-client-a"
 
 
 async def _seed_asset(session: AsyncSession, *, asset_id: UUID) -> None:
-    """Stand-in for the M1.8 row-state path: insert a baseline asset row."""
-    type_id = uuid4()
+    """Stand-in for the M1.8 row-state path: insert a baseline asset row.
+
+    Inserts the parent ``asset_types`` row first so the FK resolves
+    under ``PRAGMA foreign_keys=ON``.
+    """
+    type_id = await seed_asset_type(session)
     await session.execute(
         insert(Asset).values(
             tenant_id=_TENANT,
@@ -47,7 +52,7 @@ async def _seed_asset(session: AsyncSession, *, asset_id: UUID) -> None:
 async def _seed_maintenance_record(
     session: AsyncSession, *, record_id: UUID, asset_id: UUID
 ) -> None:
-    type_id = uuid4()
+    type_id = await seed_mr_type(session)
     await session.execute(
         insert(MaintenanceRecord).values(
             tenant_id=_TENANT,

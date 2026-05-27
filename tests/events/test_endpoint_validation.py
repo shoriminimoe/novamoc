@@ -180,6 +180,27 @@ async def test_null_value_is_always_accepted(client: AsyncTestClient) -> None:
     type_id, field_id, schema_version = await _seed_asset_type_with_field(
         client, field_data_type="integer"
     )
+    # Updated has no row-state component, so the asset row must exist
+    # for the field-value fold's FK into ``assets`` to resolve. Seed it
+    # via a prior Created event at an earlier HLC.
+    instance_id = str(uuid4())
+    seed_resp = await client.post(
+        "/events",
+        json={
+            "schema_version": schema_version,
+            "events": [
+                {
+                    "hlc": "0000000000000000-00000-client-a",
+                    "family": "asset",
+                    "type_id": type_id,
+                    "instance_id": instance_id,
+                    "body": {"event": "created", "values": {}},
+                }
+            ],
+        },
+    )
+    assert seed_resp.status_code == 202, seed_resp.text
+
     outcome = await _post_one(
         client,
         schema_version,
@@ -187,7 +208,7 @@ async def test_null_value_is_always_accepted(client: AsyncTestClient) -> None:
             "hlc": _VALID_HLC,
             "family": "asset",
             "type_id": type_id,
-            "instance_id": str(uuid4()),
+            "instance_id": instance_id,
             "body": {"event": "updated", "values": {field_id: None}},
         },
     )

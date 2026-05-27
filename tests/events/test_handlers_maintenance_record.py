@@ -30,6 +30,7 @@ from novamoc.domain.schema.services import (
 )
 from tests._constants import DEV_TENANT_ID
 from tests.data.scenarios import ACTIVE_OIL_CHANGE_WITH_NOTES
+from tests.data.seed_helpers import seed_asset, seed_maintenance_record
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -60,12 +61,14 @@ def event_services(session: AsyncSession) -> EventServiceBundle:
 def _envelope(
     type_id: UUID,
     body: Created | Updated | Deactivated | Activated,
+    *,
+    instance_id: UUID | None = None,
 ) -> EventEnvelope:
     return EventEnvelope(
         hlc=_HLC,
         family=EntityFamily.MAINTENANCE_RECORD,
         type_id=type_id,
-        instance_id=uuid4(),
+        instance_id=instance_id or uuid4(),
         body=body,
     )
 
@@ -73,12 +76,15 @@ def _envelope(
 async def test_created_with_valid_values(
     event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
+    session: AsyncSession,
 ) -> None:
     ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES)
     type_id = ids["maintenance_record_type"]["OilChange"]
     field_id = ids["maintenance_record_type_field"]["notes"]
+    # The MR row's FK into ``assets`` resolves against a real asset row.
+    parent_asset_id = await seed_asset(session)
     body = Created(
-        parent=Parent(type_id=uuid4(), instance_id=uuid4()),
+        parent=Parent(type_id=uuid4(), instance_id=parent_asset_id),
         values={str(field_id): "All filters replaced."},
     )
     await maintenance_record.created(event_services, _auth(), _envelope(type_id, body))
@@ -114,12 +120,18 @@ async def test_created_with_wrong_value_type_raises(
 async def test_updated_validates_like_created(
     event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
+    session: AsyncSession,
 ) -> None:
     ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES)
     type_id = ids["maintenance_record_type"]["OilChange"]
     field_id = ids["maintenance_record_type_field"]["notes"]
+    # Updated has no row-state component, so the MR row must exist for
+    # the field-value fold's FK into ``maintenance_records`` to resolve.
+    record_id = await seed_maintenance_record(session, type_id=type_id)
     body = Updated(values={str(field_id): None})
-    await maintenance_record.updated(event_services, _auth(), _envelope(type_id, body))
+    await maintenance_record.updated(
+        event_services, _auth(), _envelope(type_id, body, instance_id=record_id)
+    )
 
 
 async def test_deactivated_appends(event_services: EventServiceBundle) -> None:

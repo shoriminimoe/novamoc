@@ -20,6 +20,7 @@ from novamoc.domain.events._payloads import (
     Updated,
 )
 from novamoc.domain.events._row_state import apply_row_state
+from tests.data.seed_helpers import seed_asset_type, seed_mr_type
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -69,7 +70,7 @@ async def _read_asset(session: AsyncSession, asset_id: UUID) -> Asset | None:
 
 async def test_created_inserts_entity_row(session: AsyncSession) -> None:
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     applied = await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_MID)
     )
@@ -85,7 +86,7 @@ async def test_created_inserts_entity_row(session: AsyncSession) -> None:
 
 async def test_deactivate_sets_deleted_flag(session: AsyncSession) -> None:
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -103,7 +104,7 @@ async def test_deactivate_sets_deleted_flag(session: AsyncSession) -> None:
 
 async def test_activate_restores_after_deactivate(session: AsyncSession) -> None:
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -126,7 +127,7 @@ async def test_stale_deactivate_is_noop(session: AsyncSession) -> None:
     # ADR-007's strict-greater rule: an event whose HLC is below the
     # current row_state_hlc must not flip the visibility bit.
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_LATER)
     )
@@ -165,7 +166,7 @@ async def test_deactivate_on_missing_row_is_noop(session: AsyncSession) -> None:
 
 async def test_updated_is_noop_for_row_state(session: AsyncSession) -> None:
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -190,7 +191,7 @@ async def test_updated_is_noop_for_row_state(session: AsyncSession) -> None:
 
 async def test_replay_create_with_lower_hlc_is_noop(session: AsyncSession) -> None:
     asset_id = uuid4()
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_LATER)
     )
@@ -228,7 +229,7 @@ async def test_created_maintenance_record_with_parent_inserts(
     session: AsyncSession,
 ) -> None:
     asset_id = uuid4()
-    asset_type_id = uuid4()
+    asset_type_id = await seed_asset_type(session)
     # Seed the parent asset row first so the MR FK resolves.
     await apply_row_state(
         session,
@@ -236,7 +237,7 @@ async def test_created_maintenance_record_with_parent_inserts(
     )
 
     record_id = uuid4()
-    record_type_id = uuid4()
+    record_type_id = await seed_mr_type(session)
     event = EventEnvelope(
         hlc=_HLC_MID,
         family=EntityFamily.MAINTENANCE_RECORD,

@@ -323,10 +323,10 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
         if target is None:
             msg = f"User '{username}' not found."
             raise click.ClickException(msg)
-        # Explicit tenant existence check: PRAGMA ``foreign_keys=ON``
-        # is not yet wired (see ``_membership.py``), so without this
-        # lookup a phantom tenant UUID would silently produce an
-        # orphan membership row.
+        # Explicit tenant existence check: the FK constraint backstop
+        # would catch a phantom UUID, but pre-flight gives a friendly
+        # "Tenant '<id>' not found." message instead of an
+        # IntegrityError traceback.
         tenants = TenantService(session=session)
         if not await tenants.exists(id=tenant_id):
             msg = f"Tenant '{tenant_id}' not found."

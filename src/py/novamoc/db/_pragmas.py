@@ -1,9 +1,9 @@
 """SQLite per-driver options registration.
 
 The home for SQLAlchemy ``connect``-time PRAGMA listeners. Currently
-sets ``journal_mode=WAL``; future per-connection pragmas
-(``foreign_keys=ON``, ``synchronous=NORMAL``, etc.) live here so all
-SQLite engine configuration is in one greppable place.
+sets ``journal_mode=WAL`` and ``foreign_keys=ON``; future
+per-connection pragmas (``synchronous=NORMAL``, etc.) live here so
+all SQLite engine configuration is in one greppable place.
 
 Listener registration is **per-engine**, not global. Callers explicitly
 register the listener on engines they know are SQLite (typically
@@ -48,15 +48,24 @@ def _set_sqlite_pragmas(
     """Apply SQLite per-connection PRAGMAs.
 
     The listener is only registered on engines the caller knows are
-    SQLite, so no in-listener driver detection is needed. Today sets
-    ``journal_mode=WAL``; WAL persists in the SQLite file header so
-    the pragma is effectively idempotent. For ``:memory:`` databases
-    SQLite returns ``memory`` mode silently and the pragma is a
-    no-op.
+    SQLite, so no in-listener driver detection is needed.
+
+    Sets:
+
+    * ``journal_mode=WAL`` — WAL persists in the SQLite file header
+      so the pragma is effectively idempotent. For ``:memory:``
+      databases SQLite returns ``memory`` mode silently and the
+      pragma is a no-op.
+    * ``foreign_keys=ON`` — SQLite defaults FK enforcement to OFF
+      and the setting is per-connection (not persisted in the
+      file). ADR-004 requires it on; the membership FK constraints
+      in :mod:`novamoc.db.models._auth._membership` rely on it.
     """
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.fetchone()
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.fetchone()
     finally:
         cursor.close()

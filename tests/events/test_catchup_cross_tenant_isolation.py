@@ -27,8 +27,11 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
 )
 from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
+from tests.data.seed_helpers import seed_asset_type
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -43,12 +46,12 @@ def _bundle(session: AsyncSession) -> EventServiceBundle:
     )
 
 
-async def _append(bundle: EventServiceBundle, hlc: str) -> None:
+async def _append(bundle: EventServiceBundle, hlc: str, type_id: UUID) -> None:
     await bundle.append_event(
         EventEnvelope(
             hlc=hlc,
             family=EntityFamily.ASSET,
-            type_id=uuid4(),
+            type_id=type_id,
             instance_id=uuid4(),
             body=Created(values={}),
         )
@@ -61,17 +64,25 @@ async def test_paginator_isolates_tenants_at_interleaved_seqs(
     """Interleaved append under two tenants — each tenant sees only its own."""
     bundle = _bundle(session)
 
+    # Seed an ``asset_type`` row per tenant so the assets-projection FK
+    # constraint (``foreign_keys=ON``) is satisfied when the Created events
+    # fold into ``assets``.
+    with use_tenant(DEV_TENANT_ID_A):
+        type_id_a = await seed_asset_type(session)
+    with use_tenant(DEV_TENANT_ID_B):
+        type_id_b = await seed_asset_type(session)
+
     # Interleave: t-a, t-b, t-a, t-b, t-a → three events for t-a, two for t-b.
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000001-00000-aaa")
+        await _append(bundle, "0001700000000001-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000002-00000-bbb")
+        await _append(bundle, "0001700000000002-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000003-00000-aaa")
+        await _append(bundle, "0001700000000003-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000004-00000-bbb")
+        await _append(bundle, "0001700000000004-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000005-00000-aaa")
+        await _append(bundle, "0001700000000005-00000-aaa", type_id_a)
 
     paginator = EventLogCursorPaginator(EventLogService(session=session))
 

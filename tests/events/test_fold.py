@@ -10,6 +10,7 @@ from sqlalchemy import select
 from novamoc.db.models.data import AssetFieldValue, MaintenanceRecordFieldValue
 from novamoc.domain.events._fold import FieldUpsert, apply_field_value
 from novamoc.domain.events._payloads import EntityFamily
+from tests.data.seed_helpers import seed_asset, seed_maintenance_record
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -49,7 +50,7 @@ def _asset_upsert(
 
 
 async def test_forward_order_stores_latest_value(session: AsyncSession) -> None:
-    asset_id = uuid4()
+    asset_id = await seed_asset(session)
     assert (
         await apply_field_value(
             session,
@@ -71,7 +72,7 @@ async def test_forward_order_stores_latest_value(session: AsyncSession) -> None:
 
 
 async def test_reverse_order_keeps_higher_hlc(session: AsyncSession) -> None:
-    asset_id = uuid4()
+    asset_id = await seed_asset(session)
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="Truck-LATE", hlc=_HLC_LATER),
@@ -91,7 +92,7 @@ async def test_equal_hlc_does_not_apply(session: AsyncSession) -> None:
     # ADR-007 LWW is strict-greater; an event tied on HLC should NOT
     # overwrite, otherwise re-delivery would be non-idempotent at the
     # projection level even when it's idempotent at the log level.
-    asset_id = uuid4()
+    asset_id = await seed_asset(session)
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="ORIGINAL", hlc=_HLC_EARLIER),
@@ -108,7 +109,7 @@ async def test_equal_hlc_does_not_apply(session: AsyncSession) -> None:
 
 
 async def test_null_value_is_recorded(session: AsyncSession) -> None:
-    asset_id = uuid4()
+    asset_id = await seed_asset(session)
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="something", hlc=_HLC_EARLIER),
@@ -127,7 +128,7 @@ async def test_null_value_is_recorded(session: AsyncSession) -> None:
 async def test_maintenance_record_family_routes_to_correct_table(
     session: AsyncSession,
 ) -> None:
-    record_id = uuid4()
+    record_id = await seed_maintenance_record(session)
     applied = await apply_field_value(
         session,
         FieldUpsert(
@@ -158,7 +159,7 @@ async def test_maintenance_record_family_routes_to_correct_table(
 async def test_different_fields_on_same_entity_are_independent(
     session: AsyncSession,
 ) -> None:
-    asset_id = uuid4()
+    asset_id = await seed_asset(session)
     field_a = str(uuid4())
     field_b = str(uuid4())
 

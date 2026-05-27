@@ -19,13 +19,14 @@ from novamoc.domain.schema.services import (
     AssetTypeFieldService,
     MaintenanceRecordTypeFieldService,
 )
+from tests.data.seed_helpers import seed_asset_type
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def test_append_event_persists_type_id(session: AsyncSession) -> None:
-    type_id = uuid4()
+    type_id = await seed_asset_type(session)
     instance_id = uuid4()
     bundle = EventServiceBundle(
         asset_type_field_service=AssetTypeFieldService(session=session),
