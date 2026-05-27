@@ -1,8 +1,9 @@
 """Unit tests for the entity-table projection mirror (M1.7, ADR-005 / ADR-012).
 
-These insert an entity row directly into ``assets`` /
-``maintenance_records`` (a stand-in for the M1.8 row-state path)
-and then exercise :func:`apply_entity_projection` on it.
+These rely on the ``seed`` fixture's scenarios (which insert baseline
+``assets`` / ``maintenance_records`` rows — a stand-in for the M1.8
+row-state path) and then exercise :func:`apply_entity_projection` on
+them.
 """
 
 from __future__ import annotations
@@ -10,56 +11,24 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 
 from novamoc.db.models.data import Asset, MaintenanceRecord
 from novamoc.domain.events._fold import FieldUpsert
 from novamoc.domain.events._payloads import EntityFamily
 from novamoc.domain.events._projection import apply_entity_projection
-from tests._constants import DEV_TENANT_ID
+from tests.data.scenarios import ACTIVE_OIL_CHANGE_RECORD, ACTIVE_TRUCK_WITH_ASSET
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from tests.data.scenarios import Scenario
 
-_TENANT = DEV_TENANT_ID
+
 _ANY_HLC = "0000000000000001-00000-client-a"
-
-
-async def _seed_asset(session: AsyncSession, *, asset_id: UUID) -> None:
-    """Stand-in for the M1.8 row-state path: insert a baseline asset row."""
-    type_id = uuid4()
-    await session.execute(
-        insert(Asset).values(
-            tenant_id=_TENANT,
-            id=asset_id,
-            type_id=type_id,
-            name=None,
-            properties={},
-            deleted=False,
-            row_state_hlc=_ANY_HLC,
-        )
-    )
-
-
-async def _seed_maintenance_record(
-    session: AsyncSession, *, record_id: UUID, asset_id: UUID
-) -> None:
-    type_id = uuid4()
-    await session.execute(
-        insert(MaintenanceRecord).values(
-            tenant_id=_TENANT,
-            id=record_id,
-            type_id=type_id,
-            asset_id=asset_id,
-            name=None,
-            properties={},
-            deleted=False,
-            row_state_hlc=_ANY_HLC,
-        )
-    )
 
 
 async def _read_asset(session: AsyncSession, asset_id: UUID) -> Asset:
@@ -82,9 +51,11 @@ def _upsert(
     )
 
 
-async def test_col_name_writes_named_column(session: AsyncSession) -> None:
-    asset_id = uuid4()
-    await _seed_asset(session, asset_id=asset_id)
+async def test_col_name_writes_named_column(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
 
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id="col:name", value="Truck-1")
@@ -94,9 +65,11 @@ async def test_col_name_writes_named_column(session: AsyncSession) -> None:
     assert asset.name == "Truck-1"
 
 
-async def test_col_null_value_nullifies_column(session: AsyncSession) -> None:
-    asset_id = uuid4()
-    await _seed_asset(session, asset_id=asset_id)
+async def test_col_null_value_nullifies_column(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id="col:name", value="Truck-1")
     )
@@ -109,10 +82,12 @@ async def test_col_null_value_nullifies_column(session: AsyncSession) -> None:
     assert asset.name is None
 
 
-async def test_user_field_writes_into_properties_json(session: AsyncSession) -> None:
-    asset_id = uuid4()
+async def test_user_field_writes_into_properties_json(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     field_id = str(uuid4())
-    await _seed_asset(session, asset_id=asset_id)
 
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id=field_id, value="ABC123")
@@ -124,12 +99,12 @@ async def test_user_field_writes_into_properties_json(session: AsyncSession) -> 
 
 async def test_user_field_null_keeps_key_with_json_null_in_properties(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
     # ADR-019: a cleared user field stays in ``properties`` as JSON
     # null rather than being removed.
-    asset_id = uuid4()
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     field_id = str(uuid4())
-    await _seed_asset(session, asset_id=asset_id)
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id=field_id, value="VIN-123")
     )
@@ -144,10 +119,10 @@ async def test_user_field_null_keeps_key_with_json_null_in_properties(
 
 async def test_user_field_update_replaces_value_in_properties(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
-    asset_id = uuid4()
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     field_id = str(uuid4())
-    await _seed_asset(session, asset_id=asset_id)
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id=field_id, value="OLD")
     )
@@ -160,11 +135,13 @@ async def test_user_field_update_replaces_value_in_properties(
     assert asset.properties == {field_id: "NEW"}
 
 
-async def test_two_user_fields_coexist_in_properties(session: AsyncSession) -> None:
-    asset_id = uuid4()
+async def test_two_user_fields_coexist_in_properties(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     field_a = str(uuid4())
     field_b = str(uuid4())
-    await _seed_asset(session, asset_id=asset_id)
 
     await apply_entity_projection(
         session, _upsert(asset_id=asset_id, field_id=field_a, value="A")
@@ -193,11 +170,11 @@ async def test_missing_entity_row_is_a_noop(session: AsyncSession) -> None:
 
 async def test_maintenance_record_family_routes_to_correct_table(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
-    asset_id = uuid4()
-    record_id = uuid4()
-    await _seed_asset(session, asset_id=asset_id)
-    await _seed_maintenance_record(session, record_id=record_id, asset_id=asset_id)
+    ids = await seed(ACTIVE_OIL_CHANGE_RECORD)
+    asset_id = ids["asset"]["Primary Truck"]
+    record_id = ids["maintenance_record"]["Primary Oil Change"]
 
     upsert = FieldUpsert(
         family=EntityFamily.MAINTENANCE_RECORD,
@@ -208,8 +185,9 @@ async def test_maintenance_record_family_routes_to_correct_table(
     )
     await apply_entity_projection(session, upsert)
 
+    # The maintenance-record edit must not bleed into the asset's name.
     asset = await _read_asset(session, asset_id)
-    assert asset.name is None  # unrelated to the maintenance_record edit
+    assert asset.name == "Primary Truck"  # the seeded value, unchanged
 
     mr_row = (
         await session.execute(

@@ -6,10 +6,12 @@ a real engine to catch migration-style drift early.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
+from advanced_alchemy.alembic.commands import AlembicCommands
 from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
     SQLAlchemyAsyncConfig,
@@ -37,7 +39,9 @@ from novamoc.config import (
     Settings,
     problem_html_dir,
 )
+from novamoc.db._pragmas import register_sqlite_pragmas
 from novamoc.db._tenant_context import use_tenant
+from novamoc.db.config import build_alchemy_config
 from novamoc.db.models._auth import Tenant
 from novamoc.domain.accounts._services import (
     TenantService,
@@ -101,6 +105,13 @@ def tenant(request: pytest.FixtureRequest) -> Iterator[UUID | None]:
 @pytest.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
     eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # Pragma parity with production engines built via build_alchemy_config:
+    # the `app` fixture and `tests/db/test_pragmas.py` already go through
+    # that path; the direct-DB `engine` fixture skips it (no Alembic, no
+    # tenant-scoping wrap needed for storage-layer tests) but still wants
+    # the same connect-time pragmas. Tests that need different pragmas
+    # build their own engine inline instead of using this fixture.
+    register_sqlite_pragmas(eng)
     async with eng.begin() as conn:
         for key in metadata_registry:
             await conn.run_sync(metadata_registry[key].create_all)
@@ -187,7 +198,6 @@ def settings() -> Settings:
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
             static_pool=True,
-            create_all=True,
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),
@@ -202,15 +212,31 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-async def app(settings: Settings) -> Litestar:
-    """A Litestar app with an in-memory SQLite for e2e tests.
+async def app(settings: Settings) -> AsyncIterator[Litestar]:
+    """A Litestar app over a freshly-built in-memory SQLite.
 
-    Built via ``create_app(settings=...)`` so production and test paths
-    share the same wiring; the per-test ``settings`` fixture supplies an
-    explicit ``StaticPool`` in-memory DB and the ``http://test`` problem-
-    docs base URL the e2e assertions key off.
+    Builds the engine in the conftest, runs ``metadata.create_all``
+    against it (the same loop the ``engine`` fixture uses), and stamps
+    the Alembic HEAD so the app's startup gate accepts the database.
+    The pre-built ``SQLAlchemyAsyncConfig`` is handed to ``create_app``
+    via the documented ``alchemy_config`` keyword so the plugin uses
+    the populated engine instead of opening a fresh one.
     """
-    return create_app(settings=settings)
+    alchemy_config = build_alchemy_config(settings)
+    engine = alchemy_config.get_engine()
+    async with engine.begin() as conn:
+        for key in metadata_registry:
+            await conn.run_sync(metadata_registry[key].create_all)
+    # ``AlembicCommands.stamp`` is sync but its env.py calls
+    # ``asyncio.run(run_migrations_online())`` internally; calling it
+    # from a running event loop raises ``RuntimeError: asyncio.run()
+    # cannot be called from a running event loop``. ``to_thread``
+    # gives env.py a fresh loop on a worker thread.
+    await asyncio.to_thread(AlembicCommands(alchemy_config).stamp, "head")
+    try:
+        yield create_app(settings=settings, alchemy_config=alchemy_config)
+    finally:
+        await engine.dispose()
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,10 +314,11 @@ async def client(app: Litestar) -> AsyncIterator[AsyncTestClient]:
     """An authenticated ``AsyncTestClient``.
 
     Enters the ``AsyncTestClient`` context (the plugin's lifespan
-    fires, ``create_all`` runs, ``session_maker`` lands on state),
-    seeds the admin, then logs in. ``httpx`` persists the session
-    cookie across subsequent requests, so the rest of the test runs
-    as the seeded admin. Tests exercising the rejection path use
+    fires and ``session_maker`` lands on state; the ``app`` fixture
+    has already created the tables and stamped Alembic HEAD), seeds
+    the admin, then logs in. ``httpx`` persists the session cookie
+    across subsequent requests, so the rest of the test runs as the
+    seeded admin. Tests exercising the rejection path use
     :func:`unauth_client` instead.
     """
     async with AsyncTestClient(app) as c:

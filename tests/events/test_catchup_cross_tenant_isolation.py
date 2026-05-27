@@ -27,8 +27,12 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
 )
 from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
+from tests.data.scenarios import ACTIVE_TRUCK
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
+    from uuid import UUID
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -43,12 +47,12 @@ def _bundle(session: AsyncSession) -> EventServiceBundle:
     )
 
 
-async def _append(bundle: EventServiceBundle, hlc: str) -> None:
+async def _append(bundle: EventServiceBundle, hlc: str, type_id: UUID) -> None:
     await bundle.append_event(
         EventEnvelope(
             hlc=hlc,
             family=EntityFamily.ASSET,
-            type_id=uuid4(),
+            type_id=type_id,
             instance_id=uuid4(),
             body=Created(values={}),
         )
@@ -57,21 +61,34 @@ async def _append(bundle: EventServiceBundle, hlc: str) -> None:
 
 async def test_paginator_isolates_tenants_at_interleaved_seqs(
     session: AsyncSession,
+    seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
     """Interleaved append under two tenants — each tenant sees only its own."""
     bundle = _bundle(session)
 
+    # Seed an ``asset_type`` row per tenant so the assets-projection FK
+    # constraint (``foreign_keys=ON``) is satisfied when the Created events
+    # fold into ``assets``. Same fixture UUID in both tenants — the
+    # composite PK keeps them distinct, which is actually a stronger
+    # assertion of isolation than two different UUIDs would be.
+    type_id_a = (await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_A))["asset_type"][
+        "Truck"
+    ]
+    type_id_b = (await seed(ACTIVE_TRUCK, tenant_id=DEV_TENANT_ID_B))["asset_type"][
+        "Truck"
+    ]
+
     # Interleave: t-a, t-b, t-a, t-b, t-a → three events for t-a, two for t-b.
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000001-00000-aaa")
+        await _append(bundle, "0001700000000001-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000002-00000-bbb")
+        await _append(bundle, "0001700000000002-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000003-00000-aaa")
+        await _append(bundle, "0001700000000003-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000004-00000-bbb")
+        await _append(bundle, "0001700000000004-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000005-00000-aaa")
+        await _append(bundle, "0001700000000005-00000-aaa", type_id_a)
 
     paginator = EventLogCursorPaginator(EventLogService(session=session))
 

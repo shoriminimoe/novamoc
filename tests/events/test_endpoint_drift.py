@@ -14,6 +14,7 @@ from novamoc.config import (
     ServerSettings,
     Settings,
 )
+from tests.events._http_helpers import create_asset_type
 
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
@@ -23,11 +24,11 @@ _PAST_HLC = "0000000000000001-00000-client-a"
 _FAR_FUTURE_HLC = "9999999999999999-00000-client-a"
 
 
-def _event(hlc: str) -> dict[str, object]:
+def _event(hlc: str, *, type_id: str | None = None) -> dict[str, object]:
     return {
         "hlc": hlc,
         "family": "asset",
-        "type_id": str(uuid4()),
+        "type_id": type_id or str(uuid4()),
         "instance_id": str(uuid4()),
         "body": {"event": "created", "values": {"col:name": "x"}},
     }
@@ -43,7 +44,6 @@ def settings() -> Settings:
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
             static_pool=True,
-            create_all=True,
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),
@@ -58,9 +58,13 @@ def settings() -> Settings:
 
 
 async def test_past_hlc_is_accepted(client: AsyncTestClient) -> None:
+    type_id, schema_version = await create_asset_type(client)
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event(_PAST_HLC)]},
+        json={
+            "schema_version": schema_version,
+            "events": [_event(_PAST_HLC, type_id=type_id)],
+        },
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -117,14 +121,15 @@ async def test_mixed_batch_records_each_event_independently(
 ) -> None:
     # A drift-exceeded event does NOT poison its neighbours (M1.5
     # acceptance criteria): accepted events still apply.
+    type_id, schema_version = await create_asset_type(client)
     resp = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
-                _event(_PAST_HLC),
-                _event(_FAR_FUTURE_HLC),
-                _event("0000000000000002-00000-client-a"),
+                _event(_PAST_HLC, type_id=type_id),
+                _event(_FAR_FUTURE_HLC, type_id=type_id),
+                _event("0000000000000002-00000-client-a", type_id=type_id),
             ],
         },
     )

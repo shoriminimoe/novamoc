@@ -6,21 +6,30 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
     from litestar import Litestar
 
     from novamoc.config import Settings
 
 
-def create_app(settings: Settings | None = None) -> Litestar:
-    """Create the ASGI app."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    alchemy_config: SQLAlchemyAsyncConfig | None = None,
+) -> Litestar:
+    """Create the ASGI app.
+
+    Args:
+        settings: App-wide settings; ``Settings()`` is read from env vars
+            if omitted.
+        alchemy_config: Optional pre-built SQLAlchemy config — production
+            leaves this ``None`` and lets ``build_alchemy_config(settings)``
+            run; tests pass a config bound to an engine they've already
+            populated (see ``tests/conftest.py``'s ``app`` fixture).
+    """
 
     import msgspec
-    from advanced_alchemy.extensions.litestar import (
-        AsyncSessionConfig,
-        EngineConfig,
-        SQLAlchemyAsyncConfig,
-        SQLAlchemyPlugin,
-    )
+    from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
     from advanced_alchemy.extensions.litestar.session import (
         SQLAlchemyAsyncSessionBackend,
     )
@@ -37,7 +46,6 @@ def create_app(settings: Settings | None = None) -> Litestar:
     )
     from litestar.static_files import create_static_files_router
     from litestar_granian import GranianPlugin
-    from sqlalchemy.pool import StaticPool
 
     # Register tenant-scoping event handlers on SQLAlchemy.
     import novamoc.db._listeners  # noqa: F401
@@ -48,6 +56,8 @@ def create_app(settings: Settings | None = None) -> Litestar:
         make_tenant_resolution_error_converter,
     )
     from novamoc.config import Settings, problem_html_dir
+    from novamoc.db._startup import assert_alembic_at_head
+    from novamoc.db.config import build_alchemy_config
     from novamoc.db.models._auth import Session as SessionModel
     from novamoc.domain._errors import DomainError
     from novamoc.domain.accounts import (
@@ -63,19 +73,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
 
     s = settings if settings is not None else Settings()
 
-    engine_config = (
-        EngineConfig(poolclass=StaticPool) if s.db.static_pool else EngineConfig()
-    )
-    alchemy_config = SQLAlchemyAsyncConfig(
-        connection_string=s.db.url,
-        # ty narrows the literal-arg type to ``Literal["autocommit", ...]``;
-        # ``s.db.before_send_handler`` is a plain ``str`` from the
-        # ``DatabaseSettings`` field, validated by advanced_alchemy at runtime.
-        before_send_handler=s.db.before_send_handler,  # ty: ignore[invalid-argument-type]
-        session_config=AsyncSessionConfig(expire_on_commit=False),
-        create_all=s.db.create_all,
-        engine_config=engine_config,
-    )
+    cfg = alchemy_config if alchemy_config is not None else build_alchemy_config(s)
 
     base_url = s.app.docs_base_url
     problem_details_config = ProblemDetailsConfig(
@@ -96,7 +94,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
 
     plugins = [
         *([GranianPlugin()] if s.server.granian else []),
-        SQLAlchemyPlugin(config=alchemy_config),
+        SQLAlchemyPlugin(config=cfg),
         ProblemDetailsPlugin(config=problem_details_config),
     ]
 
@@ -116,7 +114,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
     )
     session_backend = SQLAlchemyAsyncSessionBackend(
         config=session_config,
-        alchemy_config=alchemy_config,
+        alchemy_config=cfg,
         model=SessionModel,
     )
 
@@ -125,6 +123,10 @@ def create_app(settings: Settings | None = None) -> Litestar:
         memory_cost_kib=s.auth.argon2_memory_cost_kib,
         parallelism=s.auth.argon2_parallelism,
     )
+
+    async def _assert_alembic_at_head(_app: Litestar) -> None:
+        """Refuse to serve when the DB is not at HEAD (see ADR-021)."""
+        await assert_alembic_at_head(cfg)
 
     return Litestar(
         route_handlers=[
@@ -149,7 +151,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
             # inherit the bypass.
             DefineMiddleware(
                 AuthenticationMiddleware,
-                alchemy_config=alchemy_config,
+                alchemy_config=cfg,
                 exclude=r"^/(openapi|problems|auth/login)(/|$)",
             ),
             # 3. read ``scope["auth"].tenant_id`` → ContextVar so the
@@ -166,4 +168,5 @@ def create_app(settings: Settings | None = None) -> Litestar:
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
+        on_startup=[_assert_alembic_at_head],
     )

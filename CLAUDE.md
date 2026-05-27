@@ -56,6 +56,23 @@ Frontend (in `src/js/web/`): `npm run dev` (vite), `npm run build`, `npm run che
 
 `pytest` runs in **asyncio auto mode** (`pyproject.toml [tool.pytest.ini_options]`), so async tests don't need `@pytest.mark.asyncio`.
 
+## Database bootstrap
+
+The Litestar app **always connects to an already-initialized database** (ADR-021). Schema is managed by Alembic via the advanced-alchemy CLI; the app's `on_startup` hook refuses to serve when the DB is not at HEAD. Operator-facing recipes wrap the upstream CLI:
+
+```sh
+just db-init                                   # = uv run alchemy --config novamoc.db.config.alchemy_config upgrade head --no-prompt
+just db-revision "<message>"                   # generate a new revision (autogenerate from model state)
+just db-check                                  # gate model↔migration drift; runs as part of `just check`
+just bootstrap-dev                             # db-init + create the Development tenant + admin/admin user (idempotent)
+```
+
+Migrations live at `src/py/novamoc/db/migrations/` and ship inside the wheel via uv_build's module-root. The dotted-path `novamoc.db.config.alchemy_config` is what the alchemy CLI's `--config` flag resolves; production init containers run the same invocation.
+
+Tests do **not** run migrations — the conftest's `app` fixture runs `metadata.create_all` against a pre-built engine, stamps Alembic HEAD via `AlembicCommands(cfg).stamp("head")`, then hands the config to `create_app(settings, alchemy_config=...)`. The startup gate sees a matched revision and lets the app serve.
+
+SQLite connections run ``PRAGMA journal_mode=WAL`` on connect via the listener in ``src/py/novamoc/db/_pragmas.py``; WAL persists in the SQLite file header so the pragma is effectively idempotent, and it's a no-op for the ``:memory:`` databases tests use.
+
 ## Linting and the ratchet
 
 Ruff is the linter; the rule set is broad (see `[tool.ruff.lint]` in `pyproject.toml`). A custom ratchet (`scripts/ratchet.py`, baseline `.ruff-ratchet.json`, recipe `just ratchet`) snapshots per-rule violation counts. **The ratchet is intentional friction** — it's the project's mechanism for staying disciplined about linter feedback. CI is green iff every rule's count is ≤ its baseline.
@@ -92,7 +109,10 @@ Keep docstrings concise. Use **Napoleon style** (Google-style sections: `Args:`,
 
 **`src/py/novamoc/db/` must not depend on Litestar.** db-layer modules import only `advanced_alchemy.base` / `advanced_alchemy.types` — never `advanced_alchemy.extensions.litestar`. The Litestar-flavored extensions (`SQLAlchemyAsyncConfig`, `repository`, `service`) belong to web-facing code: `domain/**/services/`, `domain/**/controllers/`, `asgi.py`, and `tests/conftest.py`. Keeping db-layer storage-only is what lets us swap or test the storage layer independently.
 
-**One documented exception:** `db/models/_auth/_session.py` imports `SessionModelMixin` from `advanced_alchemy.extensions.litestar.session` because the mixin has no alternative import path outside that package. The mixin is purely a column declaration — it carries no Litestar request/response wiring — so the layering risk is limited to the import path name.
+**Two documented exceptions:**
+
+- `db/models/_auth/_session.py` imports `SessionModelMixin` from `advanced_alchemy.extensions.litestar.session` because the mixin has no alternative import path outside that package. The mixin is purely a column declaration — it carries no Litestar request/response wiring — so the layering risk is limited to the import path name.
+- `db/config.py` imports `SQLAlchemyAsyncConfig` and `AlembicAsyncConfig` from `advanced_alchemy.extensions.litestar` because the Litestar plugin requires the subclass at registration time and the alchemy CLI also accepts it. Pulling in the base config would mean a second config-building path for the plugin — strictly worse. The config is pure data plus engine wiring; no request/response handling sneaks in.
 
 ## Tenant-scoping enforcement (issue #51)
 
@@ -337,7 +357,7 @@ services in ``domain/snapshot/services.py``.
 ## Testing conventions
 
 - `tests/conftest.py` provides:
-  - `engine` — function-scoped in-memory aiosqlite, all metadata `create_all`'d on first use.
+  - `engine` — function-scoped in-memory aiosqlite, all metadata `create_all`'d on first use. The `app` fixture does the equivalent (plus an `AlembicCommands.stamp("head")`) so the startup gate accepts the test DB without running migrations.
   - `session` — function-scoped `AsyncSession` against `engine`; rolls back on teardown so tests are isolated.
   - `services` — `ServiceBundle` wired against `session`.
   - `seed(scenario, tenant_id=...)` — load a `tests/data/scenarios.py` scenario into the per-test db. Defaults to the ambient `tenant` fixture's tenant; pass an explicit `tenant_id=UUID(...)` to override (e.g. seeding under both `DEV_TENANT_ID_A` and `DEV_TENANT_ID_B` for cross-tenant isolation tests). The canonical tenant UUIDs live in `tests/_constants.py`.
@@ -380,5 +400,6 @@ Prefer the specialized tooling below over generic Bash/Read/Edit when the task f
 - ADR-014 — multi-tenancy via `tenant_id` columns in shared tables, pre-auth tenant comes from request body.
 - ADR-016 — RFC 9457 problem-details: the API-wide error envelope (`application/problem+json`).
 - ADR-020 — authentication and tenant registry: session cookie via `SQLAlchemyAsyncSessionBackend`, UUIDv7 tenant ids, N-to-N membership with v1 1:1 invariant, argon2id, anti-enumeration 401.
+- ADR-021 — database bootstrap via Alembic and the advanced-alchemy CLI; the migration tree, the dotted-path config, the startup gate.
 
 ADRs cite each other by number rather than recapping upstream facts; follow the same convention when adding new ones.

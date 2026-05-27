@@ -17,7 +17,35 @@ ACTIVE_TRUCK_WITH_VIN_FIELD: Scenario = (
     "truck/asset_type",
     "truck/asset_type_field__vin",
 )
+ACTIVE_OIL_CHANGE_TYPE: Scenario = ("oil_change/maintenance_record_type",)
 ACTIVE_OIL_CHANGE_WITH_NOTES: Scenario = (
     "oil_change/maintenance_record_type",
     "oil_change/maintenance_record_type_field__notes",
+)
+# Data-entity scenarios. Loaded via direct ORM ``session.add(...)``
+# because there's no command/service surface for the data-projection
+# tables (those rows are normally produced by folding events). For
+# tests that need a parent row to satisfy an FK, these bypass the
+# event pipeline.
+ACTIVE_TRUCK_WITH_ASSET: Scenario = (
+    "truck/asset_type",
+    "truck/asset",
+)
+ACTIVE_TRUCK_WITH_VIN_FIELD_AND_ASSET: Scenario = (
+    "truck/asset_type",
+    "truck/asset_type_field__vin",
+    "truck/asset",
+)
+ACTIVE_OIL_CHANGE_RECORD: Scenario = (
+    "truck/asset_type",
+    "truck/asset",
+    "oil_change/maintenance_record_type",
+    "oil_change/maintenance_record",
+)
+ACTIVE_OIL_CHANGE_WITH_NOTES_AND_RECORD: Scenario = (
+    "truck/asset_type",
+    "truck/asset",
+    "oil_change/maintenance_record_type",
+    "oil_change/maintenance_record_type_field__notes",
+    "oil_change/maintenance_record",
 )

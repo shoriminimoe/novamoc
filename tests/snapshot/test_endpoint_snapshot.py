@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from tests.events._http_helpers import create_asset_type
+
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
 
@@ -28,12 +30,12 @@ async def test_empty_tenant_returns_terminal_batch(
 async def test_post_event_then_get_snapshot_round_trip(
     client: AsyncTestClient,
 ) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     instance_id = str(uuid4())
     post = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
                 {
                     "hlc": "0001700000000000-00000-abc",
@@ -91,13 +93,13 @@ async def test_post_event_then_get_snapshot_round_trip(
 
 
 async def test_multi_batch_round_trip(client: AsyncTestClient) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     instance_ids = [str(uuid4()) for _ in range(5)]
     for i, iid in enumerate(instance_ids):
         post = await client.post(
             "/events",
             json={
-                "schema_version": 0,
+                "schema_version": schema_version,
                 "events": [
                     {
                         "hlc": f"00017000000000{i:02d}-00000-abc",
@@ -136,12 +138,12 @@ async def test_multi_batch_round_trip(client: AsyncTestClient) -> None:
 async def test_mid_transfer_schema_version_advance_is_observable(
     client: AsyncTestClient,
 ) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     for i in range(3):
         post = await client.post(
             "/events",
             json={
-                "schema_version": 0,
+                "schema_version": schema_version,
                 "events": [
                     {
                         "hlc": f"00017000000000{i:02d}-00000-abc",
@@ -215,7 +217,7 @@ async def test_snapshot_then_catchup_full_handshake(
     the captured ``start_seq``. Events already reflected in the
     projection at ``start_seq`` must NOT be re-emitted by catch-up.
     """
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
 
     # Event 1: appended before the snapshot starts. Its instance will
     # appear in the snapshot's projection rows; catch-up MUST NOT
@@ -224,7 +226,7 @@ async def test_snapshot_then_catchup_full_handshake(
     pre = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
                 {
                     "hlc": "0001700000000001-00000-aaa",
@@ -277,7 +279,7 @@ async def test_snapshot_then_catchup_full_handshake(
         resp = await client.post(
             "/events",
             json={
-                "schema_version": 0,
+                "schema_version": schema_version,
                 "events": [
                     {
                         "hlc": hlc,
@@ -318,13 +320,13 @@ async def test_snapshot_then_catchup_full_handshake(
 
 
 async def test_tombstoned_assets_are_included(client: AsyncTestClient) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     instance_id = str(uuid4())
 
     create = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
                 {
                     "hlc": "0001700000000000-00000-aaa",
@@ -341,7 +343,7 @@ async def test_tombstoned_assets_are_included(client: AsyncTestClient) -> None:
     deact = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
                 {
                     "hlc": "0001700000000001-00000-aaa",

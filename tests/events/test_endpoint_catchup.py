@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from tests.events._http_helpers import create_asset_type
+
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
 
@@ -23,12 +25,12 @@ async def test_get_events_empty_stream_returns_no_items(
 async def test_get_events_returns_appended_events(
     client: AsyncTestClient,
 ) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     instance_id = str(uuid4())
     post = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version,
             "events": [
                 {
                     "hlc": "0001700000000000-00000-abc",
@@ -48,6 +50,9 @@ async def test_get_events_returns_appended_events(
     resp = await client.get("/events/")
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    # The asset_type's POST /schema is also an event_log row? No —
+    # schema commands write to ``schema_change_log``, not ``event_log``.
+    # The /events catch-up reflects only the data Created event.
     assert len(body["items"]) == 1
     event = body["items"][0]
     assert event["hlc"] == "0001700000000000-00000-abc"
@@ -60,7 +65,7 @@ async def test_get_events_returns_appended_events(
         "values": {"col:name": "Truck-1"},
     }
     assert event["seq"] > 0
-    assert event["schema_version"] == 0
+    assert event["schema_version"] == schema_version
     assert "received_at" in event
     assert body["cursor"] is None
 
@@ -68,14 +73,14 @@ async def test_get_events_returns_appended_events(
 async def test_get_events_paginates_via_cursor(
     client: AsyncTestClient,
 ) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
 
     async def post_one(i: int) -> None:
         hlc = f"00017000000000{i:02d}-00000-abc"
         resp = await client.post(
             "/events",
             json={
-                "schema_version": 0,
+                "schema_version": schema_version,
                 "events": [
                     {
                         "hlc": hlc,
@@ -115,7 +120,7 @@ async def test_get_events_paginates_via_cursor(
 async def test_get_events_body_round_trip_all_variants(
     client: AsyncTestClient,
 ) -> None:
-    type_id = str(uuid4())
+    type_id, schema_version = await create_asset_type(client)
     instance_id = str(uuid4())
 
     posts = [
@@ -144,7 +149,7 @@ async def test_get_events_body_round_trip_all_variants(
         resp = await client.post(
             "/events",
             json={
-                "schema_version": 0,
+                "schema_version": schema_version,
                 "events": [
                     {
                         "hlc": p["hlc"],
@@ -169,12 +174,13 @@ async def test_get_events_body_round_trip_all_variants(
 async def test_get_events_preserves_acceptance_time_schema_version(
     client: AsyncTestClient,
 ) -> None:
-    # Post a Created event at schema_version=0.
-    type_id = str(uuid4())
+    # Seed an asset_type — FKs on the assets projection require a real
+    # referent — and capture the schema_version the event is accepted under.
+    type_id, schema_version_at_accept = await create_asset_type(client)
     post1 = await client.post(
         "/events",
         json={
-            "schema_version": 0,
+            "schema_version": schema_version_at_accept,
             "events": [
                 {
                     "hlc": "0001700000000001-00000-abc",
@@ -188,7 +194,7 @@ async def test_get_events_preserves_acceptance_time_schema_version(
     )
     assert post1.status_code == 202, post1.text
 
-    # Advance the schema (create_asset_type) -> schema_version becomes 1.
+    # Advance the schema (create another asset_type) -> schema_version increments.
     schema_resp = await client.post(
         "/schema",
         json={
@@ -203,7 +209,7 @@ async def test_get_events_preserves_acceptance_time_schema_version(
     resp = await client.get("/events/")
     items = resp.json()["items"]
     assert len(items) == 1
-    assert items[0]["schema_version"] == 0
+    assert items[0]["schema_version"] == schema_version_at_accept
 
 
 async def test_get_events_rejects_negative_cursor(

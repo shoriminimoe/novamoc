@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+from advanced_alchemy.alembic.commands import AlembicCommands
 from advanced_alchemy.base import metadata_registry
 from click.testing import CliRunner
 from sqlalchemy import insert, select
@@ -31,6 +32,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 # registry so ``create_all`` below picks them up.
 import novamoc.db.models  # noqa: F401
 from novamoc.cli import main
+from novamoc.config import DatabaseSettings, Settings
+from novamoc.db._pragmas import register_sqlite_pragmas
+from novamoc.db.config import build_alchemy_config
 from novamoc.db.models._auth import Session, User
 from novamoc.domain.accounts._password import PasswordHasher
 
@@ -49,6 +53,11 @@ def db_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     directly if they need to. The CLI reads ``Settings()`` on every
     invocation, so setting the env var via ``monkeypatch`` is enough to
     redirect it.
+
+    Stamps Alembic HEAD after ``metadata.create_all`` so the CLI's
+    startup gate (review #5) accepts the seeded schema — the gate is
+    what makes a CLI run against an un-initialised DB fail fast, and
+    the production bootstrap path covers it via ``just db-init`` first.
     """
     path = tmp_path / "novamoc.sqlite"
     url = f"sqlite+aiosqlite:///{path}"
@@ -56,6 +65,7 @@ def db_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
     async def _create() -> None:
         eng = create_async_engine(url)
+        register_sqlite_pragmas(eng)
         try:
             async with eng.begin() as conn:
                 for key in metadata_registry:
@@ -64,6 +74,14 @@ def db_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
             await eng.dispose()
 
     asyncio.run(_create())
+
+    # AlembicCommands.stamp is sync; off-thread it because env.py
+    # internally calls ``asyncio.run`` which can't run inside a
+    # running loop (same pattern as the ``app`` fixture).
+    cfg = build_alchemy_config(Settings(db=DatabaseSettings(url=url)))
+    asyncio.run(asyncio.to_thread(AlembicCommands(cfg).stamp, "head"))
+    asyncio.run(cfg.get_engine().dispose())
+
     return url
 
 

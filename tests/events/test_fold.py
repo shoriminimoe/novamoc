@@ -10,11 +10,15 @@ from sqlalchemy import select
 from novamoc.db.models.data import AssetFieldValue, MaintenanceRecordFieldValue
 from novamoc.domain.events._fold import FieldUpsert, apply_field_value
 from novamoc.domain.events._payloads import EntityFamily
+from tests.data.scenarios import ACTIVE_OIL_CHANGE_RECORD, ACTIVE_TRUCK_WITH_ASSET
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from tests.data.scenarios import Scenario
 
 
 _HLC_EARLIER = "0000000000000001-00000-client-a"
@@ -48,8 +52,11 @@ def _asset_upsert(
     )
 
 
-async def test_forward_order_stores_latest_value(session: AsyncSession) -> None:
-    asset_id = uuid4()
+async def test_forward_order_stores_latest_value(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     assert (
         await apply_field_value(
             session,
@@ -70,8 +77,11 @@ async def test_forward_order_stores_latest_value(session: AsyncSession) -> None:
     )
 
 
-async def test_reverse_order_keeps_higher_hlc(session: AsyncSession) -> None:
-    asset_id = uuid4()
+async def test_reverse_order_keeps_higher_hlc(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="Truck-LATE", hlc=_HLC_LATER),
@@ -87,11 +97,14 @@ async def test_reverse_order_keeps_higher_hlc(session: AsyncSession) -> None:
     )
 
 
-async def test_equal_hlc_does_not_apply(session: AsyncSession) -> None:
+async def test_equal_hlc_does_not_apply(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     # ADR-007 LWW is strict-greater; an event tied on HLC should NOT
     # overwrite, otherwise re-delivery would be non-idempotent at the
     # projection level even when it's idempotent at the log level.
-    asset_id = uuid4()
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="ORIGINAL", hlc=_HLC_EARLIER),
@@ -107,8 +120,11 @@ async def test_equal_hlc_does_not_apply(session: AsyncSession) -> None:
     )
 
 
-async def test_null_value_is_recorded(session: AsyncSession) -> None:
-    asset_id = uuid4()
+async def test_null_value_is_recorded(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     await apply_field_value(
         session,
         _asset_upsert(asset_id=asset_id, value="something", hlc=_HLC_EARLIER),
@@ -126,8 +142,11 @@ async def test_null_value_is_recorded(session: AsyncSession) -> None:
 
 async def test_maintenance_record_family_routes_to_correct_table(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
-    record_id = uuid4()
+    record_id = (await seed(ACTIVE_OIL_CHANGE_RECORD))["maintenance_record"][
+        "Primary Oil Change"
+    ]
     applied = await apply_field_value(
         session,
         FieldUpsert(
@@ -157,8 +176,9 @@ async def test_maintenance_record_family_routes_to_correct_table(
 
 async def test_different_fields_on_same_entity_are_independent(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
-    asset_id = uuid4()
+    asset_id = (await seed(ACTIVE_TRUCK_WITH_ASSET))["asset"]["Primary Truck"]
     field_a = str(uuid4())
     field_b = str(uuid4())
 

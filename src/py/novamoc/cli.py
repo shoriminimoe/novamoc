@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 import click
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 # Register tenant-scoping event handlers on SQLAlchemy. Today's CLI
 # commands only touch the non-scoped auth-registry tables so the
@@ -41,6 +41,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 # that touches a synced table.
 import novamoc.db._listeners  # noqa: F401
 from novamoc.config import Settings
+from novamoc.db._startup import AlembicRevisionMismatchError, assert_alembic_at_head
+from novamoc.db.config import build_alchemy_config
 from novamoc.db.models._auth import Session
 from novamoc.domain.accounts._errors import UserAlreadyHasTenantError
 from novamoc.domain.accounts._password import PasswordHasher
@@ -85,6 +87,13 @@ async def _run_in_session[T](
 ) -> T:
     """Run ``work`` inside a fresh ``AsyncSession``.
 
+    Builds the engine via :func:`build_alchemy_config` so the CLI
+    inherits the same listener stack as the Litestar app — SQLite
+    pragmas (WAL + ``foreign_keys=ON``) and the Alembic-revision
+    startup gate. The gate fires before the session opens, so a
+    CLI invocation against an un-initialised database surfaces the
+    same friendly remediation message the web app would.
+
     Commits on success, rolls back on any exception (which then
     propagates to the caller for the click error mapping). The
     engine is disposed before returning so the CLI process exits
@@ -93,7 +102,15 @@ async def _run_in_session[T](
     follows the explicit rollback path rather than relying on
     ``AsyncSession.close()``'s implicit rollback.
     """
-    engine = create_async_engine(settings.db.url)
+    cfg = build_alchemy_config(settings)
+    try:
+        await assert_alembic_at_head(cfg)
+    except AlembicRevisionMismatchError as exc:
+        # Surface the gate's curated message as a Click failure instead
+        # of a raw Python traceback; the message itself already names
+        # the remediation. Concise enough for the CLI's stderr UX.
+        raise click.ClickException(str(exc)) from exc
+    engine = cfg.get_engine()
     try:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
@@ -323,10 +340,10 @@ def user_add_to_tenant(username: str, tenant_uuid: str) -> None:
         if target is None:
             msg = f"User '{username}' not found."
             raise click.ClickException(msg)
-        # Explicit tenant existence check: PRAGMA ``foreign_keys=ON``
-        # is not yet wired (see ``_membership.py``), so without this
-        # lookup a phantom tenant UUID would silently produce an
-        # orphan membership row.
+        # Explicit tenant existence check: the FK constraint backstop
+        # would catch a phantom UUID, but pre-flight gives a friendly
+        # "Tenant '<id>' not found." message instead of an
+        # IntegrityError traceback.
         tenants = TenantService(session=session)
         if not await tenants.exists(id=tenant_id):
             msg = f"Tenant '{tenant_id}' not found."

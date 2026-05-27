@@ -18,40 +18,49 @@ if TYPE_CHECKING:
 _VALID_HLC = "0000000000000001-00000-client-a"
 
 
-def _event(hlc: str = _VALID_HLC) -> dict[str, object]:
+def _event(hlc: str = _VALID_HLC, *, type_id: str | None = None) -> dict[str, object]:
     return {
         "hlc": hlc,
         "family": "asset",
-        "type_id": str(uuid4()),
+        "type_id": type_id or str(uuid4()),
         "instance_id": str(uuid4()),
         "body": {"event": "created", "values": {"col:name": "x"}},
     }
 
 
-async def _bump_schema_version(client: AsyncTestClient) -> int:
-    """Create one asset type via ``POST /schema``; return its server schema_version."""
+async def _bump_schema_version(client: AsyncTestClient) -> tuple[str, int]:
+    """Create one asset type via ``POST /schema``.
+
+    Returns ``(type_id, server_schema_version)``.
+    """
+    type_id = str(uuid4())
     resp = await client.post(
         "/schema",
         json={
             "type": "create_asset_type",
-            "entity_id": str(uuid4()),
+            "entity_id": type_id,
             "payload": {"name": f"Truck-{uuid4()}"},
         },
     )
     assert resp.status_code in (200, 201), resp.text
-    return int(resp.json()["schema_version"])
+    return type_id, int(resp.json()["schema_version"])
 
 
 async def test_fresh_tenant_accepts_version_zero(client: AsyncTestClient) -> None:
+    # Fresh tenant: schema_version == 0 because no schema events have
+    # been written. An empty events batch is sufficient signal for the
+    # gate logic; a Created event would need a real ``type_id`` to
+    # satisfy the FK from ``assets`` into ``asset_types`` and that
+    # would force ``schema_version`` past 0.
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event()]},
+        json={"schema_version": 0, "events": []},
     )
     assert resp.status_code == 202, resp.text
 
 
 async def test_stale_version_rejected_as_409(client: AsyncTestClient) -> None:
-    version_after_create = await _bump_schema_version(client)
+    _, version_after_create = await _bump_schema_version(client)
     assert version_after_create == 1
 
     resp = await client.post(
@@ -82,10 +91,13 @@ async def test_future_version_also_rejected(client: AsyncTestClient) -> None:
 async def test_matched_version_after_schema_change_is_accepted(
     client: AsyncTestClient,
 ) -> None:
-    version_after_create = await _bump_schema_version(client)
+    type_id, version_after_create = await _bump_schema_version(client)
     resp = await client.post(
         "/events",
-        json={"schema_version": version_after_create, "events": [_event()]},
+        json={
+            "schema_version": version_after_create,
+            "events": [_event(type_id=type_id)],
+        },
     )
     assert resp.status_code == 202, resp.text
 
@@ -97,7 +109,7 @@ async def test_version_gate_runs_before_hlc_validation(
     # not invalid_payload_shape — even if its events have malformed HLCs.
     # The gate is the more actionable failure (re-fetch /schema) and the
     # client cannot proceed past it anyway.
-    await _bump_schema_version(client)
+    _ = await _bump_schema_version(client)
     resp = await client.post(
         "/events",
         json={"schema_version": 0, "events": [_event("not-an-hlc")]},
@@ -109,7 +121,7 @@ async def test_version_gate_runs_before_hlc_validation(
 async def test_empty_batch_with_mismatched_version_still_rejected(
     client: AsyncTestClient,
 ) -> None:
-    await _bump_schema_version(client)
+    _ = await _bump_schema_version(client)
     resp = await client.post(
         "/events",
         json={"schema_version": 0, "events": []},
