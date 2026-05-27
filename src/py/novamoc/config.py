@@ -85,6 +85,15 @@ def _int_env(name: str, default: int) -> Callable[[], int]:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseSettings:
+    """Database storage tunables.
+
+    Attributes:
+        busy_timeout_seconds: SQLite ``busy_timeout``, forwarded as
+            ``sqlite3.connect(timeout=...)``. The per-connection
+            retry budget for write-lock contention. Ignored for
+            non-SQLite URLs.
+    """
+
     url: str = field(
         default_factory=_str_env("NOVAMOC_DB_URL", "sqlite+aiosqlite:///novamoc.sqlite")
     )
@@ -93,6 +102,9 @@ class DatabaseSettings:
     )
     before_send_handler: str = field(
         default_factory=_str_env("NOVAMOC_DB_BEFORE_SEND_HANDLER", "autocommit")
+    )
+    busy_timeout_seconds: float = field(
+        default_factory=_float_env("NOVAMOC_DB_BUSY_TIMEOUT_SECONDS", 5.0)
     )
 
 

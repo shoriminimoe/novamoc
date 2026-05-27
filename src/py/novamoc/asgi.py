@@ -30,9 +30,6 @@ def create_app(
 
     import msgspec
     from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
-    from advanced_alchemy.extensions.litestar.session import (
-        SQLAlchemyAsyncSessionBackend,
-    )
     from litestar import Litestar
     from litestar.datastructures import State
     from litestar.exceptions import ValidationException
@@ -67,6 +64,9 @@ def create_app(
         TenantContextMiddleware,
         TenantResolutionError,
     )
+    from novamoc.domain.accounts._session_backend import (
+        RequestScopedSessionBackend,
+    )
     from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema.controllers import SchemaController
     from novamoc.domain.snapshot.controllers import SnapshotController
@@ -98,12 +98,18 @@ def create_app(
         ProblemDetailsPlugin(config=problem_details_config),
     ]
 
-    # ``SQLAlchemyAsyncSessionBackend`` is constructed directly (rather
+    # ``RequestScopedSessionBackend`` is constructed directly (rather
     # than via ``ServerSideSessionConfig.middleware``) because the
     # config's ``.middleware`` property instantiates the backend with
     # ``config`` only, whereas this backend requires ``config +
     # alchemy_config + model``. Mount via
-    # ``DefineMiddleware(SessionMiddleware, backend=...)``.
+    # ``DefineMiddleware(SessionMiddleware, backend=...)``. The
+    # request-scoped subclass folds the response-time session UPSERT
+    # into the request's own ``AsyncSession`` so a file-backed SQLite
+    # database only ever sees one writer per request — the fix for
+    # novamoc#123. ``connect_args["timeout"]`` set in
+    # ``build_alchemy_config`` is defence in depth against any
+    # future code path that opens a separate writer.
     session_config = ServerSideSessionConfig(
         key=s.auth.session_cookie_name,
         max_age=s.auth.session_ttl_seconds,
@@ -112,7 +118,7 @@ def create_app(
         samesite="lax",
         path="/",
     )
-    session_backend = SQLAlchemyAsyncSessionBackend(
+    session_backend = RequestScopedSessionBackend(
         config=session_config,
         alchemy_config=cfg,
         model=SessionModel,
