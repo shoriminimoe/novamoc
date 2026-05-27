@@ -6,13 +6,27 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
     from litestar import Litestar
 
     from novamoc.config import Settings
 
 
-def create_app(settings: Settings | None = None) -> Litestar:
-    """Create the ASGI app."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    alchemy_config: SQLAlchemyAsyncConfig | None = None,
+) -> Litestar:
+    """Create the ASGI app.
+
+    Args:
+        settings: App-wide settings; ``Settings()`` is read from env vars
+            if omitted.
+        alchemy_config: Optional pre-built SQLAlchemy config — production
+            leaves this ``None`` and lets ``build_alchemy_config(settings)``
+            run; tests pass a config bound to an engine they've already
+            populated (see ``tests/conftest.py``'s ``app`` fixture).
+    """
 
     import msgspec
     from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
@@ -58,7 +72,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
 
     s = settings if settings is not None else Settings()
 
-    alchemy_config = build_alchemy_config(s)
+    cfg = alchemy_config if alchemy_config is not None else build_alchemy_config(s)
 
     base_url = s.app.docs_base_url
     problem_details_config = ProblemDetailsConfig(
@@ -79,7 +93,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
 
     plugins = [
         *([GranianPlugin()] if s.server.granian else []),
-        SQLAlchemyPlugin(config=alchemy_config),
+        SQLAlchemyPlugin(config=cfg),
         ProblemDetailsPlugin(config=problem_details_config),
     ]
 
@@ -99,7 +113,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
     )
     session_backend = SQLAlchemyAsyncSessionBackend(
         config=session_config,
-        alchemy_config=alchemy_config,
+        alchemy_config=cfg,
         model=SessionModel,
     )
 
@@ -132,7 +146,7 @@ def create_app(settings: Settings | None = None) -> Litestar:
             # inherit the bypass.
             DefineMiddleware(
                 AuthenticationMiddleware,
-                alchemy_config=alchemy_config,
+                alchemy_config=cfg,
                 exclude=r"^/(openapi|problems|auth/login)(/|$)",
             ),
             # 3. read ``scope["auth"].tenant_id`` → ContextVar so the
