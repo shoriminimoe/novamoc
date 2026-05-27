@@ -71,6 +71,8 @@ Migrations live at `src/py/novamoc/db/migrations/` and ship inside the wheel via
 
 Tests do **not** run migrations — the conftest's `app` fixture runs `metadata.create_all` against a pre-built engine, stamps Alembic HEAD via `AlembicCommands(cfg).stamp("head")`, then hands the config to `create_app(settings, alchemy_config=...)`. The startup gate sees a matched revision and lets the app serve.
 
+SQLite connections run ``PRAGMA journal_mode=WAL`` on connect via the listener in ``src/py/novamoc/db/_pragmas.py``; WAL persists in the SQLite file header so the pragma is effectively idempotent, and it's a no-op for the ``:memory:`` databases tests use.
+
 ## Linting and the ratchet
 
 Ruff is the linter; the rule set is broad (see `[tool.ruff.lint]` in `pyproject.toml`). A custom ratchet (`scripts/ratchet.py`, baseline `.ruff-ratchet.json`, recipe `just ratchet`) snapshots per-rule violation counts. **The ratchet is intentional friction** — it's the project's mechanism for staying disciplined about linter feedback. CI is green iff every rule's count is ≤ its baseline.

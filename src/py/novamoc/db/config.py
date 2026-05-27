@@ -21,6 +21,7 @@ from advanced_alchemy.extensions.litestar import (
 from sqlalchemy.pool import StaticPool
 
 from novamoc.config import Settings
+from novamoc.db._pragmas import register_sqlite_pragmas
 
 
 def _migrations_dir() -> str:
@@ -35,7 +36,7 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         if settings.db.static_pool
         else EngineConfig()
     )
-    return SQLAlchemyAsyncConfig(
+    cfg = SQLAlchemyAsyncConfig(
         connection_string=settings.db.url,
         # ty narrows the literal-arg type to ``Literal["autocommit", ...]``;
         # ``settings.db.before_send_handler`` is a plain ``str`` from the
@@ -45,6 +46,14 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         engine_config=engine_config,
         alembic_config=AlembicAsyncConfig(script_location=_migrations_dir()),
     )
+    # SQLite per-driver options (WAL today; ``foreign_keys=ON`` etc. later)
+    # attach to the specific engine instance. Inspecting the URL scheme at
+    # config-build time is the public-API equivalent of asking "is this
+    # SQLite?"; the per-engine registration means the listener body in
+    # ``_pragmas`` doesn't need any driver-class detection.
+    if settings.db.url.startswith("sqlite"):
+        register_sqlite_pragmas(cfg.get_engine())
+    return cfg
 
 
 alchemy_config = build_alchemy_config(Settings())

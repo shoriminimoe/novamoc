@@ -39,6 +39,7 @@ from novamoc.config import (
     Settings,
     problem_html_dir,
 )
+from novamoc.db._pragmas import register_sqlite_pragmas
 from novamoc.db._tenant_context import use_tenant
 from novamoc.db.config import build_alchemy_config
 from novamoc.db.models._auth import Tenant
@@ -104,6 +105,13 @@ def tenant(request: pytest.FixtureRequest) -> Iterator[UUID | None]:
 @pytest.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
     eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # Pragma parity with production engines built via build_alchemy_config:
+    # the `app` fixture and `tests/db/test_pragmas.py` already go through
+    # that path; the direct-DB `engine` fixture skips it (no Alembic, no
+    # tenant-scoping wrap needed for storage-layer tests) but still wants
+    # the same connect-time pragmas. Tests that need different pragmas
+    # build their own engine inline instead of using this fixture.
+    register_sqlite_pragmas(eng)
     async with eng.begin() as conn:
         for key in metadata_registry:
             await conn.run_sync(metadata_registry[key].create_all)
