@@ -56,6 +56,7 @@ def create_app(
         make_tenant_resolution_error_converter,
     )
     from novamoc.config import Settings, problem_html_dir
+    from novamoc.db._startup import assert_alembic_at_head
     from novamoc.db.config import build_alchemy_config
     from novamoc.db.models._auth import Session as SessionModel
     from novamoc.domain._errors import DomainError
@@ -123,6 +124,10 @@ def create_app(
         parallelism=s.auth.argon2_parallelism,
     )
 
+    async def _assert_alembic_at_head(_app: Litestar) -> None:
+        """Refuse to serve when the DB is not at HEAD (see ADR-021)."""
+        await assert_alembic_at_head(cfg)
+
     return Litestar(
         route_handlers=[
             AuthController,
@@ -163,4 +168,5 @@ def create_app(
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
+        on_startup=[_assert_alembic_at_head],
     )
