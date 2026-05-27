@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # metadata registry is populated before autogenerate runs.
 import novamoc.db._listeners
 import novamoc.db.models  # noqa: F401
+from novamoc.db._pragmas import register_sqlite_pragmas
 
 if TYPE_CHECKING:
     from advanced_alchemy.alembic.commands import AlembicCommandConfig
@@ -108,12 +109,8 @@ async def run_migrations_online() -> None:
     # own engine here — e.g. a raw ``alembic upgrade head`` invocation
     # against an on-disk ``alembic.ini`` — attach the SQLite pragma
     # listener so migrations apply with the same per-connection settings
-    # as the live app. No-op for non-SQLite engines (the listener filters
-    # by ``getattr(engine, 'sync_engine', engine)`` against ``Engine``,
-    # and the pragma body itself runs only on SQLite connections).
+    # as the live app.
     if not borrowed_engine:
-        from novamoc.db._pragmas import register_sqlite_pragmas
-
         register_sqlite_pragmas(connectable)
 
     async with connectable.connect() as connection:
