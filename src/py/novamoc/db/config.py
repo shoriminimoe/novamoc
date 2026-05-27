@@ -18,6 +18,7 @@ from advanced_alchemy.extensions.litestar import (
     EngineConfig,
     SQLAlchemyAsyncConfig,
 )
+from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 
 from novamoc.config import Settings
@@ -46,21 +47,36 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         engine_config=engine_config,
         alembic_config=AlembicAsyncConfig(script_location=_migrations_dir()),
     )
-    # SQLite per-driver options (WAL today; ``foreign_keys=ON`` etc. later)
-    # attach to the specific engine instance. Inspecting the URL scheme at
-    # config-build time is the public-API equivalent of asking "is this
-    # SQLite?"; the per-engine registration means the listener body in
-    # ``_pragmas`` doesn't need any driver-class detection.
-    if settings.db.url.startswith("sqlite"):
+    # SQLite per-driver options (WAL + foreign_keys today; ``synchronous=NORMAL``
+    # etc. later) attach to the specific engine instance. ``make_url`` is
+    # SQLAlchemy's public URL parser; ``get_backend_name()`` returns the
+    # dialect regardless of ``+driver`` suffix or case normalisation, so the
+    # check is robust against ``SQLITE+aiosqlite://...`` and similar variants.
+    if make_url(settings.db.url).get_backend_name() == "sqlite":
         register_sqlite_pragmas(cfg.get_engine())
     return cfg
 
 
-alchemy_config = build_alchemy_config(Settings())
-"""Module-level instance for ``alchemy --config novamoc.db.config.alchemy_config``.
+# Lazy module-level ``alchemy_config`` instance for
+# ``alchemy --config novamoc.db.config.alchemy_config``. PEP 562's module
+# ``__getattr__`` defers ``Settings()`` env-var parsing and ``AsyncEngine``
+# construction to first access — pytest collection and any code path that
+# never touches the CLI surface no longer pay either cost, and a typo'd env
+# var (``NOVAMOC_AUTH_ARGON2_TIME_COST=oops``) no longer crashes import.
+_alchemy_config: SQLAlchemyAsyncConfig | None = None
 
-``Settings()`` reads env vars at import time. CLI processes pick up
-``NOVAMOC_DB_URL`` etc. without ceremony; the test process imports
-this transitively but does not consume it (tests build their own
-config via :func:`build_alchemy_config`).
-"""
+
+def __getattr__(name: str) -> SQLAlchemyAsyncConfig:
+    """Resolve ``alchemy_config`` on demand.
+
+    The advanced-alchemy CLI's ``--config`` flag does an attribute lookup
+    on the imported module; PEP 562 lets us intercept the lookup and run
+    ``build_alchemy_config(Settings())`` lazily.
+    """
+    global _alchemy_config  # noqa: PLW0603
+    if name == "alchemy_config":
+        if _alchemy_config is None:
+            _alchemy_config = build_alchemy_config(Settings())
+        return _alchemy_config
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
