@@ -34,4 +34,4 @@ curl -c cookies.txt -X POST http://localhost:8000/auth/login \
 curl -b cookies.txt http://localhost:8000/auth/me
 ```
 
-`/openapi` is the only unauthenticated route; every other route returns 401 `tenant_not_resolved` without a valid session.
+`/openapi`, `/problems/*`, and `/auth/login` are unauthenticated; every other route returns 401 `tenant_not_resolved` without a valid session.

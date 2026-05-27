@@ -74,8 +74,11 @@ bootstrap-dev:
 		1) ;;  # absent → fall through to seeding below
 		*) echo "novamoc user exists failed (exit $rc); aborting." >&2; exit "$rc" ;;
 	esac
+	# Anchor to ``Created tenant <uuid>.`` so future stdout (logging,
+	# deprecation notices) doesn't bleed into the parsed UUID. ``exit``
+	# stops awk after the first match for the same reason.
 	tenant_id=$(uv run novamoc tenant create --display-name "Development" \
-	            | awk '{print $3}' | tr -d '.')
+	            | awk '/^Created tenant /{print $3; exit}' | tr -d '.')
 	echo "Created tenant $tenant_id."
 	uv run novamoc user create admin --password admin
 	uv run novamoc user add-to-tenant admin "$tenant_id"
