@@ -28,8 +28,10 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
 )
 from tests._constants import DEV_TENANT_ID
-from tests.data.scenarios import ACTIVE_TRUCK_WITH_VIN_FIELD
-from tests.data.seed_helpers import seed_asset
+from tests.data.scenarios import (
+    ACTIVE_TRUCK_WITH_VIN_FIELD,
+    ACTIVE_TRUCK_WITH_VIN_FIELD_AND_ASSET,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -109,14 +111,13 @@ async def test_created_with_wrong_value_type_raises(
 async def test_updated_validates_like_created(
     event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
-    session: AsyncSession,
 ) -> None:
-    ids = await seed(ACTIVE_TRUCK_WITH_VIN_FIELD)
-    type_id = ids["asset_type"]["Truck"]
-    field_id = ids["asset_type_field"]["vin"]
     # Updated has no row-state component, so the asset row must already
     # exist for the field-value fold's FK into ``assets`` to resolve.
-    asset_id = await seed_asset(session, type_id=type_id)
+    ids = await seed(ACTIVE_TRUCK_WITH_VIN_FIELD_AND_ASSET)
+    type_id = ids["asset_type"]["Truck"]
+    field_id = ids["asset_type_field"]["vin"]
+    asset_id = ids["asset"]["Primary Truck"]
     body = Updated(values={str(field_id): None})  # null clears
     await asset.updated(
         event_services, _auth(), _envelope(type_id, body, instance_id=asset_id)

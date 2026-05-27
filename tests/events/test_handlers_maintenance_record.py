@@ -29,8 +29,11 @@ from novamoc.domain.schema.services import (
     MaintenanceRecordTypeFieldService,
 )
 from tests._constants import DEV_TENANT_ID
-from tests.data.scenarios import ACTIVE_OIL_CHANGE_WITH_NOTES
-from tests.data.seed_helpers import seed_asset, seed_maintenance_record
+from tests.data.scenarios import (
+    ACTIVE_OIL_CHANGE_WITH_NOTES,
+    ACTIVE_OIL_CHANGE_WITH_NOTES_AND_RECORD,
+    ACTIVE_TRUCK_WITH_ASSET,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -76,13 +79,16 @@ def _envelope(
 async def test_created_with_valid_values(
     event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
-    session: AsyncSession,
 ) -> None:
+    # Seed both the MR type+field schema (for the field validation) AND a
+    # parent asset (so the MR's FK into ``assets`` resolves). The two
+    # scenarios share the truck/asset_type atom — ``ACTIVE_TRUCK_WITH_ASSET``
+    # subsumes it.
+    ids = await seed(ACTIVE_TRUCK_WITH_ASSET)
+    parent_asset_id = ids["asset"]["Primary Truck"]
     ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES)
     type_id = ids["maintenance_record_type"]["OilChange"]
     field_id = ids["maintenance_record_type_field"]["notes"]
-    # The MR row's FK into ``assets`` resolves against a real asset row.
-    parent_asset_id = await seed_asset(session)
     body = Created(
         parent=Parent(type_id=uuid4(), instance_id=parent_asset_id),
         values={str(field_id): "All filters replaced."},
@@ -120,14 +126,13 @@ async def test_created_with_wrong_value_type_raises(
 async def test_updated_validates_like_created(
     event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
-    session: AsyncSession,
 ) -> None:
-    ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES)
-    type_id = ids["maintenance_record_type"]["OilChange"]
-    field_id = ids["maintenance_record_type_field"]["notes"]
     # Updated has no row-state component, so the MR row must exist for
     # the field-value fold's FK into ``maintenance_records`` to resolve.
-    record_id = await seed_maintenance_record(session, type_id=type_id)
+    ids = await seed(ACTIVE_OIL_CHANGE_WITH_NOTES_AND_RECORD)
+    type_id = ids["maintenance_record_type"]["OilChange"]
+    field_id = ids["maintenance_record_type_field"]["notes"]
+    record_id = ids["maintenance_record"]["Primary Oil Change"]
     body = Updated(values={str(field_id): None})
     await maintenance_record.updated(
         event_services, _auth(), _envelope(type_id, body, instance_id=record_id)

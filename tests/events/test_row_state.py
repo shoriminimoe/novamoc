@@ -20,12 +20,15 @@ from novamoc.domain.events._payloads import (
     Updated,
 )
 from novamoc.domain.events._row_state import apply_row_state
-from tests.data.seed_helpers import seed_asset_type, seed_mr_type
+from tests.data.scenarios import ACTIVE_OIL_CHANGE_TYPE, ACTIVE_TRUCK
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from tests.data.scenarios import Scenario
 
 
 _HLC_EARLIER = "0000000000000001-00000-client-a"
@@ -68,9 +71,12 @@ async def _read_asset(session: AsyncSession, asset_id: UUID) -> Asset | None:
     return result.scalar_one_or_none()
 
 
-async def test_created_inserts_entity_row(session: AsyncSession) -> None:
+async def test_created_inserts_entity_row(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     applied = await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_MID)
     )
@@ -84,9 +90,12 @@ async def test_created_inserts_entity_row(session: AsyncSession) -> None:
     assert asset.type_id == type_id
 
 
-async def test_deactivate_sets_deleted_flag(session: AsyncSession) -> None:
+async def test_deactivate_sets_deleted_flag(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -102,9 +111,12 @@ async def test_deactivate_sets_deleted_flag(session: AsyncSession) -> None:
     assert asset.row_state_hlc == _HLC_MID
 
 
-async def test_activate_restores_after_deactivate(session: AsyncSession) -> None:
+async def test_activate_restores_after_deactivate(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -123,11 +135,14 @@ async def test_activate_restores_after_deactivate(session: AsyncSession) -> None
     assert asset.row_state_hlc == _HLC_LATER
 
 
-async def test_stale_deactivate_is_noop(session: AsyncSession) -> None:
+async def test_stale_deactivate_is_noop(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     # ADR-007's strict-greater rule: an event whose HLC is below the
     # current row_state_hlc must not flip the visibility bit.
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_LATER)
     )
@@ -164,9 +179,12 @@ async def test_deactivate_on_missing_row_is_noop(session: AsyncSession) -> None:
     assert await _read_asset(session, asset_id) is None
 
 
-async def test_updated_is_noop_for_row_state(session: AsyncSession) -> None:
+async def test_updated_is_noop_for_row_state(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_EARLIER)
     )
@@ -189,9 +207,12 @@ async def test_updated_is_noop_for_row_state(session: AsyncSession) -> None:
     assert asset.row_state_hlc == _HLC_EARLIER
 
 
-async def test_replay_create_with_lower_hlc_is_noop(session: AsyncSession) -> None:
+async def test_replay_create_with_lower_hlc_is_noop(
+    session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
+) -> None:
     asset_id = uuid4()
-    type_id = await seed_asset_type(session)
+    type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     await apply_row_state(
         session, _create_event(instance_id=asset_id, type_id=type_id, hlc=_HLC_LATER)
     )
@@ -227,9 +248,10 @@ async def test_created_maintenance_record_requires_parent(
 
 async def test_created_maintenance_record_with_parent_inserts(
     session: AsyncSession,
+    seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
     asset_id = uuid4()
-    asset_type_id = await seed_asset_type(session)
+    asset_type_id = (await seed(ACTIVE_TRUCK))["asset_type"]["Truck"]
     # Seed the parent asset row first so the MR FK resolves.
     await apply_row_state(
         session,
@@ -237,7 +259,9 @@ async def test_created_maintenance_record_with_parent_inserts(
     )
 
     record_id = uuid4()
-    record_type_id = await seed_mr_type(session)
+    record_type_id = (await seed(ACTIVE_OIL_CHANGE_TYPE))["maintenance_record_type"][
+        "OilChange"
+    ]
     event = EventEnvelope(
         hlc=_HLC_MID,
         family=EntityFamily.MAINTENANCE_RECORD,
