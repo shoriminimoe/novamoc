@@ -38,6 +38,49 @@ db-revision message:
 db-check:
 	uv run alchemy --config novamoc.db.config.alchemy_config check
 
+# Apply migrations, then create the dev tenant + admin user.
+# Idempotent: re-running after the first invocation prints
+# "already exists; nothing to do." and exits cleanly. Production
+# deployments run the equivalent CLI commands in an init container.
+bootstrap-dev:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	# Production-safety: refuse to bootstrap when NOVAMOC_DB_URL points
+	# at a non-SQLite target (likely a misconfigured shell with prod
+	# credentials in the env). The guard runs before ``db-init`` (which
+	# is invoked from this script body rather than as a ``just``
+	# dependency, so the check fires first). Operators who really mean
+	# it can opt out via ``NOVAMOC_ALLOW_NON_SQLITE_BOOTSTRAP=1``.
+	case "${NOVAMOC_DB_URL:-}" in
+		sqlite*|"")
+			;;
+		*)
+			if [ "${NOVAMOC_ALLOW_NON_SQLITE_BOOTSTRAP:-}" != "1" ]; then
+				echo "Refusing to bootstrap against non-SQLite URL: $NOVAMOC_DB_URL" >&2
+				echo "Set NOVAMOC_ALLOW_NON_SQLITE_BOOTSTRAP=1 to override." >&2
+				exit 1
+			fi
+			;;
+	esac
+	just db-init
+	# ``novamoc user exists`` has a three-way exit contract: 0 = exists,
+	# 1 = absent, 2 = CLI error (bad NOVAMOC_DB_URL, locked file, ...).
+	# Honor all three so a real error doesn't silently become a "user
+	# absent, seed now" decision that creates a partial-state DB.
+	rc=0
+	uv run novamoc user exists admin >/dev/null 2>&1 || rc=$?
+	case "$rc" in
+		0) echo "admin user already exists; nothing to do."; exit 0 ;;
+		1) ;;  # absent → fall through to seeding below
+		*) echo "novamoc user exists failed (exit $rc); aborting." >&2; exit "$rc" ;;
+	esac
+	tenant_id=$(uv run novamoc tenant create --display-name "Development" \
+	            | awk '{print $3}' | tr -d '.')
+	echo "Created tenant $tenant_id."
+	uv run novamoc user create admin --password admin
+	uv run novamoc user add-to-tenant admin "$tenant_id"
+	echo "Bootstrap complete. Login at /login with admin / admin."
+
 # Build python packages
 build-py: render-problem-docs
 	uv build
