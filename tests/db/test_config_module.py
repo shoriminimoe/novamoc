@@ -41,7 +41,6 @@ def test_create_app_accepts_injected_alchemy_config() -> None:
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
             static_pool=True,
-            create_all=True,
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),

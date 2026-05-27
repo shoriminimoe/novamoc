@@ -91,7 +91,6 @@ class DatabaseSettings:
     static_pool: bool = field(
         default_factory=_bool_env("NOVAMOC_DB_STATIC_POOL", False)
     )
-    create_all: bool = field(default_factory=_bool_env("NOVAMOC_DB_CREATE_ALL", True))
     before_send_handler: str = field(
         default_factory=_str_env("NOVAMOC_DB_BEFORE_SEND_HANDLER", "autocommit")
     )

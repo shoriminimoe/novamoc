@@ -43,7 +43,6 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         before_send_handler=settings.db.before_send_handler,  # ty: ignore[invalid-argument-type]
         session_config=AsyncSessionConfig(expire_on_commit=False),
         engine_config=engine_config,
-        create_all=settings.db.create_all,
         alembic_config=AlembicAsyncConfig(script_location=_migrations_dir()),
     )
 

@@ -337,7 +337,7 @@ services in ``domain/snapshot/services.py``.
 ## Testing conventions
 
 - `tests/conftest.py` provides:
-  - `engine` — function-scoped in-memory aiosqlite, all metadata `create_all`'d on first use.
+  - `engine` — function-scoped in-memory aiosqlite, all metadata `create_all`'d on first use. The `app` fixture does the equivalent (plus an `AlembicCommands.stamp("head")`) so the startup gate accepts the test DB without running migrations.
   - `session` — function-scoped `AsyncSession` against `engine`; rolls back on teardown so tests are isolated.
   - `services` — `ServiceBundle` wired against `session`.
   - `seed(scenario, tenant_id=...)` — load a `tests/data/scenarios.py` scenario into the per-test db. Defaults to the ambient `tenant` fixture's tenant; pass an explicit `tenant_id=UUID(...)` to override (e.g. seeding under both `DEV_TENANT_ID_A` and `DEV_TENANT_ID_B` for cross-tenant isolation tests). The canonical tenant UUIDs live in `tests/_constants.py`.

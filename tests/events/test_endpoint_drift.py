@@ -43,7 +43,6 @@ def settings() -> Settings:
         db=DatabaseSettings(
             url="sqlite+aiosqlite:///:memory:",
             static_pool=True,
-            create_all=True,
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),

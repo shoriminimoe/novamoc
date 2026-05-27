@@ -83,6 +83,7 @@ async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
     configuration["sqlalchemy.url"] = config.db_url
 
+    borrowed_engine = config.engine is not None
     connectable = cast(
         "AsyncEngine",
         config.engine
@@ -105,7 +106,12 @@ async def run_migrations_online() -> None:
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
 
-    await connectable.dispose()
+    # Only dispose engines we created here. When the engine was
+    # supplied by the caller (e.g. the test conftest passing the
+    # ``app`` fixture's ``StaticPool`` engine to ``AlembicCommands``),
+    # disposing it would destroy the underlying ``:memory:`` database.
+    if not borrowed_engine:
+        await connectable.dispose()
 
 
 if context.is_offline_mode():
