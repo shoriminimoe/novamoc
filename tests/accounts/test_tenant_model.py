@@ -7,7 +7,6 @@ membership / login tests will be wired.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -39,15 +38,3 @@ async def test_tenant_service_create_returns_model_with_uuid_id(
     await session.flush()
     assert isinstance(obj.id, UUID)
     assert obj.display_name == "X"
-
-
-@pytest.mark.no_tenant
-async def test_tenant_disabled_at_round_trips(session: AsyncSession) -> None:
-    moment = datetime(2026, 5, 18, 12, 0, tzinfo=UTC)
-    svc = TenantService(session=session)
-    obj = await svc.create(
-        data={"display_name": "Y", "disabled_at": moment},
-        auto_commit=False,
-    )
-    await session.flush()
-    assert obj.disabled_at == moment

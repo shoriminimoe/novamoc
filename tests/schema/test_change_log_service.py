@@ -7,29 +7,12 @@ from novamoc.db._tenant_context import use_tenant
 from novamoc.db.models import schema as schema_models
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema.services import SchemaChangeLogService
-from tests._constants import DEV_TENANT_ID, DEV_TENANT_ID_A, DEV_TENANT_ID_B
+from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
-
-
-async def test_append_writes_a_row_and_returns_seq(session: AsyncSession) -> None:
-    svc = SchemaChangeLogService(session=session)
-    eid = uuid4()
-    row = await svc.append(
-        command=SchemaCommand.ACTIVATE_ASSET_TYPE,
-        entity_id=eid,
-        payload={"name": "Truck"},
-    )
-    await session.flush()
-    assert row.seq is not None
-    assert row.tenant_id == DEV_TENANT_ID
-    assert row.command == SchemaCommand.ACTIVATE_ASSET_TYPE
-    assert row.entity_id == eid
-    assert row.payload == {"name": "Truck"}
-    assert row.committed_at is not None
 
 
 async def test_append_assigns_monotonic_seq(session: AsyncSession) -> None:

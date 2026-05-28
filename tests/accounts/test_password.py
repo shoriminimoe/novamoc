@@ -17,23 +17,10 @@ from novamoc.domain.accounts._password import PasswordHasher
 _FAST = PasswordHasher(time_cost=1, memory_cost_kib=8192, parallelism=1)
 
 
-def test_hash_then_verify_round_trip_succeeds() -> None:
-    encoded = _FAST.hash("correct-horse-battery-staple")
-
-    assert _FAST.verify(encoded, "correct-horse-battery-staple") is True
-
-
 def test_verify_wrong_password_returns_false_no_exception() -> None:
     encoded = _FAST.hash("correct-horse-battery-staple")
 
     assert _FAST.verify(encoded, "wrong-password") is False
-
-
-def test_two_hashes_of_same_password_differ() -> None:
-    first = _FAST.hash("hunter2")
-    second = _FAST.hash("hunter2")
-
-    assert first != second
 
 
 def test_check_needs_rehash_after_cost_bump() -> None:

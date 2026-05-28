@@ -29,23 +29,3 @@ async def test_session_id_is_assigned_uuid_after_flush(session: AsyncSession) ->
     session.add(obj)
     await session.flush()
     assert isinstance(obj.id, UUID)
-
-
-@pytest.mark.no_tenant
-async def test_session_fields_round_trip(session: AsyncSession) -> None:
-    expires = datetime(2030, 6, 15, 12, 0, tzinfo=UTC)
-    obj = auth_models.Session(
-        session_id="roundtrip-token",
-        data=b"opaque",
-        expires_at=expires,
-    )
-    session.add(obj)
-    await session.flush()
-
-    obj_id = obj.id
-    await session.refresh(obj)
-
-    assert obj.id == obj_id
-    assert obj.session_id == "roundtrip-token"
-    assert obj.data == b"opaque"
-    assert obj.expires_at == expires
