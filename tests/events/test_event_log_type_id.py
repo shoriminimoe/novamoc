@@ -8,16 +8,10 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from novamoc.db.models.data import EventLog
-from novamoc.domain.events._bundle import EventServiceBundle
 from novamoc.domain.events._payloads import (
     Created,
     EntityFamily,
     EventEnvelope,
-)
-from novamoc.domain.events.services import EventLogService
-from novamoc.domain.schema.services import (
-    AssetTypeFieldService,
-    MaintenanceRecordTypeFieldService,
 )
 from tests.data.scenarios import ACTIVE_TRUCK
 
@@ -27,26 +21,20 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from novamoc.domain.events._bundle import EventServiceBundle
     from tests.data.scenarios import Scenario
 
 
 async def test_append_event_persists_type_id(
     session: AsyncSession,
+    event_services: EventServiceBundle,
     seed: Callable[[Scenario], Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
     ids = await seed(ACTIVE_TRUCK)
     type_id = ids["asset_type"]["Truck"]
     instance_id = uuid4()
-    bundle = EventServiceBundle(
-        asset_type_field_service=AssetTypeFieldService(session=session),
-        maintenance_record_type_field_service=MaintenanceRecordTypeFieldService(
-            session=session
-        ),
-        event_log_service=EventLogService(session=session),
-        schema_version=0,
-    )
 
-    await bundle.append_event(
+    await event_services.append_event(
         EventEnvelope(
             hlc="0001700000000000-00000-abc",
             family=EntityFamily.ASSET,
