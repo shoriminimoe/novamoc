@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from tests.events._http_helpers import create_asset_type
+from tests.events._http_helpers import create_asset_type, event_envelope
 
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
@@ -22,18 +22,6 @@ _HLC_A = "0000000000000001-00000-client-a"
 _HLC_B = "0000000000000002-00000-client-a"
 
 
-def _event(
-    hlc: str, *, type_id: str, instance_id: str | None = None
-) -> dict[str, object]:
-    return {
-        "hlc": hlc,
-        "family": "asset",
-        "type_id": type_id,
-        "instance_id": instance_id or str(uuid4()),
-        "body": {"event": "created", "values": {"col:name": "x"}},
-    }
-
-
 async def test_fresh_batch_returns_all_accepted(client: AsyncTestClient) -> None:
     type_id, schema_version = await create_asset_type(client)
     resp = await client.post(
@@ -41,8 +29,8 @@ async def test_fresh_batch_returns_all_accepted(client: AsyncTestClient) -> None
         json={
             "schema_version": schema_version,
             "events": [
-                _event(_HLC_A, type_id=type_id),
-                _event(_HLC_B, type_id=type_id),
+                event_envelope(hlc=_HLC_A, type_id=type_id),
+                event_envelope(hlc=_HLC_B, type_id=type_id),
             ],
         },
     )
@@ -58,8 +46,8 @@ async def test_replay_same_batch_returns_all_duplicate(
     body = {
         "schema_version": schema_version,
         "events": [
-            _event(_HLC_A, type_id=type_id),
-            _event(_HLC_B, type_id=type_id),
+            event_envelope(hlc=_HLC_A, type_id=type_id),
+            event_envelope(hlc=_HLC_B, type_id=type_id),
         ],
     }
     first = await client.post("/events", json=body)
@@ -77,7 +65,7 @@ async def test_partial_replay_returns_mixed_outcomes(client: AsyncTestClient) ->
         "/events",
         json={
             "schema_version": schema_version,
-            "events": [_event(_HLC_A, type_id=type_id)],
+            "events": [event_envelope(hlc=_HLC_A, type_id=type_id)],
         },
     )
     assert first.status_code == 202, first.text
@@ -87,8 +75,8 @@ async def test_partial_replay_returns_mixed_outcomes(client: AsyncTestClient) ->
         json={
             "schema_version": schema_version,
             "events": [
-                _event(_HLC_A, type_id=type_id),
-                _event(_HLC_B, type_id=type_id),
+                event_envelope(hlc=_HLC_A, type_id=type_id),
+                event_envelope(hlc=_HLC_B, type_id=type_id),
             ],
         },
     )
@@ -122,7 +110,7 @@ async def test_rejection_does_not_consume_an_hlc(client: AsyncTestClient) -> Non
         "/events",
         json={
             "schema_version": schema_version,
-            "events": [_event(_HLC_A, type_id=type_id)],
+            "events": [event_envelope(hlc=_HLC_A, type_id=type_id)],
         },
     )
     assert second.status_code == 202, second.text

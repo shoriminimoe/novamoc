@@ -11,21 +11,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from tests.events._http_helpers import event_envelope
+
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
-
-
-_VALID_HLC = "0000000000000001-00000-client-a"
-
-
-def _event(hlc: str = _VALID_HLC, *, type_id: str | None = None) -> dict[str, object]:
-    return {
-        "hlc": hlc,
-        "family": "asset",
-        "type_id": type_id or str(uuid4()),
-        "instance_id": str(uuid4()),
-        "body": {"event": "created", "values": {"col:name": "x"}},
-    }
 
 
 async def _bump_schema_version(client: AsyncTestClient) -> tuple[str, int]:
@@ -65,7 +54,7 @@ async def test_stale_version_rejected_as_409(client: AsyncTestClient) -> None:
 
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event()]},
+        json={"schema_version": 0, "events": [event_envelope()]},
     )
     assert resp.status_code == 409, resp.text
     body = resp.json()
@@ -79,7 +68,7 @@ async def test_stale_version_rejected_as_409(client: AsyncTestClient) -> None:
 async def test_future_version_also_rejected(client: AsyncTestClient) -> None:
     resp = await client.post(
         "/events",
-        json={"schema_version": 99, "events": [_event()]},
+        json={"schema_version": 99, "events": [event_envelope()]},
     )
     assert resp.status_code == 409, resp.text
     body = resp.json()
@@ -96,7 +85,7 @@ async def test_matched_version_after_schema_change_is_accepted(
         "/events",
         json={
             "schema_version": version_after_create,
-            "events": [_event(type_id=type_id)],
+            "events": [event_envelope(type_id=type_id)],
         },
     )
     assert resp.status_code == 202, resp.text
@@ -112,7 +101,7 @@ async def test_version_gate_runs_before_hlc_validation(
     _ = await _bump_schema_version(client)
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event("not-an-hlc")]},
+        json={"schema_version": 0, "events": [event_envelope(hlc="not-an-hlc")]},
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["type"] == "http://test/problems/schema_version_stale.html"
