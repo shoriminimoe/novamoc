@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest
 
@@ -14,7 +13,7 @@ from novamoc.config import (
     ServerSettings,
     Settings,
 )
-from tests.events._http_helpers import create_asset_type
+from tests.events._http_helpers import create_asset_type, event_envelope
 
 if TYPE_CHECKING:
     from litestar.testing import AsyncTestClient
@@ -22,16 +21,6 @@ if TYPE_CHECKING:
 
 _PAST_HLC = "0000000000000001-00000-client-a"
 _FAR_FUTURE_HLC = "9999999999999999-00000-client-a"
-
-
-def _event(hlc: str, *, type_id: str | None = None) -> dict[str, object]:
-    return {
-        "hlc": hlc,
-        "family": "asset",
-        "type_id": type_id or str(uuid4()),
-        "instance_id": str(uuid4()),
-        "body": {"event": "created", "values": {"col:name": "x"}},
-    }
 
 
 @pytest.fixture
@@ -63,7 +52,7 @@ async def test_past_hlc_is_accepted(client: AsyncTestClient) -> None:
         "/events",
         json={
             "schema_version": schema_version,
-            "events": [_event(_PAST_HLC, type_id=type_id)],
+            "events": [event_envelope(hlc=_PAST_HLC, type_id=type_id)],
         },
     )
     assert resp.status_code == 202, resp.text
@@ -78,7 +67,7 @@ async def test_far_future_hlc_yields_rejected_outcome(
     # batch HTTP envelope still returns 202.
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event(_FAR_FUTURE_HLC)]},
+        json={"schema_version": 0, "events": [event_envelope(hlc=_FAR_FUTURE_HLC)]},
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -101,7 +90,7 @@ async def test_malformed_hlc_yields_rejected_invalid_payload_shape(
 ) -> None:
     resp = await client.post(
         "/events",
-        json={"schema_version": 0, "events": [_event("not-an-hlc")]},
+        json={"schema_version": 0, "events": [event_envelope(hlc="not-an-hlc")]},
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -127,9 +116,9 @@ async def test_mixed_batch_records_each_event_independently(
         json={
             "schema_version": schema_version,
             "events": [
-                _event(_PAST_HLC, type_id=type_id),
-                _event(_FAR_FUTURE_HLC, type_id=type_id),
-                _event("0000000000000002-00000-client-a", type_id=type_id),
+                event_envelope(hlc=_PAST_HLC, type_id=type_id),
+                event_envelope(hlc=_FAR_FUTURE_HLC, type_id=type_id),
+                event_envelope(hlc="0000000000000002-00000-client-a", type_id=type_id),
             ],
         },
     )
