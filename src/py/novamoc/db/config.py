@@ -11,6 +11,7 @@ documented carve-out to the "db/ must not depend on Litestar" rule
 from __future__ import annotations
 
 from importlib.resources import files
+from typing import Any
 
 from advanced_alchemy.extensions.litestar import (
     AlembicAsyncConfig,
@@ -32,11 +33,26 @@ def _migrations_dir() -> str:
 
 def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
     """Build the per-app ``SQLAlchemyAsyncConfig`` from ``settings``."""
-    engine_config = (
-        EngineConfig(poolclass=StaticPool)
-        if settings.db.static_pool
-        else EngineConfig()
-    )
+    # ``make_url`` is SQLAlchemy's public URL parser; ``get_backend_name()``
+    # returns the dialect regardless of ``+driver`` suffix or case
+    # normalisation, so the check is robust against
+    # ``SQLITE+aiosqlite://...`` and similar variants. Used to gate both
+    # the SQLite-specific connect_args and the WAL/pragma registration.
+    sqlite_url = make_url(settings.db.url).get_backend_name() == "sqlite"
+    engine_config_kwargs: dict[str, Any] = {}
+    if settings.db.static_pool:
+        engine_config_kwargs["poolclass"] = StaticPool
+    if sqlite_url:
+        # ``sqlite3.connect(timeout=...)`` maps to SQLite's per-connection
+        # ``busy_timeout`` — the retry budget for write-lock contention.
+        # Defence in depth alongside the request-scoped session backend
+        # (see novamoc#123); tunable via
+        # ``DatabaseSettings.busy_timeout_seconds`` /
+        # ``NOVAMOC_DB_BUSY_TIMEOUT_SECONDS``.
+        engine_config_kwargs["connect_args"] = {
+            "timeout": settings.db.busy_timeout_seconds
+        }
+    engine_config = EngineConfig(**engine_config_kwargs)
     cfg = SQLAlchemyAsyncConfig(
         connection_string=settings.db.url,
         # ty narrows the literal-arg type to ``Literal["autocommit", ...]``;
@@ -48,11 +64,10 @@ def build_alchemy_config(settings: Settings) -> SQLAlchemyAsyncConfig:
         alembic_config=AlembicAsyncConfig(script_location=_migrations_dir()),
     )
     # SQLite per-driver options (WAL + foreign_keys today; ``synchronous=NORMAL``
-    # etc. later) attach to the specific engine instance. ``make_url`` is
-    # SQLAlchemy's public URL parser; ``get_backend_name()`` returns the
-    # dialect regardless of ``+driver`` suffix or case normalisation, so the
-    # check is robust against ``SQLITE+aiosqlite://...`` and similar variants.
-    if make_url(settings.db.url).get_backend_name() == "sqlite":
+    # etc. later) attach to the specific engine instance. The per-engine
+    # registration means the listener body in ``_pragmas`` doesn't need any
+    # driver-class detection.
+    if sqlite_url:
         register_sqlite_pragmas(cfg.get_engine())
     return cfg
 

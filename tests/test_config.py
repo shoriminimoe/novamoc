@@ -98,6 +98,25 @@ class TestIntEnv:
             _int_env("NOVAMOC_X_TEST_INT", 0)()
 
 
+class TestDatabaseSettings:
+    def test_busy_timeout_defaults_to_five_seconds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVAMOC_DB_BUSY_TIMEOUT_SECONDS", raising=False)
+        assert DatabaseSettings().busy_timeout_seconds == 5.0
+
+    def test_env_overrides_busy_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NOVAMOC_DB_BUSY_TIMEOUT_SECONDS", "2.5")
+        assert DatabaseSettings().busy_timeout_seconds == 2.5
+
+    def test_garbage_busy_timeout_propagates_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_DB_BUSY_TIMEOUT_SECONDS", "not-a-number")
+        with pytest.raises(ValueError, match="cannot parse"):
+            DatabaseSettings()
+
+
 class TestAppSettings:
     def test_default_hlc_drift_is_one_minute(
         self, monkeypatch: pytest.MonkeyPatch
