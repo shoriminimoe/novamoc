@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 from novamoc.domain.accounts import RequestAuth
-from novamoc.domain.events._bundle import EventServiceBundle
 from novamoc.domain.events._errors import (
     UnknownFieldError,
     ValueTypeMismatchError,
@@ -22,11 +21,6 @@ from novamoc.domain.events._payloads import (
     EventEnvelope,
     Updated,
 )
-from novamoc.domain.events.services import EventLogService
-from novamoc.domain.schema.services import (
-    AssetTypeFieldService,
-    MaintenanceRecordTypeFieldService,
-)
 from tests._constants import DEV_TENANT_ID
 from tests.data.scenarios import (
     ACTIVE_TRUCK_WITH_VIN_FIELD,
@@ -37,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
     from uuid import UUID
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from novamoc.domain.events._bundle import EventServiceBundle
 
 
 _HLC = "0000000000000001-00000-client-a"
@@ -45,18 +39,6 @@ _HLC = "0000000000000001-00000-client-a"
 
 def _auth() -> RequestAuth:
     return RequestAuth(tenant_id=DEV_TENANT_ID)
-
-
-@pytest.fixture
-def event_services(session: AsyncSession) -> EventServiceBundle:
-    return EventServiceBundle(
-        asset_type_field_service=AssetTypeFieldService(session=session),
-        maintenance_record_type_field_service=MaintenanceRecordTypeFieldService(
-            session=session
-        ),
-        event_log_service=EventLogService(session=session),
-        schema_version=0,
-    )
 
 
 def _envelope(

@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from novamoc.db._tenant_context import use_tenant
-from novamoc.domain.events._bundle import EventServiceBundle
 from novamoc.domain.events._pagination import EventLogCursorPaginator
 from novamoc.domain.events._payloads import (
     Created,
@@ -22,10 +21,6 @@ from novamoc.domain.events._payloads import (
     EventEnvelope,
 )
 from novamoc.domain.events.services import EventLogService
-from novamoc.domain.schema.services import (
-    AssetTypeFieldService,
-    MaintenanceRecordTypeFieldService,
-)
 from tests._constants import DEV_TENANT_ID_A, DEV_TENANT_ID_B
 from tests.data.scenarios import ACTIVE_TRUCK
 
@@ -35,16 +30,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-
-def _bundle(session: AsyncSession) -> EventServiceBundle:
-    return EventServiceBundle(
-        asset_type_field_service=AssetTypeFieldService(session=session),
-        maintenance_record_type_field_service=MaintenanceRecordTypeFieldService(
-            session=session
-        ),
-        event_log_service=EventLogService(session=session),
-        schema_version=0,
-    )
+    from novamoc.domain.events._bundle import EventServiceBundle
 
 
 async def _append(bundle: EventServiceBundle, hlc: str, type_id: UUID) -> None:
@@ -61,11 +47,10 @@ async def _append(bundle: EventServiceBundle, hlc: str, type_id: UUID) -> None:
 
 async def test_paginator_isolates_tenants_at_interleaved_seqs(
     session: AsyncSession,
+    event_services: EventServiceBundle,
     seed: Callable[..., Awaitable[Mapping[str, Mapping[str, UUID]]]],
 ) -> None:
     """Interleaved append under two tenants — each tenant sees only its own."""
-    bundle = _bundle(session)
-
     # Seed an ``asset_type`` row per tenant so the assets-projection FK
     # constraint (``foreign_keys=ON``) is satisfied when the Created events
     # fold into ``assets``. Same fixture UUID in both tenants — the
@@ -80,15 +65,15 @@ async def test_paginator_isolates_tenants_at_interleaved_seqs(
 
     # Interleave: t-a, t-b, t-a, t-b, t-a → three events for t-a, two for t-b.
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000001-00000-aaa", type_id_a)
+        await _append(event_services, "0001700000000001-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000002-00000-bbb", type_id_b)
+        await _append(event_services, "0001700000000002-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000003-00000-aaa", type_id_a)
+        await _append(event_services, "0001700000000003-00000-aaa", type_id_a)
     with use_tenant(DEV_TENANT_ID_B):
-        await _append(bundle, "0001700000000004-00000-bbb", type_id_b)
+        await _append(event_services, "0001700000000004-00000-bbb", type_id_b)
     with use_tenant(DEV_TENANT_ID_A):
-        await _append(bundle, "0001700000000005-00000-aaa", type_id_a)
+        await _append(event_services, "0001700000000005-00000-aaa", type_id_a)
 
     paginator = EventLogCursorPaginator(EventLogService(session=session))
 
