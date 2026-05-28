@@ -201,6 +201,15 @@ async def _create_parent_asset(
     return asset_type_id, asset_instance_id, schema_version
 
 
+async def test_empty_batch_returns_empty_outcomes(client: AsyncTestClient) -> None:
+    resp = await client.post(
+        "/events",
+        json={"schema_version": 0, "events": []},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"outcomes": []}
+
+
 async def test_happy_path_writes_log_field_values_and_entity_row(
     client: AsyncTestClient, app: Litestar
 ) -> None:
