@@ -91,7 +91,7 @@ def schema_upgrades() -> None:
         "asset_types",
         sa.Column("tenant_id", sa.GUID(length=16), nullable=False),
         sa.Column("id", sa.GUID(length=16), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("name", sa.String(collation="NOCASE"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default="1", nullable=False),
         sa.Column("sa_orm_sentinel", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTimeUTC(timezone=True), nullable=False),
@@ -145,7 +145,7 @@ def schema_upgrades() -> None:
         "maintenance_record_types",
         sa.Column("tenant_id", sa.GUID(length=16), nullable=False),
         sa.Column("id", sa.GUID(length=16), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("name", sa.String(collation="NOCASE"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default="1", nullable=False),
         sa.Column("sa_orm_sentinel", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTimeUTC(timezone=True), nullable=False),
@@ -225,7 +225,7 @@ def schema_upgrades() -> None:
         sa.Column("tenant_id", sa.GUID(length=16), nullable=False),
         sa.Column("id", sa.GUID(length=16), nullable=False),
         sa.Column("parent_id", sa.GUID(length=16), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("name", sa.String(collation="NOCASE"), nullable=False),
         sa.Column(
             "data_type",
             sa.Enum(
@@ -298,7 +298,7 @@ def schema_upgrades() -> None:
         sa.Column("tenant_id", sa.GUID(length=16), nullable=False),
         sa.Column("id", sa.GUID(length=16), nullable=False),
         sa.Column("parent_id", sa.GUID(length=16), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("name", sa.String(collation="NOCASE"), nullable=False),
         sa.Column(
             "data_type",
             sa.Enum(

@@ -35,6 +35,13 @@ if TYPE_CHECKING:
 async def create(
     services: ServiceBundle, auth: RequestAuth, req: _payloads.CreateAssetType
 ) -> SchemaCommitOutcome:
+    existing = await services.asset_type.get_one_or_none(name=req.payload.name)
+    if existing is not None:
+        raise ConflictError(
+            code=ErrorCode.NAME_RESERVED,
+            name=req.payload.name,
+            existing_name=existing.name,
+        )
     try:
         await services.asset_type.create(
             data={
@@ -94,6 +101,16 @@ async def update(
     payload = msgspec.to_builtins(req.payload)
     if not payload:
         raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
+    new_name = payload.get("name")
+    if new_name is not None:
+        # Skip a same-id match: that's just a case-only rename on self.
+        existing = await services.asset_type.get_one_or_none(name=new_name)
+        if existing is not None and existing.id != req.entity_id:
+            raise ConflictError(
+                code=ErrorCode.NAME_RESERVED,
+                name=new_name,
+                existing_name=existing.name,
+            )
     try:
         await services.asset_type.update(
             data=payload,

@@ -273,6 +273,158 @@ async def test_create_name_collision(
     assert exc_info.value.code is ErrorCode.NAME_RESERVED
 
 
+@_SPECS
+async def test_create_case_insensitive_collision_reports_existing_name(
+    session: AsyncSession, services: ServiceBundle, spec: FieldSpec
+) -> None:
+    """Case-only collision is rejected; ``existing_name`` extra carries the
+    canonical name already on the row."""
+    parent = await _make_parent(session, services, spec)
+    canonical = "VIN-Number"  # mixed case so .lower() != canonical
+    await _field_service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": uuid4(),
+            "parent_id": parent,
+            "name": canonical,
+            "data_type": spec.sample_data_type.value,
+            "validation": None,
+            "active": True,
+        },
+        auto_commit=False,
+    )
+    await session.flush()
+    offending = canonical.lower()
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.create_cmd(
+                entity_id=uuid4(),
+                payload=spec.create_payload_cls(
+                    parent_id=parent,
+                    name=offending,
+                    data_type=spec.sample_data_type,
+                ),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["name"] == offending
+    assert exc_info.value.extras["existing_name"] == canonical
+
+
+@_SPECS
+async def test_create_preserves_original_case(
+    session: AsyncSession, services: ServiceBundle, spec: FieldSpec
+) -> None:
+    """The visible field name keeps its case; storage is unchanged."""
+    parent = await _make_parent(session, services, spec)
+    fid = uuid4()
+    name = "MixedCaseField"
+    await dispatch(
+        services,
+        _AUTH,
+        spec.create_cmd(
+            entity_id=fid,
+            payload=spec.create_payload_cls(
+                parent_id=parent,
+                name=name,
+                data_type=spec.sample_data_type,
+            ),
+        ),
+    )
+    await session.flush()
+    row = await _field_service(services, spec).get_one_or_none(tenant_id=_T, id=fid)
+    assert row is not None
+    assert row.name == name
+
+
+@_SPECS
+async def test_create_collision_with_tombstoned_field(
+    session: AsyncSession, services: ServiceBundle, spec: FieldSpec
+) -> None:
+    """A deactivated field still reserves the name across cases."""
+    parent = await _make_parent(session, services, spec)
+    canonical = "VIN-Number"
+    await _field_service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": uuid4(),
+            "parent_id": parent,
+            "name": canonical,
+            "data_type": spec.sample_data_type.value,
+            "validation": None,
+            "active": False,
+        },
+        auto_commit=False,
+    )
+    await session.flush()
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.create_cmd(
+                entity_id=uuid4(),
+                payload=spec.create_payload_cls(
+                    parent_id=parent,
+                    name=canonical.lower(),
+                    data_type=spec.sample_data_type,
+                ),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["existing_name"] == canonical
+
+
+@_SPECS
+async def test_update_rename_case_insensitive_collision(
+    session: AsyncSession, services: ServiceBundle, spec: FieldSpec
+) -> None:
+    """Renaming a field to a case-variant of a sibling's name is rejected.
+
+    Issue #75.
+    """
+    parent = await _make_parent(session, services, spec)
+    canonical = "VIN-Number"
+    await _field_service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": uuid4(),
+            "parent_id": parent,
+            "name": canonical,
+            "data_type": spec.sample_data_type.value,
+            "validation": None,
+            "active": True,
+        },
+        auto_commit=False,
+    )
+    other_id = uuid4()
+    await _field_service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": other_id,
+            "parent_id": parent,
+            "name": "OtherField",
+            "data_type": spec.sample_data_type.value,
+            "validation": None,
+            "active": True,
+        },
+        auto_commit=False,
+    )
+    await session.flush()
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.update_cmd(
+                entity_id=other_id,
+                payload=spec.update_payload_cls(name=canonical.lower()),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["existing_name"] == canonical
+
+
 # --- activate ---
 
 

@@ -45,6 +45,16 @@ async def create(
     )
     if parent is None:
         raise ConflictError(code=ErrorCode.PARENT_TYPE_NOT_FOUND)
+    existing = await services.asset_type_field.get_one_or_none(
+        parent_id=req.payload.parent_id,
+        name=req.payload.name,
+    )
+    if existing is not None:
+        raise ConflictError(
+            code=ErrorCode.NAME_RESERVED,
+            name=req.payload.name,
+            existing_name=existing.name,
+        )
     try:
         await services.asset_type_field.create(
             data={
@@ -108,6 +118,18 @@ async def update(
     payload = msgspec.to_builtins(req.payload)
     if not payload:
         raise PayloadShapeError(code=ErrorCode.PAYLOAD_NO_CHANGES)
+    new_name = payload.get("name")
+    if new_name is not None:
+        existing = await services.asset_type_field.get_one_or_none(
+            parent_id=obj.parent_id,
+            name=new_name,
+        )
+        if existing is not None and existing.id != req.entity_id:
+            raise ConflictError(
+                code=ErrorCode.NAME_RESERVED,
+                name=new_name,
+                existing_name=existing.name,
+            )
     try:
         await services.asset_type_field.update(
             data=payload,

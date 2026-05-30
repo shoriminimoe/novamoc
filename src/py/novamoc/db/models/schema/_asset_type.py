@@ -5,11 +5,14 @@ from uuid import UUID
 
 from advanced_alchemy.base import UUIDAuditBase
 from advanced_alchemy.types import GUID, JsonB
-from sqlalchemy import Enum, ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy import Enum, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .._mixins import TenantScopedMixin
 from ._types import FieldDataType
+
+# Case-insensitive uniqueness; stored case is preserved.
+_NameStr = String(collation="NOCASE")
 
 
 class AssetType(TenantScopedMixin, UUIDAuditBase):
@@ -17,7 +20,7 @@ class AssetType(TenantScopedMixin, UUIDAuditBase):
 
     ``active`` carries the lifecycle flag: a tombstoned row (``active = false``)
     stays in the table to keep its name reserved and to support resurrection.
-    Name uniqueness applies across both states.
+    Name uniqueness applies across both states and is case-insensitive.
     """
 
     __tablename__ = "asset_types"
@@ -25,7 +28,7 @@ class AssetType(TenantScopedMixin, UUIDAuditBase):
         UniqueConstraint("tenant_id", "name", name="uq_asset_types_tenant_name"),
     )
 
-    name: Mapped[str]
+    name: Mapped[str] = mapped_column(_NameStr)
     active: Mapped[bool] = mapped_column(default=True, server_default="1")
 
 
@@ -48,7 +51,7 @@ class AssetTypeField(TenantScopedMixin, UUIDAuditBase):
     )
 
     parent_id: Mapped[UUID] = mapped_column(GUID)
-    name: Mapped[str]
+    name: Mapped[str] = mapped_column(_NameStr)
     data_type: Mapped[FieldDataType] = mapped_column(
         Enum(FieldDataType, native_enum=False)
     )
