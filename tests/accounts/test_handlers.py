@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 from msgspec_ext import SecretStr
@@ -59,6 +59,38 @@ pytestmark = pytest.mark.no_tenant
 # parameters as ``tests/accounts/test_password.py`` so login round-trips
 # stay sub-second.
 _FAST = PasswordHasher(time_cost=1, memory_cost_kib=8192, parallelism=1)
+
+
+class _CountingPasswordHasher(PasswordHasher):
+    """:class:`PasswordHasher` that records each :meth:`verify` call.
+
+    Used by the anti-enumeration tests in this module to assert every
+    rejection branch of :func:`login` incurs exactly one argon2id
+    verify — the timing-channel half of ADR-020's anti-enumeration
+    promise. The hasher still runs the real argon2 verify (no
+    substitution of the work the side-channel exists to mask); the
+    subclass only adds the counter.
+
+    ``slots=True`` on the parent forbids new instance attributes, so
+    the counter lives on a class-level ``ClassVar`` list. Tests share
+    one instance per test function (no parallel test workers) so
+    cross-test bleed is impossible.
+    """
+
+    verify_calls: ClassVar[list[tuple[str, str]]] = []
+
+    def verify(self, encoded: str, password: str) -> bool:
+        _CountingPasswordHasher.verify_calls.append((encoded, password))
+        return super().verify(encoded, password)
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.verify_calls.clear()
+
+
+_COUNTING_FAST = _CountingPasswordHasher(
+    time_cost=1, memory_cost_kib=8192, parallelism=1
+)
 
 
 @dataclass
@@ -303,6 +335,115 @@ async def test_login_rehashes_password_when_parameters_rotate(
     reloaded = await users.get(item_id=user.id)
     assert reloaded.password_hash != original_hash
     assert stronger.verify(reloaded.password_hash, "hunter2") is True
+
+
+# ----- anti-enumeration: every 401 path runs verify exactly once ------------
+
+
+async def test_login_unknown_user_still_runs_one_verify(
+    session: AsyncSession,
+) -> None:
+    """Unknown-user 401 must spend an argon2id verify (#134, ADR-020).
+
+    The anti-enumeration promise is byte-equal at the wire AND
+    timing-equal at the handler. An attacker probing for valid
+    usernames cannot distinguish "user does not exist" from
+    "wrong password" by latency if every path budgets one verify.
+    """
+    users = UserService(session=session)
+    memberships = UserTenantMembershipService(session=session)
+    request = _FakeRequest()
+    _CountingPasswordHasher.reset()
+
+    with pytest.raises(LoginFailedError):
+        await login(
+            request=request,
+            data=LoginRequest(username="nobody", password=SecretStr("hunter2")),
+            users=users,
+            memberships=memberships,
+            password_hasher=_COUNTING_FAST,
+        )
+    assert len(_CountingPasswordHasher.verify_calls) == 1
+
+
+async def test_login_disabled_user_still_runs_one_verify(
+    session: AsyncSession,
+) -> None:
+    """Disabled-user 401 must spend an argon2id verify (#134, ADR-020)."""
+    await _make_user(
+        session,
+        "alice",
+        "hunter2",
+        hasher=_COUNTING_FAST,
+        disabled_at=datetime.now(tz=UTC),
+    )
+    users = UserService(session=session)
+    memberships = UserTenantMembershipService(session=session)
+    request = _FakeRequest()
+    _CountingPasswordHasher.reset()
+
+    with pytest.raises(LoginFailedError):
+        await login(
+            request=request,
+            data=LoginRequest(username="alice", password=SecretStr("hunter2")),
+            users=users,
+            memberships=memberships,
+            password_hasher=_COUNTING_FAST,
+        )
+    assert len(_CountingPasswordHasher.verify_calls) == 1
+
+
+async def test_login_wrong_password_runs_one_verify(
+    session: AsyncSession,
+) -> None:
+    """Wrong-password 401 already runs verify — regression guard."""
+    user = await _make_user(session, "alice", "correct-horse", hasher=_COUNTING_FAST)
+    tenant = await _make_tenant(session, "Acme")
+    await _grant_membership(session, user, tenant)
+
+    users = UserService(session=session)
+    memberships = UserTenantMembershipService(session=session)
+    request = _FakeRequest()
+    _CountingPasswordHasher.reset()
+
+    with pytest.raises(LoginFailedError):
+        await login(
+            request=request,
+            data=LoginRequest(username="alice", password=SecretStr("wrong-pw")),
+            users=users,
+            memberships=memberships,
+            password_hasher=_COUNTING_FAST,
+        )
+    assert len(_CountingPasswordHasher.verify_calls) == 1
+
+
+async def test_login_zero_membership_runs_one_verify(
+    session: AsyncSession,
+) -> None:
+    """Zero-membership 401 already runs verify — regression guard.
+
+    The check sits after the verify call in the current handler, so
+    this asserts the existing behaviour (the issue notes that this
+    path should be left untouched). Pinning it as a separate test
+    prevents a future refactor from accidentally hoisting the
+    membership check above the verify.
+    """
+    await _make_user(session, "alice", "hunter2", hasher=_COUNTING_FAST)
+
+    users = UserService(session=session)
+    memberships = UserTenantMembershipService(session=session)
+    request = _FakeRequest()
+    _CountingPasswordHasher.reset()
+
+    with pytest.raises(LoginFailedError):
+        await login(
+            request=request,
+            data=LoginRequest(username="alice", password=SecretStr("hunter2")),
+            users=users,
+            memberships=memberships,
+            password_hasher=_COUNTING_FAST,
+        )
+    assert len(_CountingPasswordHasher.verify_calls) == 1
 
 
 # ----- logout ---------------------------------------------------------------
