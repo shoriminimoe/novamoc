@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -56,6 +57,23 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass(frozen=True, slots=True)
+class _BootstrapResult:
+    """Per-step decisions from ``bootstrap-admin``'s single transaction.
+
+    ``*_reused`` is ``True`` when an existing row was found and reused,
+    ``False`` when the step inserted a new row. Drives the final
+    operator-facing summary so the recipe's stdout makes the recovery
+    path obvious ("Reused tenant ..., Created membership ...").
+    """
+
+    tenant_id: uuid.UUID
+    username: str
+    tenant_reused: bool
+    user_reused: bool
+    membership_reused: bool
 
 
 def _load_settings() -> Settings:
@@ -159,7 +177,141 @@ def main() -> None:
     * ``tenant`` — tenant registry administration.
     * ``user`` — user registry administration.
     * ``auth`` — session / credential maintenance.
+
+    Plus the standalone :func:`bootstrap_admin` command, which the
+    ``just bootstrap-dev`` recipe drives end-to-end.
     """
+
+
+# ---------------------------------------------------------------------------
+# bootstrap-admin (issue #128)
+# ---------------------------------------------------------------------------
+
+
+@main.command("bootstrap-admin")
+@click.option(
+    "--tenant-display-name",
+    required=True,
+    help="Display name to look up or create on the tenants table.",
+)
+@click.option(
+    "--username",
+    required=True,
+    help="Username for the admin account; case-folded for storage.",
+)
+@click.option(
+    "--password",
+    default=None,
+    help="Password for the admin account. Prompts interactively when omitted.",
+)
+def bootstrap_admin(
+    tenant_display_name: str, username: str, password: str | None
+) -> None:
+    """Atomic tenant + user + membership bootstrap (issue #128).
+
+    Single-transaction replacement for the three-CLI-call dance in
+    ``just bootstrap-dev``. Idempotent in *every* failure mode that
+    matters: a partial run that left a tenant row but no user (#128
+    finding #2) reuses the tenant; a partial run that left a user but
+    no membership (#128 finding #4) creates the membership without
+    duplicating anything.
+
+    Aborts when the target user already belongs to a *different*
+    tenant — the v1 invariant means we cannot silently relocate them,
+    and continuing would leave the operator with an admin pointed at
+    the wrong scope.
+    """
+    _require_nonblank(tenant_display_name, label="--tenant-display-name")
+    _require_nonblank(username, label="--username")
+    plaintext = _require_nonblank(
+        _prompt_password_if_missing(password), label="Password"
+    )
+    settings = _load_settings()
+    hasher = _password_hasher(settings)
+
+    async def work(session: AsyncSession) -> _BootstrapResult:
+        tenants = TenantService(session=session)
+        existing_tenant = await tenants.get_by_display_name(tenant_display_name)
+        if existing_tenant is None:
+            created_tenant = await tenants.create(
+                data={"display_name": tenant_display_name}, auto_commit=False
+            )
+            await session.flush()
+            tenant_id = created_tenant.id
+            tenant_reused = False
+        else:
+            tenant_id = existing_tenant.id
+            tenant_reused = True
+
+        users = UserService(session=session)
+        existing_user = await users.get_by_username(username)
+        if existing_user is None:
+            # Hash inside the create branch so the ~100 ms argon2 cost
+            # is paid only when we actually need a new password hash —
+            # mirrors the ``user create`` command's ordering.
+            hashed = hasher.hash(plaintext)
+            try:
+                created_user = await users.create(
+                    data={"username": username, "password_hash": hashed},
+                    auto_commit=False,
+                )
+            except IntegrityError as exc:
+                msg = f"User '{username}' already exists."
+                raise click.ClickException(msg) from exc
+            await session.flush()
+            user_id = created_user.id
+            folded_username = created_user.username
+            user_reused = False
+        else:
+            user_id = existing_user.id
+            folded_username = existing_user.username
+            user_reused = True
+
+        memberships = UserTenantMembershipService(session=session)
+        existing_membership = await memberships.get_by_user_and_tenant(
+            user_id, tenant_id
+        )
+        if existing_membership is None:
+            try:
+                await memberships.create(
+                    data={"user_id": user_id, "tenant_id": tenant_id},
+                    auto_commit=False,
+                )
+            except UserAlreadyHasTenantError as exc:
+                # Operator safety: refuse to silently relocate an admin
+                # already bound to a different tenant — the v1 invariant
+                # would block it at insert time anyway, and surfacing it
+                # here lets the rollback clean up the would-be tenant /
+                # user created in this same transaction.
+                msg = (
+                    f"User '{folded_username}' already belongs to a different "
+                    "tenant; refusing to bootstrap."
+                )
+                raise click.ClickException(msg) from exc
+            membership_reused = False
+        else:
+            membership_reused = True
+
+        return _BootstrapResult(
+            tenant_id=tenant_id,
+            username=folded_username,
+            tenant_reused=tenant_reused,
+            user_reused=user_reused,
+            membership_reused=membership_reused,
+        )
+
+    result = asyncio.run(_run_in_session(settings, work))
+    click.echo(
+        f"{'Reused' if result.tenant_reused else 'Created'} tenant "
+        f"{result.tenant_id} ({tenant_display_name})."
+    )
+    click.echo(
+        f"{'Reused' if result.user_reused else 'Created'} user {result.username}."
+    )
+    click.echo(
+        f"{'Reused' if result.membership_reused else 'Created'} membership "
+        f"for user {result.username} on tenant {result.tenant_id}."
+    )
 
 
 # ---------------------------------------------------------------------------

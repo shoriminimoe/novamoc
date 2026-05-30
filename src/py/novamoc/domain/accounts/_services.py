@@ -35,6 +35,16 @@ class TenantService(service.SQLAlchemyAsyncRepositoryService[Tenant]):
 
     repository_type = Repo
 
+    async def get_by_display_name(self, display_name: str) -> Tenant | None:
+        """Return the tenant whose ``display_name`` matches verbatim, or ``None``.
+
+        Used by ``novamoc bootstrap-admin`` (issue #128) as the
+        lookup-or-create anchor for the Development tenant. The match is
+        case-sensitive — operator-supplied display names are treated as
+        opaque labels, unlike usernames which fold for anti-impersonation.
+        """
+        return await self.get_one_or_none(display_name=display_name)
+
 
 class UserService(service.SQLAlchemyAsyncRepositoryService[User]):
     """Service for the global user-account registry (ADR-020).
@@ -92,6 +102,18 @@ class UserTenantMembershipService(
         the call site.
         """
         return await self.get_one_or_none(user_id=user_id)
+
+    async def get_by_user_and_tenant(
+        self, user_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> UserTenantMembership | None:
+        """Return the membership for ``(user_id, tenant_id)`` or ``None``.
+
+        Distinct from :meth:`get_for_user` because ``bootstrap-admin``
+        (issue #128) needs to verify a membership for a *specific*
+        ``(user, tenant)`` pair before deciding to create one — under v2
+        the user may already belong to a different tenant entirely.
+        """
+        return await self.get_one_or_none(user_id=user_id, tenant_id=tenant_id)
 
     async def create(
         self,

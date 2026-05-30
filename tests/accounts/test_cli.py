@@ -25,7 +25,7 @@ import pytest
 from advanced_alchemy.alembic.commands import AlembicCommands
 from advanced_alchemy.base import metadata_registry
 from click.testing import CliRunner
-from sqlalchemy import insert, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Importing the models registers their tables on the shared metadata
@@ -35,7 +35,7 @@ from novamoc.cli import main
 from novamoc.config import DatabaseSettings, Settings
 from novamoc.db._pragmas import register_sqlite_pragmas
 from novamoc.db.config import build_alchemy_config
-from novamoc.db.models._auth import Session, User
+from novamoc.db.models._auth import Session, Tenant, User, UserTenantMembership
 from novamoc.domain.accounts._password import PasswordHasher
 
 if TYPE_CHECKING:
@@ -424,3 +424,249 @@ def test_user_exists_returns_two_on_db_error(
     monkeypatch.setenv("NOVAMOC_DB_URL", bad_url)
     result = runner.invoke(main, ["user", "exists", "ghost"])
     assert result.exit_code == 2, (result.exit_code, result.output, result.stderr)
+
+
+# ---------------------------------------------------------------------------
+# bootstrap-admin (issue #128)
+# ---------------------------------------------------------------------------
+
+
+def _bootstrap_admin_argv(
+    *,
+    display_name: str = "Development",
+    username: str = "admin",
+    password: str = "admin",  # noqa: S107 — test-only credential
+) -> list[str]:
+    return [
+        "bootstrap-admin",
+        "--tenant-display-name",
+        display_name,
+        "--username",
+        username,
+        "--password",
+        password,
+    ]
+
+
+async def _all_tenants(db_url: str) -> list[tuple[uuid.UUID, str]]:
+    eng = create_async_engine(db_url)
+    try:
+        async with eng.connect() as conn:
+            rows = await conn.execute(
+                select(Tenant.__table__.c.id, Tenant.__table__.c.display_name)
+            )
+            return [(r[0], r[1]) for r in rows.all()]
+    finally:
+        await eng.dispose()
+
+
+async def _all_users(db_url: str) -> list[tuple[uuid.UUID, str]]:
+    eng = create_async_engine(db_url)
+    try:
+        async with eng.connect() as conn:
+            rows = await conn.execute(
+                select(User.__table__.c.id, User.__table__.c.username)
+            )
+            return [(r[0], r[1]) for r in rows.all()]
+    finally:
+        await eng.dispose()
+
+
+async def _all_memberships(db_url: str) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    eng = create_async_engine(db_url)
+    try:
+        async with eng.connect() as conn:
+            rows = await conn.execute(
+                select(
+                    UserTenantMembership.__table__.c.user_id,
+                    UserTenantMembership.__table__.c.tenant_id,
+                )
+            )
+            return [(r[0], r[1]) for r in rows.all()]
+    finally:
+        await eng.dispose()
+
+
+async def _drop_memberships(db_url: str) -> None:
+    """Simulate the partial-failure mode from #128 finding #4."""
+    eng = create_async_engine(db_url)
+    try:
+        async with eng.begin() as conn:
+            await conn.execute(delete(UserTenantMembership.__table__))  # ty: ignore[invalid-argument-type]
+    finally:
+        await eng.dispose()
+
+
+async def _drop_users(db_url: str) -> None:
+    """Simulate the partial-failure mode from #128 finding #2 — user
+    creation aborted between ``tenant create`` and ``user create``."""
+    eng = create_async_engine(db_url)
+    try:
+        async with eng.begin() as conn:
+            await conn.execute(delete(UserTenantMembership.__table__))  # ty: ignore[invalid-argument-type]
+            await conn.execute(delete(User.__table__))  # ty: ignore[invalid-argument-type]
+    finally:
+        await eng.dispose()
+
+
+def test_bootstrap_admin_creates_everything_on_clean_db(
+    runner: CliRunner, db_url: str
+) -> None:
+    """Happy path — single command lays down tenant, user, and membership."""
+    result = runner.invoke(main, _bootstrap_admin_argv())
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "Created tenant" in result.stdout
+    assert "Created user admin" in result.stdout
+    assert "Created membership" in result.stdout
+
+    tenants = asyncio.run(_all_tenants(db_url))
+    users = asyncio.run(_all_users(db_url))
+    memberships = asyncio.run(_all_memberships(db_url))
+    assert [t[1] for t in tenants] == ["Development"]
+    assert [u[1] for u in users] == ["admin"]
+    assert len(memberships) == 1
+    assert memberships[0] == (users[0][0], tenants[0][0])
+
+
+def test_bootstrap_admin_is_idempotent(runner: CliRunner, db_url: str) -> None:
+    """Re-running on a fully bootstrapped DB is a no-op (#128 closes the
+    holes in the prior ``user exists admin`` check — the idempotence
+    check now covers the membership row too)."""
+    first = runner.invoke(main, _bootstrap_admin_argv())
+    assert first.exit_code == 0, (first.output, first.stderr)
+
+    second = runner.invoke(main, _bootstrap_admin_argv())
+    assert second.exit_code == 0, (second.output, second.stderr)
+    assert "Reused tenant" in second.stdout
+    assert "Reused user admin" in second.stdout
+    assert "Reused membership" in second.stdout
+
+    tenants = asyncio.run(_all_tenants(db_url))
+    users = asyncio.run(_all_users(db_url))
+    memberships = asyncio.run(_all_memberships(db_url))
+    assert len(tenants) == 1
+    assert len(users) == 1
+    assert len(memberships) == 1
+
+
+def test_bootstrap_admin_recovers_when_membership_missing(
+    runner: CliRunner, db_url: str
+) -> None:
+    """Finding #4 — user + tenant were created but membership never
+    landed. Re-run must restore the membership without creating a new
+    tenant or user."""
+    first = runner.invoke(main, _bootstrap_admin_argv())
+    assert first.exit_code == 0, (first.output, first.stderr)
+    asyncio.run(_drop_memberships(db_url))
+
+    second = runner.invoke(main, _bootstrap_admin_argv())
+    assert second.exit_code == 0, (second.output, second.stderr)
+    assert "Reused tenant" in second.stdout
+    assert "Reused user admin" in second.stdout
+    assert "Created membership" in second.stdout
+
+    tenants = asyncio.run(_all_tenants(db_url))
+    users = asyncio.run(_all_users(db_url))
+    memberships = asyncio.run(_all_memberships(db_url))
+    assert len(tenants) == 1
+    assert len(users) == 1
+    assert len(memberships) == 1
+
+
+def test_bootstrap_admin_recovers_when_user_missing(
+    runner: CliRunner, db_url: str
+) -> None:
+    """Finding #2 — tenant exists from a prior aborted run; ``users``
+    table was rolled back / never written. Re-run must reuse the existing
+    tenant instead of creating another orphan."""
+    first = runner.invoke(main, _bootstrap_admin_argv())
+    assert first.exit_code == 0, (first.output, first.stderr)
+    original_tenant = asyncio.run(_all_tenants(db_url))
+    asyncio.run(_drop_users(db_url))
+
+    second = runner.invoke(main, _bootstrap_admin_argv())
+    assert second.exit_code == 0, (second.output, second.stderr)
+    assert "Reused tenant" in second.stdout
+    assert "Created user admin" in second.stdout
+    assert "Created membership" in second.stdout
+
+    tenants = asyncio.run(_all_tenants(db_url))
+    assert tenants == original_tenant, "tenant id changed across runs"
+
+
+def test_bootstrap_admin_fails_when_user_belongs_to_another_tenant(
+    runner: CliRunner, db_url: str
+) -> None:
+    """Operator safety: if the admin user already belongs to a
+    *different* tenant, the bootstrap must abort with a clear message
+    rather than silently confusing the operator about which tenant the
+    admin lives in."""
+    other = runner.invoke(main, ["tenant", "create", "--display-name", "Other"])
+    assert other.exit_code == 0, other.output
+    runner.invoke(main, ["user", "create", "admin", "--password", "admin"])
+    other_tid = _extract_uuid(other.stdout)
+    runner.invoke(main, ["user", "add-to-tenant", "admin", str(other_tid)])
+
+    result = runner.invoke(main, _bootstrap_admin_argv())
+    assert result.exit_code != 0
+    assert re.search(r"already.*tenant", result.stderr, re.IGNORECASE)
+
+    # Nothing was committed for the Development bootstrap.
+    tenants = asyncio.run(_all_tenants(db_url))
+    assert {t[1] for t in tenants} == {"Other"}
+
+
+def test_bootstrap_admin_folds_username_for_idempotence(
+    runner: CliRunner, db_url: str
+) -> None:
+    """``ADMIN`` and ``admin`` resolve to the same user — re-running
+    with a different case must not duplicate."""
+    first = runner.invoke(
+        main,
+        _bootstrap_admin_argv(username="admin", password="x"),  # noqa: S106 — test-only credential
+    )
+    assert first.exit_code == 0, first.output
+
+    second = runner.invoke(
+        main,
+        _bootstrap_admin_argv(username="ADMIN", password="x"),  # noqa: S106 — test-only credential
+    )
+    assert second.exit_code == 0, second.output
+    assert "Reused user admin" in second.stdout
+
+    users = asyncio.run(_all_users(db_url))
+    assert [u[1] for u in users] == ["admin"]
+
+
+@pytest.mark.parametrize(
+    "argv_kwargs",
+    [
+        {"display_name": ""},
+        {"username": ""},
+        {"password": ""},
+    ],
+)
+def test_bootstrap_admin_rejects_empty_inputs(
+    runner: CliRunner, db_url: str, argv_kwargs: dict[str, str]
+) -> None:
+    result = runner.invoke(main, _bootstrap_admin_argv(**argv_kwargs))
+    assert result.exit_code != 0
+
+
+def test_bootstrap_admin_rolls_back_on_user_create_failure(
+    runner: CliRunner, db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If user creation explodes mid-transaction, the new tenant must
+    not be committed — this is the architectural fix for finding #2,
+    expressed at the single-transaction grain."""
+
+    async def boom(self, *args, **kwargs):
+        msg = "simulated argon2 OOM"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("novamoc.domain.accounts._services.UserService.create", boom)
+    result = runner.invoke(main, _bootstrap_admin_argv())
+    assert result.exit_code != 0
+
+    tenants = asyncio.run(_all_tenants(db_url))
+    assert tenants == [], "tenant must roll back when later step fails"
