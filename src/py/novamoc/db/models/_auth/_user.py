@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from advanced_alchemy.base import UUIDAuditBase
+from advanced_alchemy.base import UUIDv7AuditBase
 from advanced_alchemy.types import DateTimeUTC
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class User(UUIDAuditBase):
+class User(UUIDv7AuditBase):
     """User account identity (ADR-020).
 
-    PK is the inherited UUIDv7 from :class:`UUIDAuditBase`; ``username``
-    is mutable (rename support) — the stable identity is the surrogate
-    UUID, not the login string.
+    PK is the inherited UUIDv7 from :class:`UUIDv7AuditBase`;
+    ``username`` is mutable (rename support) — the stable identity is
+    the surrogate UUID, not the login string.
 
     Not tenant-scoped — a user account is a global identity that links
     to one (eventually many) tenants via ``user_tenant_memberships``.
