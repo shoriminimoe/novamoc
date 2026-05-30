@@ -15,15 +15,29 @@ credential leak, not a styling issue.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from advanced_alchemy.alembic.commands import AlembicCommands
+from advanced_alchemy.base import metadata_registry
 from advanced_alchemy.extensions.litestar import (
     SQLAlchemyAsyncConfig,
     SQLAlchemyPlugin,
 )
+from litestar.testing import AsyncTestClient
 
+from novamoc.asgi import create_app
+from novamoc.config import (
+    AppSettings,
+    AuthSettings,
+    DatabaseSettings,
+    ServerSettings,
+    Settings,
+)
+from novamoc.db.config import build_alchemy_config
 from novamoc.domain.accounts._services import (
     UserService,
     UserTenantMembershipService,
@@ -32,8 +46,9 @@ from tests._constants import DEV_PASSWORD, DEV_USERNAME
 from tests.conftest import seed_dev_admin
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from litestar import Litestar
-    from litestar.testing import AsyncTestClient
 
 
 # The auth registry tables (``users``, ``tenants``, ``user_tenant_memberships``)
@@ -249,3 +264,136 @@ async def test_extra_field_returns_400_invalid_payload_shape(
     body = resp.json()
     assert body["status"] == 400
     assert body["type"] == "http://test/problems/invalid_payload_shape.html"
+
+
+@pytest.fixture
+def timing_settings() -> Settings:
+    """Heavier argon2 so the verify-vs-no-verify gap is unambiguous.
+
+    The conftest settings (``time_cost=1, memory_cost_kib=8192``)
+    keep the e2e suite snappy but bring one verify to only ~10 ms;
+    HTTP round-trip jitter on noisy CI runners can mask a missing
+    verify at that cost. The timing test below mints its own app
+    over these heavier parameters (``time_cost=3,
+    memory_cost_kib=16384``, ~50-80 ms per verify) so a regression
+    that skips verify on any path is unmistakable.
+    """
+    return Settings(
+        db=DatabaseSettings(
+            url="sqlite+aiosqlite:///:memory:",
+            static_pool=True,
+            before_send_handler="autocommit",
+        ),
+        server=ServerSettings(granian=False),
+        app=AppSettings(docs_base_url="http://test"),
+        auth=AuthSettings(
+            argon2_time_cost=3,
+            argon2_memory_cost_kib=16384,
+            argon2_parallelism=1,
+            session_cookie_secure=False,
+        ),
+    )
+
+
+@pytest.fixture
+async def timing_app(timing_settings: Settings) -> AsyncIterator[Litestar]:
+    """A live ``Litestar`` over ``timing_settings``.
+
+    Re-implements the conftest's ``app`` fixture against the heavier
+    settings — the conftest fixture takes ``settings`` from the
+    ambient resolution which is the cheap-argon2 default, and there
+    is no parametrize hook into it.
+    """
+    alchemy_config = build_alchemy_config(timing_settings)
+    engine = alchemy_config.get_engine()
+    async with engine.begin() as conn:
+        for key in metadata_registry:
+            await conn.run_sync(metadata_registry[key].create_all)
+    await asyncio.to_thread(AlembicCommands(alchemy_config).stamp, "head")
+    try:
+        yield create_app(settings=timing_settings, alchemy_config=alchemy_config)
+    finally:
+        await engine.dispose()
+
+
+async def test_all_401_paths_have_comparable_latency(
+    timing_app: Litestar,
+) -> None:
+    """Anti-enumeration: timing-equal across the four 401 paths (#134).
+
+    ADR-020 promises the byte-identical 401 body is anti-enumeration;
+    that promise also has to hold at the timing layer or an attacker
+    reads the oracle through latency instead of through the wire
+    body. Every path must incur exactly one argon2id verify.
+
+    Tolerance: max/min ratio <= 1.7x and absolute spread <= 60 ms.
+    With the bug present at default conftest cost the spread was
+    ~17 ms (ratio ~2x); the ``timing_app`` fixture raises argon2
+    cost so one verify is ~50-80 ms — a regression that skips
+    verify on any path drops that path's latency by ~50 ms, sitting
+    well above HTTP round-trip jitter. Three trials per path, take
+    the minimum, smooths over GC pauses and event-loop hiccups.
+    """
+    async with AsyncTestClient(timing_app) as client:
+        await seed_dev_admin(timing_app)
+
+        async def _time_login(username: str, password: str) -> float:
+            samples = []
+            for _ in range(3):
+                t0 = time.perf_counter()
+                resp = await client.post(
+                    "/auth/login",
+                    json={"username": username, "password": password},
+                )
+                samples.append(time.perf_counter() - t0)
+                assert resp.status_code == 401
+            return min(samples)
+
+        # Path 1: wrong password (user exists, enabled, has membership).
+        wrong_pw = await _time_login(DEV_USERNAME, "not-the-password")
+
+        # Path 2: unknown username (no row at all).
+        unknown = await _time_login("ghost", DEV_PASSWORD)
+
+        # Path 3: disabled user (row present, ``disabled_at`` set).
+        await _disable_admin(timing_app)
+        disabled = await _time_login(DEV_USERNAME, DEV_PASSWORD)
+
+        # Path 4: re-enable the user, drop the membership, measure.
+        async with await _session_factory(timing_app) as db_session:
+            users = UserService(session=db_session)
+            memberships = UserTenantMembershipService(session=db_session)
+            user = await users.get_by_username(DEV_USERNAME)
+            assert user is not None
+            await users.update(
+                data={"disabled_at": None},
+                item_id=user.id,
+                auto_commit=False,
+            )
+            membership = await memberships.get_for_user(user.id)
+            assert membership is not None
+            await memberships.delete(
+                item_id=(membership.user_id, membership.tenant_id),
+                auto_commit=False,
+            )
+            await db_session.commit()
+        zero_membership = await _time_login(DEV_USERNAME, DEV_PASSWORD)
+
+    timings = {
+        "wrong_pw": wrong_pw,
+        "unknown": unknown,
+        "disabled": disabled,
+        "zero_membership": zero_membership,
+    }
+    fastest = min(timings.values())
+    slowest = max(timings.values())
+    spread = slowest - fastest
+    ratio = slowest / fastest if fastest > 0 else float("inf")
+
+    summary = ", ".join(f"{k}={v * 1000:.1f}ms" for k, v in timings.items())
+    diagnostic = (
+        f"latency spread above anti-enumeration budget: {summary} "
+        f"(ratio={ratio:.2f}x, spread={spread * 1000:.1f}ms)"
+    )
+    assert ratio <= 1.7, diagnostic
+    assert spread <= 0.060, diagnostic

@@ -8,7 +8,10 @@ against the in-memory engine fixtures.
 Anti-enumeration: every failure path in :func:`login` (unknown user,
 wrong password, disabled user, zero memberships) raises the same
 :class:`LoginFailedError` so the wire byte-pattern is identical across
-shapes (ADR-020).
+shapes (ADR-020). Every path also incurs exactly one argon2id verify
+call so the four branches are timing-equivalent — the unknown-user
+and disabled-user branches verify against a dummy hash with the
+hasher's own cost parameters (issue #134).
 
 The session middleware that gives ``request.set_session`` /
 ``request.clear_session`` their teeth lands in M5.11; the handlers here
@@ -82,14 +85,29 @@ async def login(
     upgrade: the user's ``password_hash`` is rewritten with the current
     cost parameters so cost rotations propagate as users log in.
 
+    Anti-enumeration extends past the wire body to the timing layer
+    (issue #134): the unknown-user and disabled-user branches verify
+    against a dummy hash whose cost parameters match the live hasher,
+    so an attacker cannot distinguish "user does not exist" /
+    "user is disabled" from "wrong password" by latency. The verify
+    is the constant-time component; no artificial sleep.
+
     Raises:
         LoginFailedError: any credential-rejection path.
     """
     user = await users.get_by_username(data.username)
+    plaintext = data.password.get_secret_value()
+
+    # Unknown user / disabled user: still spend an argon2id verify
+    # against a dummy hash so the latency of these branches matches a
+    # real verify (ADR-020 anti-enumeration, #134). The dummy hash
+    # carries this hasher's cost parameters so the work is parity by
+    # construction; the verify always returns False, which the caller
+    # discards.
     if user is None or user.disabled_at is not None:
+        password_hasher.verify(password_hasher.dummy_hash(), plaintext)
         raise LoginFailedError
 
-    plaintext = data.password.get_secret_value()
     if not password_hasher.verify(user.password_hash, plaintext):
         raise LoginFailedError
 

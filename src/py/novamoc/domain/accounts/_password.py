@@ -14,6 +14,7 @@ no I/O) and a frozen dataclass cannot hold a mutable private attribute without
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import argon2
@@ -70,6 +71,28 @@ class PasswordHasher:
         """
         return self._inner().hash(password)
 
+    def dummy_hash(self) -> str:
+        """Return a fixed-content argon2id hash with this instance's parameters.
+
+        The hash is deterministic per ``(time_cost, memory_cost_kib,
+        parallelism)`` triple and cached at module level so each
+        parameter set pays the construction cost only once. The login
+        handler (M5.10) calls this on the unknown-user / disabled-user
+        branches to feed :meth:`verify` real work whose runtime
+        matches a real user's verify — closing the anti-enumeration
+        timing oracle (issue #134, ADR-020).
+
+        The plaintext (``""``), salt (whatever argon2-cffi generates),
+        and embedded encoding don't matter to callers; ``verify`` will
+        always reject and timing parity is the sole correctness
+        property.
+
+        Returns:
+            An encoded ``$argon2id$...`` string with this instance's
+            cost parameters baked in.
+        """
+        return _build_dummy_hash(self.time_cost, self.memory_cost_kib, self.parallelism)
+
     def verify(self, encoded: str, password: str) -> bool:
         """Verify *password* against an argon2id-encoded hash.
 
@@ -108,3 +131,19 @@ class PasswordHasher:
             return self._inner().check_needs_rehash(encoded)
         except argon2.exceptions.InvalidHashError:
             return True
+
+
+@functools.cache
+def _build_dummy_hash(time_cost: int, memory_cost_kib: int, parallelism: int) -> str:
+    """Build a one-time argon2id hash with the given parameters.
+
+    Cached on the parameter triple so each unique cost configuration
+    pays the hash cost exactly once per process. The plaintext is
+    fixed (empty string) — only the cost-parameter parity matters to
+    callers.
+    """
+    return argon2.PasswordHasher(
+        time_cost=time_cost,
+        memory_cost=memory_cost_kib,
+        parallelism=parallelism,
+    ).hash("")
