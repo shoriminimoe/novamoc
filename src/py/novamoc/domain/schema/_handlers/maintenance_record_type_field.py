@@ -2,11 +2,10 @@
 
 Mirror of :mod:`novamoc.domain.schema._handlers.asset_type_field`
 against the maintenance-record-type-field service. Per ADR-008
-``create`` and ``activate`` are separate verbs.
-
-TODO(#7): The ``clear`` handler appends a change-log row but does not
-yet wipe field values from the data-projection store; gated on the
-data-projection spec.
+``create`` and ``activate`` are separate verbs; ``clear`` wipes the
+data projection (``maintenance_record_field_values`` rows + the
+field's key in each ``maintenance_records.properties`` JSON) in the
+same transaction as the schema-change-log append (ADR-008 / ADR-019).
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from novamoc.domain._errors import (
 )
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
+from novamoc.domain.schema._projection_wipe import FieldFamily, wipe_field_projection
 
 if TYPE_CHECKING:
     from novamoc.domain.accounts import RequestAuth
@@ -151,11 +151,15 @@ async def clear(
     auth: RequestAuth,
     req: _payloads.ClearMaintenanceRecordTypeField,
 ) -> SchemaCommitOutcome:
-    # TODO(#7): Wipe field values from the data-projection store once EAV
-    # projection tables land.
     obj = await services.maintenance_record_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    await wipe_field_projection(
+        services.maintenance_record_type_field.repository.session,
+        family=FieldFamily.MAINTENANCE_RECORD,
+        tenant_id=auth.tenant_id,
+        field_id=req.entity_id,
+    )
     row = await services.change_log.append(
         command=SchemaCommand.CLEAR_MAINTENANCE_RECORD_TYPE_FIELD,
         entity_id=req.entity_id,

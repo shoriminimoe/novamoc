@@ -6,10 +6,12 @@ validation) and inserts a new row; ``activate`` takes ``{}`` and only
 flips ``active = true`` on an existing row. ``create`` validates that
 the parent asset_type exists; a deactivated parent is allowed.
 
-TODO(#7): The ``clear`` handler appends a change-log row but does
-**not** wipe field values from the data-projection store. That wipe is
-gated on the data-projection spec and will be implemented once the EAV
-projection tables land.
+``clear`` (ADR-008) wipes the field's rows from the data projection
+in the same transaction as the schema-change-log append: every
+``asset_field_values`` row with ``field_id = <entity_id>`` is deleted,
+and every ``assets.properties`` JSON that contains the key is rewritten
+to set the value to JSON ``null`` (ADR-019). The actual SQL lives in
+:mod:`novamoc.domain.schema._projection_wipe`.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from novamoc.domain._errors import (
 )
 from novamoc.domain.schema._commands import SchemaCommand
 from novamoc.domain.schema._outcomes import Outcome, SchemaCommitOutcome
+from novamoc.domain.schema._projection_wipe import FieldFamily, wipe_field_projection
 
 if TYPE_CHECKING:
     from novamoc.domain.accounts import RequestAuth
@@ -152,11 +155,15 @@ async def deactivate(
 async def clear(
     services: ServiceBundle, auth: RequestAuth, req: _payloads.ClearAssetTypeField
 ) -> SchemaCommitOutcome:
-    # TODO(#7): Wipe field values from the data-projection store once EAV projection
-    # tables land. For now only append the change-log row.
     obj = await services.asset_type_field.get_one_or_none(id=req.entity_id)
     if obj is None:
         raise EntityNotFoundError(code=ErrorCode.ENTITY_NOT_FOUND)
+    await wipe_field_projection(
+        services.asset_type_field.repository.session,
+        family=FieldFamily.ASSET,
+        tenant_id=auth.tenant_id,
+        field_id=req.entity_id,
+    )
     row = await services.change_log.append(
         command=SchemaCommand.CLEAR_ASSET_TYPE_FIELD,
         entity_id=req.entity_id,
