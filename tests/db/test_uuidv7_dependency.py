@@ -7,9 +7,15 @@ and logs a warning — silently violating ADR-020's UUIDv7 commitment for
 the ``sessions`` registry table, which uses ``UUIDv7Base`` via
 ``SessionModelMixin``.
 
-The fix is to declare ``uuid-utils`` in ``[project].dependencies`` so the
-real ``uuid7`` generator is always available. This test pins that
-contract: the ``Session`` model's ``id`` PK must be a UUIDv7.
+The fix is twofold:
+
+1. Declare ``uuid-utils`` in ``[project].dependencies`` so the real
+   ``uuid7`` generator is always available. This is pinned by
+   :func:`test_session_pk_is_uuidv7`.
+2. Switch the ``Tenant`` and ``User`` registry models to
+   :class:`UUIDv7AuditBase` so their PKs actually honour ADR-020 line 46
+   ("Tenant ids become UUIDv7"). Pinned by
+   :func:`test_tenant_pk_is_uuidv7` and :func:`test_user_pk_is_uuidv7`.
 """
 
 from __future__ import annotations
@@ -20,6 +26,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from novamoc.db.models._auth._session import Session
+from novamoc.db.models._auth._tenant import Tenant
+from novamoc.db.models._auth._user import User
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,4 +52,40 @@ async def test_session_pk_is_uuidv7(session: AsyncSession) -> None:
     assert row.id.version == 7, (
         f"Expected UUIDv7 for sessions.id; got version {row.id.version}. "
         "Is `uuid-utils` installed?"
+    )
+
+
+@pytest.mark.no_tenant
+async def test_tenant_pk_is_uuidv7(session: AsyncSession) -> None:
+    """``Tenant.id`` is a UUIDv7 — pins ADR-020 line 46.
+
+    The docstring on :class:`Tenant` advertises a UUIDv7 PK, and
+    ADR-020 mandates it explicitly. The base class must therefore be
+    :class:`UUIDv7AuditBase` (not :class:`UUIDAuditBase`, whose
+    ``default_factory`` produces ``uuid4``).
+    """
+    row = Tenant(display_name="probe")
+    session.add(row)
+    await session.flush()
+    assert row.id.version == 7, (
+        f"Expected UUIDv7 for tenants.id; got version {row.id.version}. "
+        "Is `Tenant` inheriting from `UUIDv7AuditBase`?"
+    )
+
+
+@pytest.mark.no_tenant
+async def test_user_pk_is_uuidv7(session: AsyncSession) -> None:
+    """``User.id`` is a UUIDv7 — pins ADR-020 line 46.
+
+    The docstring on :class:`User` advertises a UUIDv7 PK, and ADR-020
+    mandates it explicitly. The base class must therefore be
+    :class:`UUIDv7AuditBase` (not :class:`UUIDAuditBase`, whose
+    ``default_factory`` produces ``uuid4``).
+    """
+    row = User(username="probe", password_hash="hash")  # noqa: S106
+    session.add(row)
+    await session.flush()
+    assert row.id.version == 7, (
+        f"Expected UUIDv7 for users.id; got version {row.id.version}. "
+        "Is `User` inheriting from `UUIDv7AuditBase`?"
     )
