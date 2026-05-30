@@ -164,6 +164,56 @@ async def test_get_for_user_returns_membership(session: AsyncSession) -> None:
     assert found.tenant_id == tenant.id
 
 
+async def test_get_by_user_and_tenant_returns_none_when_absent(
+    session: AsyncSession,
+) -> None:
+    user = await _make_user(session, "naomi")
+    tenant = await _make_tenant(session, "Alpha")
+    svc = UserTenantMembershipService(session=session)
+
+    assert await svc.get_by_user_and_tenant(user.id, tenant.id) is None
+
+
+async def test_get_by_user_and_tenant_returns_existing_membership(
+    session: AsyncSession,
+) -> None:
+    """``bootstrap-admin`` (issue #128) leans on this to detect the
+    "user and tenant exist but membership never landed" partial-failure
+    case from a prior aborted run."""
+    user = await _make_user(session, "oscar")
+    tenant = await _make_tenant(session, "Alpha")
+    svc = UserTenantMembershipService(session=session)
+
+    created = await svc.create(
+        data={"user_id": user.id, "tenant_id": tenant.id},
+        auto_commit=False,
+    )
+    await session.flush()
+
+    found = await svc.get_by_user_and_tenant(user.id, tenant.id)
+    assert found is not None
+    assert (found.user_id, found.tenant_id) == (created.user_id, created.tenant_id)
+
+
+async def test_get_by_user_and_tenant_distinguishes_users(
+    session: AsyncSession,
+) -> None:
+    """Asymmetric arguments — looking up the *wrong* user against a
+    valid tenant must miss, not silently return some other user's row."""
+    alice = await _make_user(session, "patty")
+    bob = await _make_user(session, "quincy")
+    tenant = await _make_tenant(session, "Alpha")
+    svc = UserTenantMembershipService(session=session)
+
+    await svc.create(
+        data={"user_id": alice.id, "tenant_id": tenant.id},
+        auto_commit=False,
+    )
+    await session.flush()
+
+    assert await svc.get_by_user_and_tenant(bob.id, tenant.id) is None
+
+
 async def test_string_form_uuid_in_dict_payload_is_extracted(
     session: AsyncSession,
 ) -> None:
