@@ -139,6 +139,7 @@ runtime-evaluated-base-classes = [
     # mapper-configuration time.
     "advanced_alchemy.base.UUIDAuditBase",
     "advanced_alchemy.base.UUIDBase",
+    "advanced_alchemy.base.UUIDv7AuditBase",
     "advanced_alchemy.base.DefaultBase",
     # msgspec serialization / decoding introspects struct fields.
     "msgspec.Struct",
