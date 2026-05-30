@@ -132,4 +132,6 @@ CLAUDE.local.md
 # Artifacts
 *.db
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
