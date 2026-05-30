@@ -167,3 +167,38 @@ async def test_post_schema_problem_includes_instance_and_extras(client) -> None:
     assert err["name"] == name
     # Per-occurrence instance.
     assert err["instance"].startswith("urn:uuid:")
+
+
+async def test_post_schema_case_insensitive_collision_includes_existing_name(
+    client,
+) -> None:
+    """A case-only collision returns 409 ``name_reserved`` and the problem
+    body carries ``existing_name`` so the UI can show ``already in use as
+    'Bwah'``."""
+    canonical = f"Bwah-{uuid4().hex[:8]}"
+    create = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type",
+            "entity_id": str(uuid4()),
+            "payload": {"name": canonical},
+        },
+    )
+    assert create.status_code in (200, 201), create.text
+
+    offending = canonical.lower()
+    conflict = await client.post(
+        "/schema",
+        json={
+            "type": "create_asset_type",
+            "entity_id": str(uuid4()),
+            "payload": {"name": offending},
+        },
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.headers["content-type"].startswith("application/problem+json")
+    err = conflict.json()
+    assert err["type"] == "http://test/problems/name_reserved.html"
+    assert err["title"] == "Name reserved"
+    assert err["name"] == offending
+    assert err["existing_name"] == canonical

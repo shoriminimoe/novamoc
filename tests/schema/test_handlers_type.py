@@ -182,6 +182,71 @@ async def test_create_id_collision(
     assert exc_info.value.code is ErrorCode.NAME_RESERVED
 
 
+@_SPECS
+async def test_create_case_insensitive_collision_reports_existing_name(
+    session: AsyncSession, services: ServiceBundle, spec: TypeSpec
+) -> None:
+    """Case differs only — collision fires and ``existing_name`` extra carries the
+    canonical name already in the DB."""
+    await _make(session, services, spec, active=True)
+    offending = spec.sample_name.lower()
+    assert offending != spec.sample_name, (
+        "test spec must use a name with at least one upper-case letter"
+    )
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.create_cmd(
+                entity_id=uuid4(),
+                payload=spec.create_payload_cls(name=offending),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["name"] == offending
+    assert exc_info.value.extras["existing_name"] == spec.sample_name
+
+
+@_SPECS
+async def test_create_preserves_original_case(
+    session: AsyncSession, services: ServiceBundle, spec: TypeSpec
+) -> None:
+    """Comparison is case-insensitive; the visible name keeps its case."""
+    eid = uuid4()
+    name = spec.sample_name
+    await dispatch(
+        services,
+        _AUTH,
+        spec.create_cmd(
+            entity_id=eid,
+            payload=spec.create_payload_cls(name=name),
+        ),
+    )
+    await session.flush()
+    row = await _service(services, spec).get_one_or_none(tenant_id=_T, id=eid)
+    assert row is not None
+    assert row.name == name
+
+
+@_SPECS
+async def test_create_collision_with_tombstoned_row(
+    session: AsyncSession, services: ServiceBundle, spec: TypeSpec
+) -> None:
+    """A deactivated row still reserves the name across cases."""
+    await _make(session, services, spec, active=False)
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.create_cmd(
+                entity_id=uuid4(),
+                payload=spec.create_payload_cls(name=spec.sample_name.lower()),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["existing_name"] == spec.sample_name
+
+
 # --- activate ---
 
 
@@ -285,6 +350,50 @@ async def test_update_missing_raises_not_found(
                 payload=spec.update_payload_cls(name="X"),
             ),
         )
+
+
+@_SPECS
+async def test_update_rename_case_insensitive_collision(
+    session: AsyncSession, services: ServiceBundle, spec: TypeSpec
+) -> None:
+    """Renaming to a name that differs only in case from another row is rejected,
+    and the ``existing_name`` extra carries the canonical name."""
+    # Two rows with distinct names.
+    existing_id = uuid4()
+    await _service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": existing_id,
+            "name": spec.sample_name,
+            "active": True,
+        },
+        auto_commit=False,
+    )
+    rename_target = spec.rename_to
+    other_id = uuid4()
+    await _service(services, spec).create(
+        data={
+            "tenant_id": _T,
+            "id": other_id,
+            "name": rename_target,
+            "active": True,
+        },
+        auto_commit=False,
+    )
+    await session.flush()
+    # Rename ``rename_target`` row to a case-variant of ``sample_name`` —
+    # collision against ``existing_id``.
+    with pytest.raises(ConflictError) as exc_info:
+        await dispatch(
+            services,
+            _AUTH,
+            spec.update_cmd(
+                entity_id=other_id,
+                payload=spec.update_payload_cls(name=spec.sample_name.lower()),
+            ),
+        )
+    assert exc_info.value.code is ErrorCode.NAME_RESERVED
+    assert exc_info.value.extras["existing_name"] == spec.sample_name
 
 
 @_SPECS
