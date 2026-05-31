@@ -25,6 +25,8 @@ class ErrorCode(StrEnum):
     VALUE_TYPE_MISMATCH = "value_type_mismatch"
     LOGIN_FAILED = "login_failed"
     USER_ALREADY_HAS_TENANT = "user_already_has_tenant"
+    TENANT_MISMATCH = "tenant_mismatch"
+    HANDSHAKE_TIMEOUT = "handshake_timeout"
 
 
 _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
@@ -54,6 +56,12 @@ _DEFAULT_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.USER_ALREADY_HAS_TENANT: (
         "This user already belongs to a tenant. v1 supports only one "
         "tenant per user; switching active tenant is not yet available."
+    ),
+    ErrorCode.TENANT_MISMATCH: (
+        "The hello frame's tenant_id does not match the authenticated tenant."
+    ),
+    ErrorCode.HANDSHAKE_TIMEOUT: (
+        "No hello frame was received within the handshake window."
     ),
 }
 

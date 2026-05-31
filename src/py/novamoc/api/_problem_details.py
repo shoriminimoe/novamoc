@@ -54,6 +54,8 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.VALUE_TYPE_MISMATCH: "Value type mismatch",
     ErrorCode.LOGIN_FAILED: "Login failed",
     ErrorCode.USER_ALREADY_HAS_TENANT: "User already has a tenant",
+    ErrorCode.TENANT_MISMATCH: "Tenant mismatch",
+    ErrorCode.HANDSHAKE_TIMEOUT: "Handshake timeout",
 }
 
 
@@ -69,6 +71,8 @@ _STATUS_CODES: dict[ErrorCode, int] = {
     ErrorCode.VALUE_TYPE_MISMATCH: 400,
     ErrorCode.LOGIN_FAILED: 401,
     ErrorCode.USER_ALREADY_HAS_TENANT: 409,
+    ErrorCode.TENANT_MISMATCH: 400,
+    ErrorCode.HANDSHAKE_TIMEOUT: 400,
 }
 
 
