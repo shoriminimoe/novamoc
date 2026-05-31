@@ -24,6 +24,42 @@ const API_URL = `http://127.0.0.1:${API_PORT}`
 // defined. The cert is self-signed, hence ``ignoreHTTPSErrors`` below.
 const APP_URL = `https://127.0.0.1:${APP_PORT}`
 
+// ``E2E_SKIP_API=1`` runs only the Vite dev server. Some e2e tests
+// (e.g. the OPFS-probe blocking-UI test, issue #140) don't touch the
+// Python API at all — the layout's probe redirects to ``/unsupported``
+// before any backend call — and the existing in-memory API webServer
+// doesn't bootstrap Alembic (ADR-021), so it currently crashes at
+// startup. Until a proper test harness lands (see issue #81), opting
+// out keeps the SPA-only e2e tests runnable.
+const SKIP_API = process.env.E2E_SKIP_API === '1'
+
+const apiWebServer = {
+  command: `uv run litestar --app novamoc.asgi:create_app run --host 127.0.0.1 --port ${API_PORT}`,
+  cwd: '../../..',
+  env: {
+    NOVAMOC_DB_URL: 'sqlite+aiosqlite:///:memory:',
+    NOVAMOC_DB_STATIC_POOL: 'true',
+  },
+  url: `${API_URL}/openapi`,
+  reuseExistingServer: false,
+  timeout: 60_000,
+  stdout: 'pipe' as const,
+  stderr: 'pipe' as const,
+}
+
+const appWebServer = {
+  command: `npm run dev -- --port ${APP_PORT} --strictPort`,
+  env: {
+    NOVAMOC_API_URL: API_URL,
+  },
+  url: APP_URL,
+  ignoreHTTPSErrors: true,
+  reuseExistingServer: false,
+  timeout: 30_000,
+  stdout: 'pipe' as const,
+  stderr: 'pipe' as const,
+}
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -36,32 +72,6 @@ export default defineConfig({
     trace: 'retain-on-failure',
     ignoreHTTPSErrors: true,
   },
-  webServer: [
-    {
-      command: `uv run litestar --app novamoc.asgi:create_app run --host 127.0.0.1 --port ${API_PORT}`,
-      cwd: '../../..',
-      env: {
-        NOVAMOC_DB_URL: 'sqlite+aiosqlite:///:memory:',
-        NOVAMOC_DB_STATIC_POOL: 'true',
-      },
-      url: `${API_URL}/openapi`,
-      reuseExistingServer: false,
-      timeout: 60_000,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-    {
-      command: `npm run dev -- --port ${APP_PORT} --strictPort`,
-      env: {
-        NOVAMOC_API_URL: API_URL,
-      },
-      url: APP_URL,
-      ignoreHTTPSErrors: true,
-      reuseExistingServer: false,
-      timeout: 30_000,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  ],
+  webServer: SKIP_API ? [appWebServer] : [apiWebServer, appWebServer],
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
 })

@@ -3,6 +3,7 @@
 	import { onMount, setContext, type Snippet } from 'svelte'
 	import { goto } from '$app/navigation'
 	import { page } from '$app/state'
+	import { probeOpfs } from '$lib/db/probe'
 
 	type Principal = {
 		user: { id: string; username: string }
@@ -27,6 +28,24 @@
 	onMount(() => {
 		void (async () => {
 			try {
+				// OPFS feature probe (ADR-003) runs before anything else —
+				// if the browser can't run SQLite-WASM-over-OPFS we route
+				// to the blocking error page and never touch auth or data.
+				// On the ``/unsupported`` route itself we skip both the
+				// probe and the auth fetch — the user is already blocked
+				// from doing anything, and re-running the probe would
+				// either redirect-loop or hide the error page on a
+				// transient pass.
+				if (page.url.pathname === '/unsupported') {
+					return
+				}
+
+				const probe = await probeOpfs()
+				if (!probe.ok) {
+					await goto(`/unsupported?missing=${probe.missing}`, { replaceState: true })
+					return
+				}
+
 				const response = await fetch('/auth/me', { credentials: 'include' })
 				if (response.status === 200) {
 					principal = (await response.json()) as Principal
