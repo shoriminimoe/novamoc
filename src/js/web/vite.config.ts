@@ -57,6 +57,12 @@ export default defineConfig({
   ...(process.env.VITEST
     ? { resolve: { conditions: ['browser'] } }
     : {}),
+  // ``@sqlite.org/sqlite-wasm`` ships its own worker + ``.wasm`` assets and
+  // breaks if esbuild pre-bundles it (the bundled copy can't resolve the
+  // sibling wasm). Excluding it from dep optimization lets Vite serve those
+  // assets as-is, same-origin — which the COOP/COEP middleware above already
+  // permits under cross-origin isolation (ADR-003).
+  optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
   server: {
     proxy: Object.fromEntries(
       API_PROXY_PATHS.map((p) => [p, { target: API_PROXY_TARGET, changeOrigin: false }]),
@@ -80,6 +86,13 @@ export default defineConfig({
         // The worker body does real OPFS I/O in DedicatedWorker scope —
         // not reachable in jsdom; covered by the Playwright e2e instead.
         'src/lib/db/probe.worker.ts',
+        // The SQLite-WASM DB worker and its main-thread client can only run
+        // against OPFS in a worker — sync access handles and the "opfs"
+        // VFS's Atomics.wait are illegal on the main thread. The in-memory
+        // path (and openLocalDb's caching) is covered here; the OPFS path is
+        // covered by tests/e2e/db-bootstrap.spec.ts.
+        'src/lib/db/worker.ts',
+        'src/lib/db/worker-handle.ts',
       ],
       // No `thresholds:` block — the ratchet does the gating. Setting a
       // threshold here would either duplicate the ratchet's role or fight it.
