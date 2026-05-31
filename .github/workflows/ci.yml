@@ -139,6 +139,37 @@ jobs:
           path: src/js/web/coverage/
           retention-days: 14
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/js/web/package-lock.json
+
+      # e2e boots the real Python API, so the job needs the uv venv too.
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+      - run: cd src/js/web && npm ci
+
+      - run: cd src/js/web && npx playwright install --with-deps chromium
+      - run: just test-e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: src/js/web/playwright-report/
+          retention-days: 14
+
   ratchet:
     runs-on: ubuntu-latest
     timeout-minutes: 5
