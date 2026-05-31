@@ -200,10 +200,12 @@ async def test_registry_subscribe_unsubscribe_called(
     with (await client.websocket_connect("/sync/live")) as ws:
         ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
         assert ws.receive_json()["type"] == "welcome"
-    # The WebSocket ASGI task runs on the shared portal's background thread,
-    # not the test's event loop, so asyncio.sleep(0) is not enough to wait
-    # for the server's finally block to run unsubscribe.  A short real-time
-    # sleep gives the portal thread time to drain.
-    await asyncio.sleep(0.05)
+    # The WebSocket ASGI task runs on the shared portal's background
+    # thread, so unsubscribe runs slightly after the `with` block exits.
+    # Poll (bounded) until it lands instead of guessing a fixed delay.
+    for _ in range(200):
+        if spy.unsubscribed:
+            break
+        await asyncio.sleep(0.01)
     assert spy.subscribed == [DEV_TENANT_ID]
     assert spy.unsubscribed == [DEV_TENANT_ID]
