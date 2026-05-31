@@ -33,6 +33,7 @@
     "vitest": "^4.1.6"
   },
   "dependencies": {
+    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "@tailwindcss/vite": "^4.2.4",
     "tailwindcss": "^4.2.4"
   }
