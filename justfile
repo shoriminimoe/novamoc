@@ -103,15 +103,19 @@ typecheck-js:
 test-py:
 	uv run pytest
 
-# Test javascript (Vitest component tests + Playwright browser e2e)
-test-js: test-js-unit test-js-e2e
+# Test javascript (Vitest component tests). Browser e2e is `test-e2e`,
+# kept out of the fast `just test` / `just check` loop because it boots
+# the API (migrate + seed) and a real Chromium — see `test-e2e`.
+test-js: test-js-unit
 
 # Vitest component tests in jsdom
 test-js-unit:
 	cd src/js/web && npm run test
 
-# Playwright browser e2e tests
-test-js-e2e:
+# Browser e2e (Playwright). Kept out of `test`/`check`: it boots the API
+# against a throwaway DB and drives a real browser — too heavy for the
+# inner loop. Runs in its own CI job.
+test-e2e:
 	cd src/js/web && npm run test:e2e
 
 # Run both test suites under coverage and write artifacts

@@ -1,64 +1,31 @@
 /**
- * Playwright config for novaMOC SPA browser e2e tests.
+ * Playwright config for the novaMOC SPA browser e2e tests.
  *
- * Boots a dedicated API + Vite pair on non-default ports so the test
- * run is isolated from any local dev servers and from the shared
- * ``novamoc.sqlite`` dev DB:
- *
- * - API at ``E2E_API_PORT`` (8765) with an in-memory aiosqlite +
- *   ``static_pool=true`` so all requests share the same engine.
- * - Vite at ``E2E_APP_PORT`` (5174) with ``NOVAMOC_API_URL`` pointing
- *   the dev proxy at the test API.
- *
- * ``cwd: '../../..'`` on the API webServer is the repo root from
- * ``src/js/web/``, where ``uv run`` finds ``pyproject.toml``.
+ * Boots an isolated API + Vite pair off the shared dev DB. The API runs
+ * against a throwaway file SQLite DB because the startup gate (ADR-021)
+ * refuses a DB that isn't at Alembic HEAD, and an in-memory DB wouldn't
+ * survive the gap between a separate migrate step and `litestar run` —
+ * so we migrate + seed a file, then serve that same file.
  */
+
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
 
 const API_PORT = 8765
 const APP_PORT = 5174
 const API_URL = `http://127.0.0.1:${API_PORT}`
-// Vite serves HTTPS via ``@vitejs/plugin-basic-ssl`` so the browser sees
-// a secure context and ``crypto.randomUUID`` / ``crypto.subtle`` are
-// defined. The cert is self-signed, hence ``ignoreHTTPSErrors`` below.
-const APP_URL = `https://127.0.0.1:${APP_PORT}`
+// Plain HTTP on a loopback origin: it's a secure context even without
+// TLS (so crypto + crossOriginIsolated still work), and it dodges the
+// self-signed-cert probe and the IPv4/IPv6 localhost mismatch that make
+// basic-ssl flaky on CI.
+const APP_URL = `http://127.0.0.1:${APP_PORT}`
 
-// ``E2E_SKIP_API=1`` runs only the Vite dev server. Some e2e tests
-// (e.g. the OPFS-probe blocking-UI test, issue #140) don't touch the
-// Python API at all — the layout's probe redirects to ``/unsupported``
-// before any backend call — and the existing in-memory API webServer
-// doesn't bootstrap Alembic (ADR-021), so it currently crashes at
-// startup. Until a proper test harness lands (see issue #81), opting
-// out keeps the SPA-only e2e tests runnable.
-const SKIP_API = process.env.E2E_SKIP_API === '1'
-
-const apiWebServer = {
-  command: `uv run litestar --app novamoc.asgi:create_app run --host 127.0.0.1 --port ${API_PORT}`,
-  cwd: '../../..',
-  env: {
-    NOVAMOC_DB_URL: 'sqlite+aiosqlite:///:memory:',
-    NOVAMOC_DB_STATIC_POOL: 'true',
-  },
-  url: `${API_URL}/openapi`,
-  reuseExistingServer: false,
-  timeout: 60_000,
-  stdout: 'pipe' as const,
-  stderr: 'pipe' as const,
-}
-
-const appWebServer = {
-  command: `npm run dev -- --port ${APP_PORT} --strictPort`,
-  env: {
-    NOVAMOC_API_URL: API_URL,
-  },
-  url: APP_URL,
-  ignoreHTTPSErrors: true,
-  reuseExistingServer: false,
-  timeout: 30_000,
-  stdout: 'pipe' as const,
-  stderr: 'pipe' as const,
-}
+// Outside the repo tree so there's nothing to gitignore. aiosqlite
+// needs four slashes for an absolute path (the leading `/` is the third).
+const E2E_DB_PATH = join(tmpdir(), 'novamoc-e2e.sqlite')
+const E2E_DB_URL = `sqlite+aiosqlite:///${E2E_DB_PATH}`
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -70,8 +37,43 @@ export default defineConfig({
   use: {
     baseURL: APP_URL,
     trace: 'retain-on-failure',
-    ignoreHTTPSErrors: true,
   },
-  webServer: SKIP_API ? [appWebServer] : [apiWebServer, appWebServer],
+  webServer: [
+    {
+      // Drop any stale file, migrate + seed, then serve the same DB.
+      command:
+        `rm -f '${E2E_DB_PATH}' '${E2E_DB_PATH}-wal' '${E2E_DB_PATH}-shm' && ` +
+        `just bootstrap-dev && ` +
+        `uv run litestar --app novamoc.asgi:create_app run --host 127.0.0.1 --port ${API_PORT}`,
+      cwd: '../../..',
+      env: {
+        NOVAMOC_DB_URL: E2E_DB_URL,
+        // Relax Secure so the session cookie is sent over the plain-HTTP
+        // loopback (mirrors AuthSettings.session_cookie_secure's opt-out).
+        NOVAMOC_AUTH_SESSION_COOKIE_SECURE: 'false',
+      },
+      url: `${API_URL}/openapi`,
+      reuseExistingServer: false,
+      // Generous: migrations + an argon2 hash run before the API serves.
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      // Bind to 127.0.0.1, not localhost, so the IPv4 readiness probe
+      // matches the socket — on CI, localhost may resolve to ::1 first
+      // and hang the probe. NOVAMOC_NO_HTTPS drops TLS (see APP_URL).
+      command: `npm run dev -- --port ${APP_PORT} --strictPort --host 127.0.0.1`,
+      env: {
+        NOVAMOC_API_URL: API_URL,
+        NOVAMOC_NO_HTTPS: '1',
+      },
+      url: APP_URL,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
 })
