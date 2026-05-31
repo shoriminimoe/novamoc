@@ -147,6 +147,18 @@ class TestAppSettings:
         with pytest.raises(ValueError, match="cannot parse"):
             AppSettings()
 
+    def test_ws_handshake_timeout_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVAMOC_WS_HANDSHAKE_TIMEOUT_SECONDS", raising=False)
+        assert AppSettings().ws_handshake_timeout_seconds == 10.0
+
+    def test_ws_handshake_timeout_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_WS_HANDSHAKE_TIMEOUT_SECONDS", "2.5")
+        assert AppSettings().ws_handshake_timeout_seconds == 2.5
+
 
 class TestAuthSettings:
     def test_defaults_are_production_safe(

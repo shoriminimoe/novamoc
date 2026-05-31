@@ -70,6 +70,7 @@ def create_app(
     from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema.controllers import SchemaController
     from novamoc.domain.snapshot.controllers import SnapshotController
+    from novamoc.domain.sync import NoopSubscriberRegistry, SyncController
 
     s = settings if settings is not None else Settings()
 
@@ -130,6 +131,8 @@ def create_app(
         parallelism=s.auth.argon2_parallelism,
     )
 
+    subscriber_registry = NoopSubscriberRegistry()
+
     async def _assert_alembic_at_head(_app: Litestar) -> None:
         """Refuse to serve when the DB is not at HEAD (see ADR-021)."""
         await assert_alembic_at_head(cfg)
@@ -140,6 +143,7 @@ def create_app(
             SchemaController,
             EventsController,
             SnapshotController,
+            SyncController,
             problem_docs_router,
         ],
         middleware=[
@@ -170,7 +174,13 @@ def create_app(
         # only the narrow slice they need rather than the whole tree.
         # ``state.password_hasher`` is the hot-path login dependency
         # M5.10's ``AuthController`` pulls via DI.
-        state=State({"settings": s, "password_hasher": password_hasher}),
+        state=State(
+            {
+                "settings": s,
+                "password_hasher": password_hasher,
+                "subscriber_registry": subscriber_registry,
+            }
+        ),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),

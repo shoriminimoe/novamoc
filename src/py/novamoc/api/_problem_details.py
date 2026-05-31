@@ -54,6 +54,8 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.VALUE_TYPE_MISMATCH: "Value type mismatch",
     ErrorCode.LOGIN_FAILED: "Login failed",
     ErrorCode.USER_ALREADY_HAS_TENANT: "User already has a tenant",
+    ErrorCode.TENANT_MISMATCH: "Tenant mismatch",
+    ErrorCode.HANDSHAKE_TIMEOUT: "Handshake timeout",
 }
 
 
@@ -127,6 +129,33 @@ def make_problem_body(exc: DomainError, base_url: str) -> dict[str, Any]:
     }
     if exc.extras:
         body.update(exc.extras)
+    return body
+
+
+def make_ws_problem_body(
+    *,
+    code: ErrorCode,
+    close_code: int,
+    detail: str,
+    base_url: str,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """RFC 9457 problem body for a WebSocket protocol error.
+
+    Sibling of :func:`make_problem_body` with no HTTP ``status`` slot — a
+    WS error has no HTTP status; the close code rides as the
+    ``ws_close_code`` extension member (RFC 9457 §3.2). The ``type`` URI
+    matches the HTTP error's, so clients branch on it the same way.
+    """
+    body: dict[str, Any] = {
+        "type": _type_uri(code, base_url),
+        "title": _TITLES[code],
+        "detail": detail,
+        "instance": make_instance(),
+        "ws_close_code": close_code,
+    }
+    if extras:
+        body.update(extras)
     return body
 
 

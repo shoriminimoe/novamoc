@@ -135,6 +135,10 @@ class AppSettings:
         schema_changes_max_batch_size: Upper bound on rows returned
             by a single ``GET /schema/changes`` page (M2.2). Clients
             page via ``next_since`` / ``has_more``.
+        ws_handshake_timeout_seconds: How long the /sync/live WebSocket
+            waits for the client's first (hello) frame before closing
+            the connection. Resource-leak guard against an opened
+            socket that never speaks.
     """
 
     docs_base_url: str = field(
@@ -147,6 +151,9 @@ class AppSettings:
     )
     schema_changes_max_batch_size: int = field(
         default_factory=_int_env("NOVAMOC_SCHEMA_CHANGES_MAX_BATCH_SIZE", 500)
+    )
+    ws_handshake_timeout_seconds: float = field(
+        default_factory=_float_env("NOVAMOC_WS_HANDSHAKE_TIMEOUT_SECONDS", 10.0)
     )
 
 
