@@ -153,6 +153,7 @@ runtime-evaluated-decorators = [
     # wire decoding.
     "litestar.post",
     "litestar.get",
+    "litestar.websocket",
 ]
 
 [tool.ruff.lint.isort]

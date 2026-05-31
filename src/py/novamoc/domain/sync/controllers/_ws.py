@@ -14,11 +14,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 from advanced_alchemy.extensions.litestar import providers
-from litestar import (  # noqa: TC002  # handler param type, resolved at runtime by Litestar
-    Controller,
-    WebSocket,
-    websocket,
-)
+from litestar import Controller, WebSocket, websocket
 from litestar.datastructures import State  # noqa: TC002  # runtime DI provider
 from litestar.di import Provide
 from litestar.exceptions import (
@@ -39,9 +35,7 @@ from novamoc.domain.sync._errors import (
     TenantMismatchError,
 )
 from novamoc.domain.sync._payloads import Hello, Pong, Welcome
-from novamoc.domain.sync._registry import (
-    SubscriberRegistry,  # noqa: TC001  # runtime DI return annotation and handler param type
-)
+from novamoc.domain.sync._registry import SubscriberRegistry
 
 if TYPE_CHECKING:
     import uuid
@@ -66,7 +60,16 @@ async def _read_hello(socket: WebSocket, timeout_seconds: float) -> Hello:
     except TimeoutError as exc:
         raise HandshakeTimeoutError from exc
     try:
-        return msgspec.json.decode(raw, type=Hello)
+        frame = msgspec.json.decode(raw, type=dict)
+    except msgspec.MsgspecError as exc:
+        raise MalformedHelloError(str(exc)) from exc
+    # msgspec does not require the tag when decoding a single tagged
+    # struct, so a tag-less frame would slip through as a hello — demand
+    # the discriminator explicitly.
+    if frame.get("type") != "hello":
+        raise MalformedHelloError
+    try:
+        return msgspec.convert(frame, type=Hello)
     except msgspec.MsgspecError as exc:
         raise MalformedHelloError(str(exc)) from exc
 
@@ -101,11 +104,12 @@ async def _close_with_problem(
 
 
 async def _idle_loop(socket: WebSocket) -> None:
+    # A peer disconnect (raised by receive_json or send_json) propagates to
+    # the controller, which closes out gracefully; here we only skip frames
+    # that fail to decode.
     while True:
         try:
             frame = await socket.receive_json()
-        except WebSocketDisconnect:
-            return
         except SerializationException:
             continue
         if isinstance(frame, dict) and frame.get("type") == "ping":
@@ -149,13 +153,17 @@ class SyncController(Controller):
 
         server_seq = await event_log_service.current_seq()
         schema_version = await schema_change_log_service.current_version()
-        await socket.send_json(
-            Welcome(server_seq=server_seq, schema_version=schema_version)
-        )
-
         tenant_id = socket.auth.tenant_id
-        await registry.subscribe(tenant_id, socket)
+        # A peer disconnect anywhere past the handshake (the welcome send, a
+        # pong, or a receive) unwinds to here; unsubscribe still runs.
         try:
-            await _idle_loop(socket)
-        finally:
-            await registry.unsubscribe(tenant_id, socket)
+            await socket.send_json(
+                Welcome(server_seq=server_seq, schema_version=schema_version)
+            )
+            await registry.subscribe(tenant_id, socket)
+            try:
+                await _idle_loop(socket)
+            finally:
+                await registry.unsubscribe(tenant_id, socket)
+        except WebSocketDisconnect:
+            return

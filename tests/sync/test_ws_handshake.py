@@ -92,6 +92,26 @@ async def test_wrong_tag_closes_1003(client: AsyncTestClient) -> None:
             ws.receive_json()
 
 
+async def test_missing_tag_closes_1003(client: AsyncTestClient) -> None:
+    with await client.websocket_connect("/sync/live") as ws:
+        ws.send_json({"tenant_id": str(DEV_TENANT_ID), "cursor": 0})
+        problem = ws.receive_json()
+        assert problem["type"].endswith("/problems/invalid_payload_shape.html")
+        assert problem["ws_close_code"] == 1003
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+
+async def test_non_json_handshake_closes_1003(client: AsyncTestClient) -> None:
+    with await client.websocket_connect("/sync/live") as ws:
+        ws.send_text("not json")
+        problem = ws.receive_json()
+        assert problem["type"].endswith("/problems/invalid_payload_shape.html")
+        assert problem["ws_close_code"] == 1003
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+
 async def test_negative_cursor_closes_1008(client: AsyncTestClient) -> None:
     with await client.websocket_connect("/sync/live") as ws:
         ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": -1})
