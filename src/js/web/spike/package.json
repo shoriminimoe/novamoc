@@ -1,0 +1,18 @@
+{
+  "name": "repo-layer-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "drizzle:gen": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.0",
+    "vite": "^6.0.0",
+    "drizzle-kit": "^0.30.0"
+  },
+  "dependencies": {
+    "kysely": "^0.27.5",
+    "drizzle-orm": "^0.38.0"
+  }
+}
