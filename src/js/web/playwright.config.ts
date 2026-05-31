@@ -31,10 +31,14 @@ import { defineConfig } from '@playwright/test'
 const API_PORT = 8765
 const APP_PORT = 5174
 const API_URL = `http://127.0.0.1:${API_PORT}`
-// Vite serves HTTPS via ``@vitejs/plugin-basic-ssl`` so the browser sees
-// a secure context and ``crypto.randomUUID`` / ``crypto.subtle`` are
-// defined. The cert is self-signed, hence ``ignoreHTTPSErrors`` below.
-const APP_URL = `https://127.0.0.1:${APP_PORT}`
+// The e2e app server runs over plain HTTP bound to ``127.0.0.1``.
+// ``127.0.0.1`` is a "potentially trustworthy" origin, so it's a secure
+// context even without TLS — ``crypto.randomUUID`` / ``crypto.subtle``
+// and ``crossOriginIsolated`` (with the COOP/COEP headers Vite sets in
+// ``vite.config.ts``) all work. Plain HTTP avoids the self-signed-cert
+// readiness probe and the IPv4/IPv6 ``localhost`` resolution mismatch
+// that makes ``basic-ssl`` flaky on CI runners.
+const APP_URL = `http://127.0.0.1:${APP_PORT}`
 
 // Throwaway file DB under the OS temp dir — never inside the repo tree,
 // so there's nothing to gitignore and a stale file from a crashed prior
@@ -55,7 +59,6 @@ export default defineConfig({
   use: {
     baseURL: APP_URL,
     trace: 'retain-on-failure',
-    ignoreHTTPSErrors: true,
   },
   webServer: [
     {
@@ -73,10 +76,10 @@ export default defineConfig({
       cwd: '../../..',
       env: {
         NOVAMOC_DB_URL: E2E_DB_URL,
-        // Cookie set over plain-HTTP loopback to the API; the SPA talks
-        // to it through the Vite dev proxy, so the browser only ever
-        // sees the HTTPS origin. Relax Secure so the cookie survives the
-        // proxied login (mirrors the dev opt-out documented in
+        // The SPA reaches the API through the Vite dev proxy, so the
+        // browser only sees the app origin (plain-HTTP loopback). Relax
+        // Secure so the session cookie is actually sent over HTTP
+        // (mirrors the dev opt-out documented in
         // ``AuthSettings.session_cookie_secure``).
         NOVAMOC_AUTH_SESSION_COOKIE_SECURE: 'false',
       },
@@ -89,12 +92,18 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: `npm run dev -- --port ${APP_PORT} --strictPort`,
+      // Bind Vite to ``127.0.0.1`` (not the default ``localhost``) so the
+      // readiness probe's IPv4 URL always matches the listening socket —
+      // on CI runners ``localhost`` can resolve to IPv6 ``::1`` first,
+      // leaving the IPv4 probe hanging until the timeout. ``NOVAMOC_NO_HTTPS``
+      // opts out of ``@vitejs/plugin-basic-ssl`` so the server is plain
+      // HTTP (see ``APP_URL`` above for why that's still a secure context).
+      command: `npm run dev -- --port ${APP_PORT} --strictPort --host 127.0.0.1`,
       env: {
         NOVAMOC_API_URL: API_URL,
+        NOVAMOC_NO_HTTPS: '1',
       },
       url: APP_URL,
-      ignoreHTTPSErrors: true,
       reuseExistingServer: false,
       timeout: 30_000,
       stdout: 'pipe',
