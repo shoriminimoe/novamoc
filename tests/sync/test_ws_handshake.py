@@ -47,16 +47,10 @@ async def test_idle_loop_ignores_malformed_frame(client: AsyncTestClient) -> Non
     with await client.websocket_connect("/sync/live") as ws:
         ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
         assert ws.receive_json()["type"] == "welcome"
-        # A non-JSON text frame mid-stream must be ignored, not fatal.
         ws.send_text("this is not json")
-        # The loop is still alive: a following ping still gets a pong.
+        # The loop survived the junk frame: a following ping still gets a pong.
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
-
-
-# ---------------------------------------------------------------------------
-# Tenant mismatch closes 1008
-# ---------------------------------------------------------------------------
 
 
 async def test_tenant_mismatch_closes_1008(client: AsyncTestClient) -> None:
@@ -69,11 +63,6 @@ async def test_tenant_mismatch_closes_1008(client: AsyncTestClient) -> None:
             ws.receive_json()
     assert exc_info.value.code == 1008
     assert exc_info.value.detail == "tenant_mismatch"
-
-
-# ---------------------------------------------------------------------------
-# Malformed hello (1003) + negative cursor (1008)
-# ---------------------------------------------------------------------------
 
 
 async def test_unknown_field_closes_1003(client: AsyncTestClient) -> None:
@@ -114,11 +103,6 @@ async def test_negative_cursor_closes_1008(client: AsyncTestClient) -> None:
     assert exc_info.value.code == 1008
 
 
-# ---------------------------------------------------------------------------
-# Handshake timeout closes 1008
-# ---------------------------------------------------------------------------
-
-
 async def test_handshake_timeout_closes_1008(
     client: AsyncTestClient, app: Litestar, settings: Settings
 ) -> None:
@@ -126,8 +110,7 @@ async def test_handshake_timeout_closes_1008(
         settings, app=replace(settings.app, ws_handshake_timeout_seconds=0.2)
     )
     with await client.websocket_connect("/sync/live") as ws:
-        # Send nothing; wait past the window for the server to close.
-        # The server sends a problem body frame, then closes with 1008.
+        # Send no hello; the server closes once the window lapses.
         problem = ws.receive_json()
         assert problem["ws_close_code"] == 1008
         with pytest.raises(WebSocketDisconnect) as exc_info:
@@ -136,26 +119,15 @@ async def test_handshake_timeout_closes_1008(
     assert exc_info.value.detail == "handshake_timeout"
 
 
-# ---------------------------------------------------------------------------
-# Unauthenticated upgrade rejected
-# ---------------------------------------------------------------------------
-
-
 async def test_unauthenticated_upgrade_rejected(
     unauth_client: AsyncTestClient,
 ) -> None:
-    # The auth middleware closes the socket before accept(), so the
-    # WebSocketTestSession.__enter__() raises WebSocketDisconnect — the body
-    # never executes.  Enter the session manually so pytest.raises wraps
-    # only that single call.
+    # The auth middleware rejects the upgrade before accept(), so the
+    # disconnect surfaces from __enter__. Enter manually so pytest.raises
+    # wraps only that call (a nested `with` trips ruff PT012/SIM117).
     ws_session = await unauth_client.websocket_connect("/sync/live")
     with pytest.raises(WebSocketDisconnect):
         ws_session.__enter__()
-
-
-# ---------------------------------------------------------------------------
-# Ping gets pong
-# ---------------------------------------------------------------------------
 
 
 async def test_ping_gets_pong(client: AsyncTestClient) -> None:
@@ -164,11 +136,6 @@ async def test_ping_gets_pong(client: AsyncTestClient) -> None:
         assert ws.receive_json()["type"] == "welcome"
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
-
-
-# ---------------------------------------------------------------------------
-# Registry subscribe/unsubscribe seam
-# ---------------------------------------------------------------------------
 
 
 class _SpyRegistry:
@@ -194,9 +161,8 @@ async def test_registry_subscribe_unsubscribe_called(
     with await client.websocket_connect("/sync/live") as ws:
         ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
         assert ws.receive_json()["type"] == "welcome"
-    # The WebSocket ASGI task runs on the shared portal's background
-    # thread, so unsubscribe runs slightly after the `with` block exits.
-    # Poll (bounded) until it lands instead of guessing a fixed delay.
+    # unsubscribe runs on the test client's background portal thread, so it
+    # lands slightly after the `with` exits — poll rather than guess a delay.
     for _ in range(200):
         if spy.unsubscribed:
             break

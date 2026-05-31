@@ -142,10 +142,10 @@ def make_ws_problem_body(
 ) -> dict[str, Any]:
     """RFC 9457 problem body for a WebSocket protocol error.
 
-    Sent as a final text frame before the socket closes, so a client can
-    branch on the same ``type`` URI it would see on the HTTP error. There
-    is no HTTP ``status`` slot (a WS error has no HTTP status); the close
-    code rides as the ``ws_close_code`` extension member (RFC 9457 §3.2).
+    Sibling of :func:`make_problem_body` with no HTTP ``status`` slot — a
+    WS error has no HTTP status; the close code rides as the
+    ``ws_close_code`` extension member (RFC 9457 §3.2). The ``type`` URI
+    matches the HTTP error's, so clients branch on it the same way.
     """
     body: dict[str, Any] = {
         "type": _type_uri(code, base_url),

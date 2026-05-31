@@ -1,12 +1,9 @@
-"""WebSocket controller for /sync/live (ADR-013, M3.1).
+"""WebSocket controller for /sync/live (ADR-013).
 
-Cookie-authenticated upgrade (the middleware stack populates
-``socket.auth`` on WS scope), a ``hello`` → ``welcome`` handshake, then
-register the connection against the subscriber registry and idle. The
-idle loop answers ``ping`` with ``pong`` and ignores every other frame —
-client→server event push and ``schema_changed`` are later-milestone
-concerns. Protocol errors send a WS-flavoured problem-details frame and
-close with an RFC 6455 code.
+Cookie-authenticated upgrade, a ``hello`` → ``welcome`` handshake, then
+register the connection against the subscriber registry and idle.
+Protocol errors send a WS-flavoured problem-details frame and close with
+an RFC 6455 code.
 """
 
 from __future__ import annotations
@@ -95,9 +92,8 @@ async def _close_with_problem(
         base_url=docs_base_url,
         extras=exc.extras,
     )
-    # Best-effort on both: if the client has already vanished, neither the
-    # problem frame nor the close must mask the protocol error. Separate
-    # blocks so a failed send still attempts the close.
+    # Best-effort: a vanished client must not mask the protocol error, and a
+    # failed send must still attempt the close.
     with contextlib.suppress(WebSocketException, RuntimeError):
         await socket.send_json(body)
     with contextlib.suppress(WebSocketException, RuntimeError):

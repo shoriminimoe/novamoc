@@ -1,9 +1,7 @@
 """Protocol errors for the /sync/live WebSocket.
 
-Mirrors how the HTTP side carries an :class:`ErrorCode`, but instead of
-an HTTP status each error carries an RFC 6455 close code. The controller
-catches :class:`SyncProtocolError`, sends a WS-flavoured problem-details
-text frame, and closes the socket with ``close_code``.
+Like the HTTP side's :class:`ErrorCode`-carrying errors, but each carries
+an RFC 6455 close code instead of an HTTP status.
 """
 
 from __future__ import annotations
@@ -21,10 +19,9 @@ from novamoc.domain._errors import _DEFAULT_MESSAGES, ErrorCode
 class SyncProtocolError(Exception):
     """A WebSocket handshake/protocol violation.
 
-    Directly instantiable for value errors that reuse an existing code
-    (e.g. a negative cursor reusing ``invalid_payload_shape`` but closing
-    ``1008``); subclasses fix ``code`` / ``close_code`` for the common
-    cases.
+    Directly instantiable so a value error can reuse an existing code
+    under a different close code; subclasses fix ``code`` / ``close_code``
+    for the common cases.
     """
 
     def __init__(
