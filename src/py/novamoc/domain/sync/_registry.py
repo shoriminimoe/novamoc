@@ -22,9 +22,7 @@ if TYPE_CHECKING:
 class SubscriberRegistry(Protocol):
     async def subscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None: ...
 
-    async def unsubscribe(
-        self, tenant_id: uuid.UUID, socket: WebSocket
-    ) -> None: ...
+    async def unsubscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None: ...
 
     async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None: ...
 
@@ -36,9 +34,7 @@ class NoopSubscriberRegistry:
     async def subscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
         return
 
-    async def unsubscribe(
-        self, tenant_id: uuid.UUID, socket: WebSocket
-    ) -> None:
+    async def unsubscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
         return
 
     async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None:

@@ -10,9 +10,7 @@ from novamoc.domain.sync._payloads import Hello, Pong, Welcome
 
 def test_hello_decodes_with_type_tag() -> None:
     tid = uuid.uuid4()
-    raw = msgspec.json.encode(
-        {"type": "hello", "tenant_id": str(tid), "cursor": 7}
-    )
+    raw = msgspec.json.encode({"type": "hello", "tenant_id": str(tid), "cursor": 7})
     hello = msgspec.json.decode(raw, type=Hello)
     assert hello.tenant_id == tid
     assert hello.cursor == 7

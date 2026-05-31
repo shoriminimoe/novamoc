@@ -13,9 +13,7 @@ import uuid
 import msgspec
 
 
-class Hello(
-    msgspec.Struct, forbid_unknown_fields=True, tag_field="type", tag="hello"
-):
+class Hello(msgspec.Struct, forbid_unknown_fields=True, tag_field="type", tag="hello"):
     """First client frame. ``tenant_id`` is checked against the
     cookie-authenticated tenant; ``cursor`` is the last ``event_log.seq``
     the client has applied (validated ``>= 0`` by the handler)."""
