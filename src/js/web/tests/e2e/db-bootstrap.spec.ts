@@ -23,6 +23,8 @@
 
 import { expect, test } from '@playwright/test'
 
+import { SCHEMA_VERSION } from '../../src/lib/db/migrations'
+
 const EXPECTED_TABLES = [
   'asset_field_values',
   'asset_type_fields',
@@ -85,7 +87,7 @@ test('opens an OPFS-backed DB, applies the DDL, and is idempotent', async ({
   expect(result.tables).toEqual(EXPECTED_TABLES)
   expect(result.journalMode).toBe('delete')
   expect(result.foreignKeys).toBe(1)
-  expect(result.userVersion).toBe(1)
+  expect(result.userVersion).toBe(SCHEMA_VERSION)
   expect(result.syncStateRows).toBe(1)
   expect(result.idempotent).toBe(true)
 })

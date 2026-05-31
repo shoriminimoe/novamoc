@@ -187,11 +187,14 @@ export const DDL: readonly string[] = [
 
   // Single-row replication bookkeeping. ``id`` is pinned to 1 by a CHECK so
   // the table can hold at most one row.
+  // ``last_hlc`` is the most recent HLC this node issued (ADR-006); the
+  // client clock resumes from it on reload so a reopened tab can't regress.
   `CREATE TABLE IF NOT EXISTS sync_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     last_seen_seq INTEGER NOT NULL DEFAULT 0,
     active_schema_version INTEGER NOT NULL DEFAULT 0,
     node_id TEXT,
+    last_hlc TEXT,
     last_sync_at TEXT
   )`,
 

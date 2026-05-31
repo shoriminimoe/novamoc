@@ -1,0 +1,35 @@
+{
+  "description": "Client-produced HLC strings (ADR-006). Format {physical_ms:016}-{logical:05}-{node_id}. The server parser must accept each, since client- and server-produced HLCs share one TEXT ordering on the wire.",
+  "hlcs": [
+    {
+      "hlc": "0000000000000000-00000-00000000-0000-0000-0000-000000000000",
+      "physical_ms": 0,
+      "logical": 0,
+      "node_id": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "hlc": "0001700000000000-00000-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "physical_ms": 1700000000000,
+      "logical": 0,
+      "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    {
+      "hlc": "0001700000000042-00007-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "physical_ms": 1700000000042,
+      "logical": 7,
+      "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    {
+      "hlc": "0001700000000042-99999-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "physical_ms": 1700000000042,
+      "logical": 99999,
+      "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    },
+    {
+      "hlc": "9999999999999999-00000-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "physical_ms": 9999999999999999,
+      "logical": 0,
+      "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+    }
+  ]
+}
