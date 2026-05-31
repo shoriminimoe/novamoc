@@ -139,6 +139,45 @@ jobs:
           path: src/js/web/coverage/
           retention-days: 14
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/js/web/package-lock.json
+
+      # The Playwright webServer chain boots the Python API (migrate +
+      # seed the file SQLite DB, then `litestar run`), so the e2e job
+      # needs the uv venv as well as the Node toolchain.
+      - run: mkdir -p build/wheel_data
+      - run: uv sync
+      - run: cd src/js/web && npm ci
+
+      # Browser binary + its OS deps. Chromium only — the config defines
+      # a single `chromium` project.
+      - run: cd src/js/web && npx playwright install --with-deps chromium
+
+      # `just test-e2e` runs `playwright test`, which brings up the
+      # migrated-API + Vite pair (no E2E_SKIP_API: e2e always runs with
+      # the API present) and executes the smoke spec.
+      - run: just test-e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: src/js/web/playwright-report/
+          retention-days: 14
+
   ratchet:
     runs-on: ubuntu-latest
     timeout-minutes: 5
