@@ -31,3 +31,14 @@ async def test_welcome_reflects_current_schema_version(client: AsyncTestClient) 
         ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
         welcome = ws.receive_json()
     assert welcome["schema_version"] == 1
+
+
+async def test_idle_loop_ignores_malformed_frame(client: AsyncTestClient) -> None:
+    with (await client.websocket_connect("/sync/live")) as ws:
+        ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
+        assert ws.receive_json()["type"] == "welcome"
+        # A non-JSON text frame mid-stream must be ignored, not fatal.
+        ws.send_text("this is not json")
+        # The loop is still alive: a following ping still gets a pong.
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}

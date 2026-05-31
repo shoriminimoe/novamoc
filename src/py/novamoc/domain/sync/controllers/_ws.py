@@ -24,7 +24,11 @@ from litestar import (  # noqa: TC002  # handler param type, resolved at runtime
 )
 from litestar.datastructures import State  # noqa: TC002  # runtime DI provider
 from litestar.di import Provide
-from litestar.exceptions import WebSocketDisconnect, WebSocketException
+from litestar.exceptions import (
+    SerializationException,
+    WebSocketDisconnect,
+    WebSocketException,
+)
 from litestar.status_codes import WS_1008_POLICY_VIOLATION
 
 from novamoc.api._problem_details import make_ws_problem_body
@@ -65,7 +69,7 @@ async def _read_hello(socket: WebSocket, timeout_seconds: float) -> Hello:
     except TimeoutError as exc:
         raise HandshakeTimeoutError from exc
     try:
-        return msgspec.json.decode(raw.encode("utf-8"), type=Hello)
+        return msgspec.json.decode(raw, type=Hello)
     except msgspec.MsgspecError as exc:
         raise MalformedHelloError(str(exc)) from exc
 
@@ -92,7 +96,7 @@ async def _close_with_problem(
         extras=exc.extras,
     )
     # Best-effort: a half-closed socket must not mask the protocol error.
-    with contextlib.suppress(WebSocketException, WebSocketDisconnect, RuntimeError):
+    with contextlib.suppress(WebSocketException, RuntimeError):
         await socket.send_json(body)
     await socket.close(code=exc.close_code, reason=exc.code.value)
 
@@ -103,6 +107,8 @@ async def _idle_loop(socket: WebSocket) -> None:
             frame = await socket.receive_json()
         except WebSocketDisconnect:
             return
+        except SerializationException:
+            continue
         if isinstance(frame, dict) and frame.get("type") == "ping":
             await socket.send_json(Pong())
 
