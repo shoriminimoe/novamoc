@@ -55,7 +55,7 @@ async def test_idle_loop_ignores_malformed_frame(client: AsyncTestClient) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Task 7 — tenant mismatch closes 1008
+# Tenant mismatch closes 1008
 # ---------------------------------------------------------------------------
 
 
@@ -72,7 +72,7 @@ async def test_tenant_mismatch_closes_1008(client: AsyncTestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 8 — malformed hello (1003) + negative cursor (1008)
+# Malformed hello (1003) + negative cursor (1008)
 # ---------------------------------------------------------------------------
 
 
@@ -115,7 +115,7 @@ async def test_negative_cursor_closes_1008(client: AsyncTestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 9 — handshake timeout closes 1008
+# Handshake timeout closes 1008
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +137,7 @@ async def test_handshake_timeout_closes_1008(
 
 
 # ---------------------------------------------------------------------------
-# Task 10 — unauthenticated upgrade rejected
+# Unauthenticated upgrade rejected
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ async def test_unauthenticated_upgrade_rejected(
 
 
 # ---------------------------------------------------------------------------
-# Task 11 — ping gets pong
+# Ping gets pong
 # ---------------------------------------------------------------------------
 
 
@@ -167,7 +167,7 @@ async def test_ping_gets_pong(client: AsyncTestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 12 — registry subscribe/unsubscribe seam
+# Registry subscribe/unsubscribe seam
 # ---------------------------------------------------------------------------
 
 

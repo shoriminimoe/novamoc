@@ -95,10 +95,13 @@ async def _close_with_problem(
         base_url=docs_base_url,
         extras=exc.extras,
     )
-    # Best-effort: a half-closed socket must not mask the protocol error.
+    # Best-effort on both: if the client has already vanished, neither the
+    # problem frame nor the close must mask the protocol error. Separate
+    # blocks so a failed send still attempts the close.
     with contextlib.suppress(WebSocketException, RuntimeError):
         await socket.send_json(body)
-    await socket.close(code=exc.close_code, reason=exc.code.value)
+    with contextlib.suppress(WebSocketException, RuntimeError):
+        await socket.close(code=exc.close_code, reason=exc.code.value)
 
 
 async def _idle_loop(socket: WebSocket) -> None:
