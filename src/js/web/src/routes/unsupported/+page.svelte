@@ -11,31 +11,48 @@
 	 * generic "OPFS" message — better than blanking out.
 	 */
 
+	// `detail` is a sequence of text/code segments so API and header names
+	// render as <code> rather than literal backticks in Svelte interpolation.
+	type Segment = { text: string; code?: boolean }
 	type Reason = {
 		title: string
-		detail: string
+		detail: Segment[]
 	}
 
 	const REASONS: Record<MissingFeature, Reason> = {
 		opfs: {
 			title: 'Origin Private File System (OPFS) is not available.',
-			detail:
-				'novaMOC stores your data locally in OPFS. Your browser does not expose ' +
-				'``navigator.storage.getDirectory``, so the app cannot persist anything.',
+			detail: [
+				{ text: 'novaMOC stores your data locally in OPFS. Your browser does not expose ' },
+				{ text: 'navigator.storage.getDirectory', code: true },
+				{ text: ', so the app cannot persist anything.' },
+			],
 		},
 		sync_handle: {
 			title: 'OPFS synchronous access handles are not available.',
-			detail:
-				'novaMOC needs ``FileSystemSyncAccessHandle`` to run SQLite-WASM over OPFS. ' +
-				'Your browser exposes OPFS but not the synchronous variant required by the ' +
-				'SQLite VFS.',
+			detail: [
+				{ text: 'novaMOC needs ' },
+				{ text: 'FileSystemSyncAccessHandle', code: true },
+				{
+					text:
+						' to run SQLite-WASM over OPFS. Your browser exposes OPFS but not the ' +
+						'synchronous variant required by the SQLite VFS.',
+				},
+			],
 		},
 		cross_origin_isolation: {
 			title: 'This page is not cross-origin isolated.',
-			detail:
-				'novaMOC needs SharedArrayBuffer, which browsers gate on cross-origin isolation. ' +
-				'The page must be served with ``Cross-Origin-Opener-Policy: same-origin`` and ' +
-				'``Cross-Origin-Embedder-Policy: require-corp`` headers.',
+			detail: [
+				{
+					text:
+						'novaMOC needs SharedArrayBuffer, which browsers gate on cross-origin ' +
+						'isolation. The page must be served with ',
+				},
+				{ text: 'Cross-Origin-Opener-Policy: same-origin', code: true },
+				{ text: ' and ' },
+				{ text: 'Cross-Origin-Embedder-Policy: require-corp', code: true },
+				{ text: ' headers.' },
+			],
 		},
 	}
 
@@ -60,7 +77,7 @@
 		class="flex flex-col gap-2 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900"
 	>
 		<p class="font-semibold" data-testid="missing-precondition">{reason.title}</p>
-		<p>{reason.detail}</p>
+		<p>{#each reason.detail as seg (seg.text)}{#if seg.code}<code class="rounded bg-red-100 px-1 font-mono text-[0.85em]">{seg.text}</code>{:else}{seg.text}{/if}{/each}</p>
 	</section>
 
 	<section class="flex flex-col gap-2 text-sm">

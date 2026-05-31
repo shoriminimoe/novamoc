@@ -10,6 +10,9 @@ import { checkSyncAccessHandle } from '../../src/lib/db/probe.sync-handle'
 
 type Behavior = 'ok' | 'fail' | 'error' | 'silent' | 'nodata'
 
+// The driver constructs the worker internally, so the test can't pass
+// per-instance config — behavior is set externally before each call and
+// reset in beforeEach. Safe because vitest runs a file's tests serially.
 class FakeWorker {
   onmessage: ((e: { data: unknown }) => void) | null = null
   onerror: ((e: unknown) => void) | null = null

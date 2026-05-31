@@ -25,7 +25,7 @@ export type MissingFeature = 'opfs' | 'sync_handle' | 'cross_origin_isolation'
 export type ProbeResult = { ok: true } | { ok: false; missing: MissingFeature }
 
 /**
- * Probe the runtime for SQLite-WASM-over-OPFS support.
+ * Probe the runtime for the OPFS preconditions SQLite-WASM needs.
  *
  * Checks, in order:
  * 1. `navigator.storage.getDirectory` exists (OPFS root accessible).

@@ -24,7 +24,5 @@ async function canCreateSyncAccessHandle(): Promise<boolean> {
 }
 
 self.onmessage = async (): Promise<void> => {
-  ;(self as DedicatedWorkerGlobalScope).postMessage({
-    ok: await canCreateSyncAccessHandle(),
-  })
+  self.postMessage({ ok: await canCreateSyncAccessHandle() })
 }

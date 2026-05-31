@@ -12,6 +12,9 @@ const crossOriginIsolation: Plugin = {
   name: 'novamoc-cross-origin-isolation',
   configureServer(server) {
     server.middlewares.use((_req, res, next) => {
+      // Applied to every response; fine for an all-same-origin SPA. If
+      // cross-origin assets are introduced later they'll need a
+      // Cross-Origin-Resource-Policy header to load under COEP.
       res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
       res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
       next()
