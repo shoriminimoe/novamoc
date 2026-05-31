@@ -154,20 +154,12 @@ jobs:
           cache: npm
           cache-dependency-path: src/js/web/package-lock.json
 
-      # The Playwright webServer chain boots the Python API (migrate +
-      # seed the file SQLite DB, then `litestar run`), so the e2e job
-      # needs the uv venv as well as the Node toolchain.
+      # e2e boots the real Python API, so the job needs the uv venv too.
       - run: mkdir -p build/wheel_data
       - run: uv sync
       - run: cd src/js/web && npm ci
 
-      # Browser binary + its OS deps. Chromium only — the config defines
-      # a single `chromium` project.
       - run: cd src/js/web && npx playwright install --with-deps chromium
-
-      # `just test-e2e` runs `playwright test`, which brings up the
-      # migrated-API + Vite pair (no E2E_SKIP_API: e2e always runs with
-      # the API present) and executes the smoke spec.
       - run: just test-e2e
 
       - name: Upload Playwright report

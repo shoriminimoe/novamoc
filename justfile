@@ -112,12 +112,9 @@ test-js: test-js-unit
 test-js-unit:
 	cd src/js/web && npm run test
 
-# Playwright browser e2e tests (issue #197). Deliberately NOT wired into
-# the `test`/`check` composites: it boots the Python API against a
-# throwaway file SQLite DB (migrate via db-init + seed via
-# bootstrap-admin, per the webServer chain in playwright.config.ts),
-# launches Vite, and drives a real Chromium — too heavy for the fast
-# inner loop. Run it explicitly, and in its own CI job (`.github/workflows/ci.yml`).
+# Browser e2e (Playwright). Kept out of `test`/`check`: it boots the API
+# against a throwaway DB and drives a real browser — too heavy for the
+# inner loop. Runs in its own CI job.
 test-e2e:
 	cd src/js/web && npm run test:e2e
 
