@@ -157,3 +157,53 @@ async def test_unauthenticated_upgrade_rejected(
     ws_session = await unauth_client.websocket_connect("/sync/live")
     with pytest.raises(WebSocketDisconnect):
         ws_session.__enter__()
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — ping gets pong
+# ---------------------------------------------------------------------------
+
+
+async def test_ping_gets_pong(client: AsyncTestClient) -> None:
+    with (await client.websocket_connect("/sync/live")) as ws:
+        ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — registry subscribe/unsubscribe seam
+# ---------------------------------------------------------------------------
+
+
+class _SpyRegistry:
+    def __init__(self) -> None:
+        self.subscribed: list[uuid.UUID] = []
+        self.unsubscribed: list[uuid.UUID] = []
+
+    async def subscribe(self, tenant_id: uuid.UUID, socket: object) -> None:
+        self.subscribed.append(tenant_id)
+
+    async def unsubscribe(self, tenant_id: uuid.UUID, socket: object) -> None:
+        self.unsubscribed.append(tenant_id)
+
+    async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None:
+        return
+
+
+async def test_registry_subscribe_unsubscribe_called(
+    client: AsyncTestClient, app: Litestar
+) -> None:
+    spy = _SpyRegistry()
+    app.state.subscriber_registry = spy
+    with (await client.websocket_connect("/sync/live")) as ws:
+        ws.send_json({"type": "hello", "tenant_id": str(DEV_TENANT_ID), "cursor": 0})
+        assert ws.receive_json()["type"] == "welcome"
+    # The WebSocket ASGI task runs on the shared portal's background thread,
+    # not the test's event loop, so asyncio.sleep(0) is not enough to wait
+    # for the server's finally block to run unsubscribe.  A short real-time
+    # sleep gives the portal thread time to drain.
+    await asyncio.sleep(0.05)
+    assert spy.subscribed == [DEV_TENANT_ID]
+    assert spy.unsubscribed == [DEV_TENANT_ID]
