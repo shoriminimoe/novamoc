@@ -1,7 +1,26 @@
+import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import { sveltekit } from '@sveltejs/kit/vite'
 import tailwindcss from '@tailwindcss/vite'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+
+// Vite's `server.headers` reach assets but not the SvelteKit-rendered HTML
+// document, so `crossOriginIsolated` (and thus SharedArrayBuffer / the OPFS
+// VFS, ADR-003) stays off. A dev-server middleware sets COOP/COEP on every
+// response, document included. In prod the static host sets them (ADR-021).
+const crossOriginIsolation: Plugin = {
+  name: 'novamoc-cross-origin-isolation',
+  configureServer(server) {
+    server.middlewares.use((_req, res, next) => {
+      // Applied to every response; fine for an all-same-origin SPA. If
+      // cross-origin assets are introduced later they'll need a
+      // Cross-Origin-Resource-Policy header to load under COEP.
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+      next()
+    })
+  },
+}
 
 // In dev, forward the API surface to the Python server. The SPA always
 // uses relative paths so production deployments can serve client and API
@@ -23,7 +42,12 @@ const API_PROXY_PATHS = ['/auth', '/schema', '/events', '/problems', '/openapi']
 // have to be set by whoever serves the bundle — in dev that's Vite, in
 // prod that's whatever HTTP server hosts ``build/`` (see ADR-021).
 export default defineConfig({
-  plugins: [...(process.env.NOVAMOC_NO_HTTPS ? [] : [basicSsl()]), tailwindcss(), sveltekit()],
+  plugins: [
+    ...(process.env.NOVAMOC_NO_HTTPS ? [] : [basicSsl()]),
+    crossOriginIsolation,
+    tailwindcss(),
+    sveltekit(),
+  ],
   // Under Vitest, force Svelte's ``browser`` export condition so we get
   // the client build rather than the SSR build (which throws
   // ``lifecycle_function_unavailable`` on ``mount``). Set conditionally so
@@ -34,10 +58,6 @@ export default defineConfig({
     ? { resolve: { conditions: ['browser'] } }
     : {}),
   server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
     proxy: Object.fromEntries(
       API_PROXY_PATHS.map((p) => [p, { target: API_PROXY_TARGET, changeOrigin: false }]),
     ),
@@ -53,7 +73,14 @@ export default defineConfig({
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: 'coverage',
       include: ['src/**/*.{ts,svelte}'],
-      exclude: ['src/**/*.d.ts', 'tests/**', 'tests/e2e/**'],
+      exclude: [
+        'src/**/*.d.ts',
+        'tests/**',
+        'tests/e2e/**',
+        // The worker body does real OPFS I/O in DedicatedWorker scope —
+        // not reachable in jsdom; covered by the Playwright e2e instead.
+        'src/lib/db/probe.worker.ts',
+      ],
       // No `thresholds:` block — the ratchet does the gating. Setting a
       // threshold here would either duplicate the ratchet's role or fight it.
     },
