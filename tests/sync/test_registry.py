@@ -100,5 +100,3 @@ async def test_publish_iterates_a_snapshot() -> None:
     await reg.subscribe(tid, first)  # ty: ignore[invalid-argument-type]
     await reg.publish(tid, b"x")  # must not raise
     assert first.sent == [b"x"]
-
-
