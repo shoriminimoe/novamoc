@@ -1,0 +1,100 @@
+{
+  "name": "maintenance_record_deactivate_activate",
+  "description": "A maintenance record (with its parent asset) is created, deactivated, then reactivated. Exercises the second entity family and the row-state HLC guard: deleted toggles, row_state_hlc tracks the latest row-state event.",
+  "schema_state": {
+    "asset_types": [
+      { "id": "11111111-1111-1111-1111-111111111111", "name": "Truck" }
+    ],
+    "asset_type_fields": [],
+    "maintenance_record_types": [
+      { "id": "44444444-4444-4444-4444-444444444444", "name": "Oil Change" }
+    ],
+    "maintenance_record_type_fields": [
+      {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "parent_id": "44444444-4444-4444-4444-444444444444",
+        "name": "Notes",
+        "data_type": "text"
+      }
+    ]
+  },
+  "events": [
+    {
+      "hlc": "0000000000000001-00000-client-a",
+      "family": "asset",
+      "type_id": "11111111-1111-1111-1111-111111111111",
+      "instance_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "body": { "event": "created", "values": { "col:name": "Primary Truck" } }
+    },
+    {
+      "hlc": "0000000000000002-00000-client-a",
+      "family": "maintenance_record",
+      "type_id": "44444444-4444-4444-4444-444444444444",
+      "instance_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "body": {
+        "event": "created",
+        "parent": {
+          "type_id": "11111111-1111-1111-1111-111111111111",
+          "instance_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        },
+        "values": { "55555555-5555-5555-5555-555555555555": "Changed oil" }
+      }
+    },
+    {
+      "hlc": "0000000000000004-00000-client-a",
+      "family": "maintenance_record",
+      "type_id": "44444444-4444-4444-4444-444444444444",
+      "instance_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "body": { "event": "deactivated" }
+    },
+    {
+      "hlc": "0000000000000003-00000-client-a",
+      "family": "maintenance_record",
+      "type_id": "44444444-4444-4444-4444-444444444444",
+      "instance_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "body": { "event": "activated" }
+    },
+    {
+      "hlc": "0000000000000005-00000-client-a",
+      "family": "maintenance_record",
+      "type_id": "44444444-4444-4444-4444-444444444444",
+      "instance_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "body": { "event": "activated" }
+    }
+  ],
+  "expected_projection": {
+    "assets": [
+      {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "type_id": "11111111-1111-1111-1111-111111111111",
+        "deleted": false,
+        "row_state_hlc": "0000000000000001-00000-client-a"
+      }
+    ],
+    "asset_field_values": [
+      {
+        "entity_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "field_id": "col:name",
+        "value_json": "Primary Truck",
+        "hlc": "0000000000000001-00000-client-a"
+      }
+    ],
+    "maintenance_records": [
+      {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "type_id": "44444444-4444-4444-4444-444444444444",
+        "asset_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "deleted": false,
+        "row_state_hlc": "0000000000000005-00000-client-a"
+      }
+    ],
+    "maintenance_record_field_values": [
+      {
+        "entity_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "field_id": "55555555-5555-5555-5555-555555555555",
+        "value_json": "Changed oil",
+        "hlc": "0000000000000002-00000-client-a"
+      }
+    ]
+  }
+}
