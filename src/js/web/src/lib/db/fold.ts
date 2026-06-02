@@ -43,7 +43,80 @@ import type {
   EventEnvelope,
   FieldValueRow,
   Projection,
+  SchemaField,
+  SchemaProjection,
+  SchemaType,
 } from './types'
+
+/**
+ * The nested `GET /schema` wire shape (a type owns its fields). Mirrors
+ * `domain/schema/_read_payloads.py::SchemaSnapshotResponse`. Kept here rather
+ * than in `lib/schema.ts` so the fold owns the flatten without a layering
+ * back-edge; `lib/schema.ts` re-exports its own structurally-identical view.
+ */
+interface WireField {
+  id: string
+  name: string
+  data_type: SchemaField['data_type']
+  validation: Record<string, unknown> | null
+  active: boolean
+}
+
+interface WireType {
+  id: string
+  name: string
+  active: boolean
+  fields: WireField[]
+}
+
+export interface SchemaSnapshotWire {
+  schema_version: number
+  asset_types: WireType[]
+  maintenance_record_types: WireType[]
+}
+
+function flattenTypes(types: WireType[]): {
+  types: SchemaType[]
+  fields: SchemaField[]
+} {
+  const flatTypes: SchemaType[] = []
+  const flatFields: SchemaField[] = []
+  for (const type of types) {
+    flatTypes.push({ id: type.id, name: type.name, active: type.active })
+    for (const field of type.fields) {
+      flatFields.push({
+        id: field.id,
+        parent_id: type.id,
+        name: field.name,
+        data_type: field.data_type,
+        validation: field.validation,
+        active: field.active,
+      })
+    }
+  }
+  return { types: flatTypes, fields: flatFields }
+}
+
+/**
+ * Flatten the nested `GET /schema` response into the flat
+ * {@link SchemaProjection} the local schema tables hold. The server is
+ * authoritative for the schema (ADR-008): the response is the whole truth,
+ * so this is a wholesale flatten, not an HLC-guarded merge like the data
+ * fold — the SQL ingest replaces the local rows with what this returns.
+ */
+export function applySchemaProjection(
+  wire: SchemaSnapshotWire,
+): SchemaProjection {
+  const assets = flattenTypes(wire.asset_types)
+  const records = flattenTypes(wire.maintenance_record_types)
+  return {
+    schema_version: wire.schema_version,
+    asset_types: assets.types,
+    asset_type_fields: assets.fields,
+    maintenance_record_types: records.types,
+    maintenance_record_type_fields: records.fields,
+  }
+}
 
 /** Per-family handles into the projection. Keeps the fold generic. */
 interface FamilyTables {

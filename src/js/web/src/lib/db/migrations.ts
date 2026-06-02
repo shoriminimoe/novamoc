@@ -41,6 +41,23 @@ const STEPS: readonly ((db: Database) => void)[] = [
       db.exec('ALTER TABLE sync_state ADD COLUMN last_hlc TEXT')
     }
   },
+  // 2 -> 3: add the schema-version-gated inbound-event buffer (ADR-009).
+  // Fresh DBs already have it from the IF NOT EXISTS DDL above, so the
+  // statement is harmless to re-run; it patches DBs that predate the table.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS pending_schema_buffer (
+      tenant_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      hlc TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      family TEXT NOT NULL,
+      type_id TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
+      body TEXT NOT NULL,
+      received_at TEXT,
+      PRIMARY KEY (tenant_id, seq)
+    )`)
+  },
 ]
 
 export const SCHEMA_VERSION = STEPS.length

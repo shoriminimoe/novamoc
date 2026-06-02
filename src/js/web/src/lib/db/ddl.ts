@@ -185,6 +185,27 @@ export const DDL: readonly string[] = [
     UNIQUE (tenant_id, hlc)
   )`,
 
+  // Inbound catch-up events whose ``schema_version`` is ahead of the local
+  // ``active_schema_version`` (ADR-009). Held here verbatim until a schema
+  // refresh raises the active version to/past the event's, at which point the
+  // event becomes applicable and is folded then deleted. Distinct from
+  // ``local_pending_events`` (outbound, un-POSTed local writes): these are
+  // already-accepted server events the client is not yet allowed to apply.
+  // ``seq`` is the server's catch-up cursor — unique per tenant, the natural
+  // de-dup key for a re-delivered batch.
+  `CREATE TABLE IF NOT EXISTS pending_schema_buffer (
+    tenant_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    hlc TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    family TEXT NOT NULL,
+    type_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    received_at TEXT,
+    PRIMARY KEY (tenant_id, seq)
+  )`,
+
   // Single-row replication bookkeeping. ``id`` is pinned to 1 by a CHECK so
   // the table can hold at most one row.
   // ``last_hlc`` is the most recent HLC this node issued (ADR-006); the
