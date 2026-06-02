@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from litestar.exceptions import WebSocketException
 
 from novamoc.domain.sync._registry import InMemorySubscriberRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _FakeSocket:
@@ -13,7 +17,9 @@ class _FakeSocket:
     May run an on_send hook to exercise mid-publish mutation.
     """
 
-    def __init__(self, *, fail: bool = False, on_send=None) -> None:
+    def __init__(
+        self, *, fail: bool = False, on_send: Callable[[], None] | None = None
+    ) -> None:
         self.sent: list[bytes] = []
         self._fail = fail
         self._on_send = on_send
@@ -100,3 +106,5 @@ async def test_publish_iterates_a_snapshot() -> None:
     await reg.subscribe(tid, first)  # ty: ignore[invalid-argument-type]
     await reg.publish(tid, b"x")  # must not raise
     assert first.sent == [b"x"]
+    # The late subscriber joined after the snapshot, so it misses this batch.
+    assert late.sent == []
