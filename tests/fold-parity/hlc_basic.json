@@ -1,5 +1,5 @@
 {
-  "description": "Client-produced HLC strings (ADR-006). Format {physical_ms:016}-{logical:05}-{node_id}. The server parser must accept each, since client- and server-produced HLCs share one TEXT ordering on the wire.",
+  "description": "Client-produced HLC strings (ADR-006). Format {physical_ms:016}-{logical:05}-{node_id}. The server parser must accept each, since client- and server-produced HLCs share one TEXT ordering on the wire. The max-physical case uses Number.MAX_SAFE_INTEGER (9007199254740991) — the JS client's upper bound, since it holds physical_ms as a number.",
   "hlcs": [
     {
       "hlc": "0000000000000000-00000-00000000-0000-0000-0000-000000000000",
@@ -26,8 +26,8 @@
       "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
     },
     {
-      "hlc": "9999999999999999-00000-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-      "physical_ms": 9999999999999999,
+      "hlc": "9007199254740991-00000-9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "physical_ms": 9007199254740991,
       "logical": 0,
       "node_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
     }

@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { _resetLocalDbsForTest, openLocalDb } from '../../src/lib/db/bootstrap'
-import { Hlc, createHlc } from '../../src/lib/db/hlc'
+import { Hlc, HlcParseError, createHlc } from '../../src/lib/db/hlc'
 
 const TENANT = '00000000-0000-0000-0000-0000000000c1'
 
@@ -144,6 +144,38 @@ describe('Hlc', () => {
     expect(after[0][0]).toBe(stamp)
   })
 
+  it('throws when the logical counter would overflow within one ms', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    // Resume at the frozen wall ms with the logical field already maxed.
+    await db.exec(
+      "UPDATE sync_state SET node_id = 'n', last_hlc = '0001700000000000-99999-n' WHERE id = 1",
+    )
+    const hlc = await createHlc(db)
+
+    // Wall is frozen at the same ms, so now() must tick logical past 99999.
+    await expect(hlc.now()).rejects.toThrow(/overflow/)
+  })
+
+  it('rejects a malformed remote HLC rather than poisoning local state', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    const hlc = await createHlc(db)
+
+    await expect(hlc.receive('not-an-hlc')).rejects.toThrow(HlcParseError)
+
+    // State is untouched: a subsequent stamp is still well-formed.
+    const stamp = await hlc.now()
+    expect(stamp).toMatch(/^\d{16}-\d{5}-[0-9a-f-]+$/)
+  })
+
+  it('refuses to open with a persisted HLC but no node_id', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    await db.exec(
+      "UPDATE sync_state SET node_id = NULL, last_hlc = '0001700000000000-00000-orphan' WHERE id = 1",
+    )
+
+    await expect(createHlc(db)).rejects.toThrow(/no node_id/)
+  })
+
   describe('receive', () => {
     it('adopts a further-ahead remote physical and zeros logical', async () => {
       const db = await openLocalDb(TENANT, { memory: true })
@@ -228,11 +260,45 @@ describe('Hlc', () => {
 
     it('does not warn within the drift bound', async () => {
       const db = await openLocalDb(TENANT, { memory: true })
+      const first = await createHlc(db)
+      await first.now()
+
+      // Reload so the resumed clock has a persisted baseline to compare
+      // against; 30s of lag is under the bound.
+      vi.setSystemTime(1_700_000_000_000 + 30_000)
+      const reloaded = await createHlc(db)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      await reloaded.now()
+
+      expect(warn).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('does not warn at exactly the drift bound (strict >)', async () => {
+      const db = await openLocalDb(TENANT, { memory: true })
+      const first = await createHlc(db)
+      await first.now()
+
+      // Exactly DRIFT_WARN_MS of lag: the comparison is strict ``>``.
+      vi.setSystemTime(1_700_000_000_000 + 60_000)
+      const reloaded = await createHlc(db)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      await reloaded.now()
+
+      expect(warn).not.toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('does not warn on a fresh clock with no persisted baseline', async () => {
+      const db = await openLocalDb(TENANT, { memory: true })
       const hlc = await createHlc(db)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
+      // No prior HLC was persisted at open — there's nothing to drift from.
       await hlc.now()
-      vi.advanceTimersByTime(30_000)
+      vi.advanceTimersByTime(120_000)
       await hlc.now()
 
       expect(warn).not.toHaveBeenCalled()

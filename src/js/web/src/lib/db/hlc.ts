@@ -18,6 +18,12 @@
  * a minute behind wall time surfaces a debug warning, but the wall time is
  * still adopted. The server is the sole drift authority (ADR-006) — a client
  * rejecting its own wall clock would only desync it from the accepted set.
+ *
+ * ``physical_ms`` is held as a JS ``number``, so the protocol's effective
+ * upper bound on the physical component is ``Number.MAX_SAFE_INTEGER``
+ * (~9.0e15 ms, year ~287396). Real wall-clock ms are ~1.7e12, so this is
+ * not a near-term concern; values above the safe range would lose precision
+ * and break the fixed-width round-trip.
  */
 
 import type { DbHandle } from './bootstrap'
@@ -31,10 +37,20 @@ const LOGICAL_MAX = 10 ** LOGICAL_WIDTH - 1
 /** Persisted-physical lag past which we surface a drift warning (ADR-006). */
 const DRIFT_WARN_MS = 60_000
 
+/**
+ * Canonical serialized form: 16-digit physical, 5-digit logical, then a
+ * non-empty opaque node id. Mirrors the server parser's regex (``_hlc.py``)
+ * so the two implementations accept exactly the same strings.
+ */
+const HLC_RE = /^(\d{16})-(\d{5})-(.+)$/
+
 /** The minimal persistence surface the clock needs — satisfied by {@link DbHandle}. */
 export type HlcStore = Pick<DbHandle, 'exec'>
 
-/** One parsed HLC. {@link node_id} is opaque and may itself contain dashes. */
+/** Raised when a string is not a canonical HLC (matches the server's HLCParseError). */
+export class HlcParseError extends Error {}
+
+/** One parsed HLC. {@link HlcParts.nodeId} is opaque and may itself contain dashes. */
 interface HlcParts {
   physicalMs: number
   logical: number
@@ -53,15 +69,17 @@ function format(physicalMs: number, logical: number, nodeId: string): string {
 }
 
 /**
- * Split a serialized HLC. The node id is everything after the second dash —
- * it may contain dashes (a UUID does), so we slice on the two fixed-width
- * numeric fields rather than splitting on ``-``.
+ * Split a serialized HLC, rejecting anything that isn't the canonical form.
+ * Validating here keeps a malformed remote (or a corrupted persisted value)
+ * from propagating ``NaN`` into the clock's state and poisoning every
+ * subsequent stamp.
  */
 function parse(hlc: string): HlcParts {
-  const physicalMs = Number(hlc.slice(0, PHYSICAL_WIDTH))
-  const logical = Number(hlc.slice(PHYSICAL_WIDTH + 1, PHYSICAL_WIDTH + 1 + LOGICAL_WIDTH))
-  const nodeId = hlc.slice(PHYSICAL_WIDTH + 1 + LOGICAL_WIDTH + 1)
-  return { physicalMs, logical, nodeId }
+  const m = HLC_RE.exec(hlc)
+  if (m === null) {
+    throw new HlcParseError(`invalid HLC: ${JSON.stringify(hlc)}`)
+  }
+  return { physicalMs: Number(m[1]), logical: Number(m[2]), nodeId: m[3] }
 }
 
 /**
@@ -77,17 +95,21 @@ export class Hlc {
   #physicalMs: number
   #logical: number
   readonly #store: HlcStore
+  /** Whether a prior HLC was persisted at open — gates drift detection. */
+  readonly #resumed: boolean
 
   private constructor(
     store: HlcStore,
     nodeId: string,
     physicalMs: number,
     logical: number,
+    resumed: boolean,
   ) {
     this.#store = store
     this.nodeId = nodeId
     this.#physicalMs = physicalMs
     this.#logical = logical
+    this.#resumed = resumed
   }
 
   /**
@@ -103,6 +125,14 @@ export class Hlc {
     const lastHlc = row[1] as string | null
 
     if (nodeId === null || nodeId === undefined || nodeId === '') {
+      // A persisted clock state with no identity means a prior node_id was
+      // cleared while last_hlc survived. Resuming it under a fresh UUID would
+      // emit monotonic-but-identity-confused stamps; fail loudly instead.
+      if (lastHlc) {
+        throw new Error(
+          'sync_state has a persisted HLC but no node_id; refusing to resume an unidentified clock',
+        )
+      }
       nodeId = crypto.randomUUID()
       await store.exec('UPDATE sync_state SET node_id = ? WHERE id = 1', [nodeId])
     }
@@ -114,13 +144,16 @@ export class Hlc {
       physicalMs = parts.physicalMs
       logical = parts.logical
     }
-    return new Hlc(store, nodeId, physicalMs, logical)
+    return new Hlc(store, nodeId, physicalMs, logical, lastHlc !== null)
   }
 
   /**
    * Stamp and persist a new HLC for a locally-generated event (ADR-006
    * local-event algorithm): adopt wall time when it has advanced, else tick
    * the logical counter.
+   *
+   * Throws when the logical counter would overflow the 5-digit field within
+   * one wall millisecond (matches the server's ``OverflowError``).
    */
   async now(): Promise<string> {
     const wall = wallNowMs()
@@ -130,7 +163,7 @@ export class Hlc {
       this.#physicalMs = wall
       this.#logical = 0
     } else {
-      this.#logical += 1
+      this.#logical = this.#tick(this.#logical, this.#physicalMs)
     }
     return this.#persist()
   }
@@ -139,7 +172,8 @@ export class Hlc {
    * Fold a remote HLC into local state (ADR-006 receive-event algorithm),
    * advancing physical to ``max(local, remote, wall)`` and resolving the
    * logical counter per the branch the new physical came from. Persists the
-   * advanced state; returns nothing.
+   * advanced state; returns nothing. Rejects a malformed remote and throws on
+   * logical-counter overflow, like {@link now}.
    */
   async receive(remote: string): Promise<void> {
     const r = parse(remote)
@@ -147,22 +181,32 @@ export class Hlc {
     this.#warnIfDrifted(wall)
 
     const newPhysical = Math.max(this.#physicalMs, r.physicalMs, wall)
+    let newLogical: number
     if (newPhysical === this.#physicalMs && newPhysical === r.physicalMs) {
-      this.#logical = Math.max(this.#logical, r.logical) + 1
+      newLogical = this.#tick(Math.max(this.#logical, r.logical), newPhysical)
     } else if (newPhysical === this.#physicalMs) {
-      this.#logical += 1
+      newLogical = this.#tick(this.#logical, newPhysical)
     } else if (newPhysical === r.physicalMs) {
-      this.#logical = r.logical + 1
+      newLogical = this.#tick(r.logical, newPhysical)
     } else {
-      this.#logical = 0
+      newLogical = 0
     }
     this.#physicalMs = newPhysical
+    this.#logical = newLogical
     await this.#persist()
   }
 
-  /** Surface a debug-only warning when the persisted physical lags wall time. */
+  /** Increment a logical counter, refusing to overflow the fixed-width field. */
+  #tick(logical: number, physicalMs: number): number {
+    if (logical >= LOGICAL_MAX) {
+      throw new Error(`HLC logical counter overflow at physical_ms=${physicalMs}`)
+    }
+    return logical + 1
+  }
+
+  /** Surface a debug-only warning when a resumed clock's physical lags wall time. */
   #warnIfDrifted(wall: number): void {
-    if (this.#physicalMs !== 0 && wall - this.#physicalMs > DRIFT_WARN_MS) {
+    if (this.#resumed && wall - this.#physicalMs > DRIFT_WARN_MS) {
       console.warn('clock_drift_detected', {
         persistedPhysicalMs: this.#physicalMs,
         wallMs: wall,

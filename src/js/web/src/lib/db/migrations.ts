@@ -3,11 +3,15 @@
  *
  * Migrations are an ordered list of forward steps, each gated on the stored
  * ``user_version``. A fresh DB (``user_version = 0``) runs every step; an
- * existing DB runs only the steps past its stamped version. A step never
- * rewrites an earlier one — a new schema change appends a new step. The DDL
- * (step 1) is ``IF NOT EXISTS``, so the base tables it declares already
- * carry the latest column set on a fresh open; later steps only need to
- * patch DBs created before the column existed.
+ * existing DB runs only the steps past its stamped version.
+ *
+ * ``ddl.ts`` always reflects the latest column set, so a fresh DB gets
+ * everything from STEP[0]. Each ``STEPS[N>0]`` patches DBs that predate a
+ * later column (e.g. an idempotent ``ALTER TABLE``). When you add a column:
+ * edit ``ddl.ts`` AND append a STEPS entry together — the DDL change covers
+ * fresh DBs, the new step covers existing ones. The patch steps must be
+ * idempotent (guarded), since a fresh DB skips them only by version, not by
+ * inspecting whether the change is already present.
  *
  * A DB stamped at a version newer than this build (a tab running stale code
  * against a DB a newer tab upgraded) is a hard error: silently downgrading
@@ -51,8 +55,13 @@ function userVersion(db: Database): number {
 }
 
 function hasColumn(db: Database, table: string, column: string): boolean {
-  // ``table`` is a hard-coded literal here, never user input — the
-  // PRAGMA function form doesn't accept a bind parameter for its argument.
+  // The PRAGMA function form doesn't accept a bind parameter for its table
+  // argument, so it has to be interpolated. Callers pass hard-coded literals,
+  // but whitelist the identifier shape anyway so the helper can't become an
+  // injection vector if a future caller is careless.
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) {
+    throw new Error(`unsafe table identifier: ${JSON.stringify(table)}`)
+  }
   const rows = db.exec({
     sql: `SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`,
     bind: [column],
