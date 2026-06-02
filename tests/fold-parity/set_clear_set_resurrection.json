@@ -1,0 +1,71 @@
+{
+  "name": "set_clear_set_resurrection",
+  "description": "Set, clear, then set again at a higher HLC: the value comes back. Proves a cleared (null) cell is not a tombstone — a later set resurrects it.",
+  "schema_state": {
+    "asset_types": [
+      { "id": "11111111-1111-1111-1111-111111111111", "name": "Truck" }
+    ],
+    "asset_type_fields": [
+      {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "parent_id": "11111111-1111-1111-1111-111111111111",
+        "name": "VIN",
+        "data_type": "text"
+      }
+    ],
+    "maintenance_record_types": [],
+    "maintenance_record_type_fields": []
+  },
+  "events": [
+    {
+      "hlc": "0000000000000001-00000-client-a",
+      "family": "asset",
+      "type_id": "11111111-1111-1111-1111-111111111111",
+      "instance_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "body": {
+        "event": "created",
+        "values": { "22222222-2222-2222-2222-222222222222": "FIRST" }
+      }
+    },
+    {
+      "hlc": "0000000000000002-00000-client-a",
+      "family": "asset",
+      "type_id": "11111111-1111-1111-1111-111111111111",
+      "instance_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "body": {
+        "event": "updated",
+        "values": { "22222222-2222-2222-2222-222222222222": null }
+      }
+    },
+    {
+      "hlc": "0000000000000003-00000-client-a",
+      "family": "asset",
+      "type_id": "11111111-1111-1111-1111-111111111111",
+      "instance_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "body": {
+        "event": "updated",
+        "values": { "22222222-2222-2222-2222-222222222222": "THIRD" }
+      }
+    }
+  ],
+  "expected_projection": {
+    "assets": [
+      {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "type_id": "11111111-1111-1111-1111-111111111111",
+        "deleted": false,
+        "row_state_hlc": "0000000000000001-00000-client-a"
+      }
+    ],
+    "asset_field_values": [
+      {
+        "entity_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "field_id": "22222222-2222-2222-2222-222222222222",
+        "value_json": "THIRD",
+        "hlc": "0000000000000003-00000-client-a"
+      }
+    ],
+    "maintenance_records": [],
+    "maintenance_record_field_values": []
+  }
+}

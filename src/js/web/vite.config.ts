@@ -72,7 +72,7 @@ export default defineConfig({
     // Component tests run in jsdom; Playwright e2e is a separate suite under tests/e2e/.
     environment: 'jsdom',
     globals: true,
-    include: ['tests/component/**/*.test.ts'],
+    include: ['tests/component/**/*.test.ts', 'tests/fold-parity/**/*.test.ts'],
     setupFiles: ['./tests/component/setup.ts'],
     coverage: {
       provider: 'v8',
