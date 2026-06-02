@@ -52,4 +52,40 @@ describe('migrate', () => {
     expect(() => migrate(db)).toThrow(/newer than this build/)
     db.close()
   })
+
+  it('upgrades a v1 DB: adds last_hlc and preserves the existing row', () => {
+    // Hand-build the v1-shape sync_state (no last_hlc), the table a build
+    // stamped at user_version=1 shipped. A fresh DB never takes the ALTER
+    // path (STEP[0]'s DDL already has the column), so only this exercises it.
+    const db = freshDb()
+    db.exec(`CREATE TABLE sync_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_seen_seq INTEGER NOT NULL DEFAULT 0,
+      active_schema_version INTEGER NOT NULL DEFAULT 0,
+      node_id TEXT,
+      last_sync_at TEXT
+    )`)
+    db.exec("INSERT INTO sync_state (id, last_seen_seq, node_id) VALUES (1, 7, 'node-a')")
+    db.exec('PRAGMA user_version = 1')
+
+    migrate(db)
+
+    const hasLastHlc = db.exec({
+      sql: "SELECT 1 FROM pragma_table_info('sync_state') WHERE name = 'last_hlc'",
+      returnValue: 'resultRows',
+      rowMode: 'array',
+    })
+    expect(hasLastHlc.length).toBe(1)
+    expect(userVersion(db)).toBe(SCHEMA_VERSION)
+
+    const [[seq, node, lastHlc]] = db.exec({
+      sql: 'SELECT last_seen_seq, node_id, last_hlc FROM sync_state WHERE id = 1',
+      returnValue: 'resultRows',
+      rowMode: 'array',
+    })
+    expect(seq).toBe(7)
+    expect(node).toBe('node-a')
+    expect(lastHlc).toBeNull()
+    db.close()
+  })
 })
