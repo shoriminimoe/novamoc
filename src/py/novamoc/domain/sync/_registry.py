@@ -58,16 +58,3 @@ class InMemorySubscriberRegistry:
             # its own handler's unsubscribe removes it.
             with contextlib.suppress(WebSocketException, RuntimeError):
                 await socket.send_data(message, mode="text")
-
-
-class NoopSubscriberRegistry:
-    """No-op placeholder until the real registry is implemented."""
-
-    async def subscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
-        return
-
-    async def unsubscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
-        return
-
-    async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None:
-        return

@@ -4,10 +4,7 @@ import uuid
 
 from litestar.exceptions import WebSocketException
 
-from novamoc.domain.sync._registry import (
-    InMemorySubscriberRegistry,
-    NoopSubscriberRegistry,
-)
+from novamoc.domain.sync._registry import InMemorySubscriberRegistry
 
 
 class _FakeSocket:
@@ -105,9 +102,3 @@ async def test_publish_iterates_a_snapshot() -> None:
     assert first.sent == [b"x"]
 
 
-async def test_noop_registry_methods_are_no_ops() -> None:
-    reg = NoopSubscriberRegistry()
-    tid = uuid.uuid4()
-    await reg.subscribe(tid, object())  # ty: ignore[invalid-argument-type]
-    await reg.unsubscribe(tid, object())  # ty: ignore[invalid-argument-type]
-    await reg.publish(tid, b"payload")
