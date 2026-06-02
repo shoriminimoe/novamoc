@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from novamoc.domain.sync._registry import (
-    NoopSubscriberRegistry,
+    InMemorySubscriberRegistry,
     SubscriberRegistry,
 )
 from novamoc.domain.sync.controllers import SyncController
 
-__all__ = ("NoopSubscriberRegistry", "SubscriberRegistry", "SyncController")
+__all__ = ("InMemorySubscriberRegistry", "SubscriberRegistry", "SyncController")
