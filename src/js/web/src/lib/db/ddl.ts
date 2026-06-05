@@ -188,7 +188,8 @@ export const DDL: readonly string[] = [
   // Inbound catch-up events whose ``schema_version`` is ahead of the local
   // ``active_schema_version`` (ADR-009). Held here verbatim until a schema
   // refresh raises the active version to/past the event's, at which point the
-  // event becomes applicable and is folded then deleted. Distinct from
+  // event becomes applicable; the consumer folds it then discards the row in
+  // the same transaction (fold-then-discard, non-lossy). Distinct from
   // ``local_pending_events`` (outbound, un-POSTed local writes): these are
   // already-accepted server events the client is not yet allowed to apply.
   // ``seq`` is the server's catch-up cursor — unique per tenant, the natural

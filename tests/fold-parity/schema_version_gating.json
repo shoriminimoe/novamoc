@@ -1,6 +1,6 @@
 {
   "name": "schema_version_gating",
-  "description": "ADR-009 buffer-then-release. An event tagged with a schema_version ahead of the client's active version is buffered, not applied; a later schema refresh that raises the active version past it releases the event, and only then does it fold into the projection. The `gating` block drives both parity runners: events arrive across phases, each phase fixes the active schema version (monotonic), and events gate-then-fold accordingly. The expected_projection is the state after the final phase.",
+  "description": "ADR-009 buffer-then-release. An event tagged with a schema_version ahead of the client's active version is buffered, not applied; a later schema refresh that raises the active version past it releases the event, and only then does it fold into the projection. The `gating` block drives both parity runners: events arrive across phases, each phase fixes the active schema version (monotonic), and events gate-then-fold accordingly. seq=3 is tagged schema_version 3 and the final active version is only 2, so it stays buffered forever — its mutation (asset bbbb...) is deliberately ABSENT from expected_projection, which is what makes this scenario actually distinguish correct gating from always-apply (HLC-LWW alone can't, since apply-order is irrelevant). The expected_projection is the state after the final phase.",
   "schema_state": {
     "asset_types": [
       { "id": "11111111-1111-1111-1111-111111111111", "name": "Truck" }
@@ -49,6 +49,18 @@
             "body": {
               "event": "updated",
               "values": { "33333333-3333-3333-3333-333333333333": "red" }
+            }
+          },
+          {
+            "seq": 3,
+            "schema_version": 3,
+            "hlc": "0000000000000003-00000-client-a",
+            "family": "asset",
+            "type_id": "11111111-1111-1111-1111-111111111111",
+            "instance_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "body": {
+              "event": "created",
+              "values": { "22222222-2222-2222-2222-222222222222": "NEVER-APPLIED" }
             }
           }
         ]

@@ -45,37 +45,12 @@ import type {
   Projection,
   SchemaField,
   SchemaProjection,
+  SchemaSnapshotWire,
   SchemaType,
+  SchemaWireType,
 } from './types'
 
-/**
- * The nested `GET /schema` wire shape (a type owns its fields). Mirrors
- * `domain/schema/_read_payloads.py::SchemaSnapshotResponse`. Kept here rather
- * than in `lib/schema.ts` so the fold owns the flatten without a layering
- * back-edge; `lib/schema.ts` re-exports its own structurally-identical view.
- */
-interface WireField {
-  id: string
-  name: string
-  data_type: SchemaField['data_type']
-  validation: Record<string, unknown> | null
-  active: boolean
-}
-
-interface WireType {
-  id: string
-  name: string
-  active: boolean
-  fields: WireField[]
-}
-
-export interface SchemaSnapshotWire {
-  schema_version: number
-  asset_types: WireType[]
-  maintenance_record_types: WireType[]
-}
-
-function flattenTypes(types: WireType[]): {
+function flattenTypes(types: SchemaWireType[]): {
   types: SchemaType[]
   fields: SchemaField[]
 } {

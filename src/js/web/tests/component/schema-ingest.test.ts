@@ -14,9 +14,11 @@ import type { ApiClient } from '../../src/lib/api'
 import type { SchemaSnapshot } from '../../src/lib/schema'
 import {
   type BufferableEvent,
+  InvalidBufferableEventError,
   activeSchemaVersion,
   bufferEvent,
   bufferedEventCount,
+  discardBufferedEvents,
   gateEvent,
   refreshSchema,
 } from '../../src/lib/sync/schema'
@@ -211,6 +213,75 @@ describe('refreshSchema', () => {
     expect(result.activeVersion).toBe(2)
     expect(await activeSchemaVersion(db)).toBe(2)
   })
+
+  it('does not revert the projection on a stale (older-version) refresh', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+
+    // v2 introduces the Color field and an Inspection MR type.
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV2()) })
+    const before = await rows(
+      db,
+      'SELECT id, parent_id, active FROM asset_type_fields ORDER BY id',
+    )
+
+    // A stale v1 read omits Color entirely. The gate stays at 2, so if the
+    // reconcile ran it would delete Color while events tagged v2 still apply —
+    // the inconsistency this guards against. The whole reconcile must be skipped.
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV1()) })
+
+    const after = await rows(
+      db,
+      'SELECT id, parent_id, active FROM asset_type_fields ORDER BY id',
+    )
+    expect(after).toEqual(before)
+    // The newer MR type also survives.
+    const mrTypes = await rows(db, 'SELECT id FROM maintenance_record_types')
+    expect(mrTypes).toEqual([[INSPECTION]])
+  })
+
+  it('reconciles without an FK crash after data has been folded', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+
+    // Bring up the schema, then fold an asset that references the Truck type
+    // (the FK has no ON DELETE CASCADE).
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV1()) })
+    await db.exec(
+      `INSERT INTO assets (tenant_id, id, type_id, row_state_hlc)
+       VALUES (?, ?, ?, ?)`,
+      [TENANT, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', TRUCK, 'h'],
+    )
+
+    // A second refresh used to wholesale-DELETE asset_types and trip the FK.
+    // Upsert + delete-absent keeps the still-referenced Truck row in place.
+    await expect(
+      refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV2()) }),
+    ).resolves.toBeDefined()
+
+    const types = await rows(db, 'SELECT id FROM asset_types')
+    expect(types).toEqual([[TRUCK]])
+  })
+
+  it('preserves created_at across refreshes and bumps updated_at', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV1()) })
+    const [[created1, updated1]] = await rows(
+      db,
+      'SELECT created_at, updated_at FROM asset_types WHERE id = ?',
+      [TRUCK],
+    )
+    expect(created1).toBeTypeOf('string')
+    expect(updated1).toBeTypeOf('string')
+
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV2()) })
+    const [[created2]] = await rows(
+      db,
+      'SELECT created_at FROM asset_types WHERE id = ?',
+      [TRUCK],
+    )
+    // created_at is first-seen-locally and survives the conflict update.
+    expect(created2).toBe(created1)
+  })
 })
 
 describe('schema-version gating', () => {
@@ -235,7 +306,7 @@ describe('schema-version gating', () => {
     expect(await bufferedEventCount(db, TENANT)).toBe(1)
   })
 
-  it('releases a buffered event once a refresh raises the version past it', async () => {
+  it('surfaces a buffered event once a refresh raises the version past it', async () => {
     const db = await openLocalDb(TENANT, { memory: true })
     await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV1()) })
     await bufferEvent(db, TENANT, futureEvent)
@@ -248,13 +319,36 @@ describe('schema-version gating', () => {
     })
 
     expect(result.activeVersion).toBe(2)
-    expect(result.released).toHaveLength(1)
-    expect(result.released[0].seq).toBe(42)
-    expect(result.released[0].body).toEqual({
+    expect(result.releasable).toHaveLength(1)
+    expect(result.releasable[0].seq).toBe(42)
+    expect(result.releasable[0].body).toEqual({
       event: 'updated',
       values: { [COLOR]: 'red' },
     })
-    // The buffer is drained — the handoff to the fold is complete.
+  })
+
+  it('leaves releasable events in the buffer until the consumer discards them', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    await refreshSchema({ store: db, tenantId: TENANT, client: fakeClient(snapshotV1()) })
+    await bufferEvent(db, TENANT, futureEvent)
+
+    const result = await refreshSchema({
+      store: db,
+      tenantId: TENANT,
+      client: fakeClient(snapshotV2()),
+    })
+
+    // Non-lossy: refreshSchema reads but does NOT delete, so a caller that
+    // crashes before folding still finds the event in the buffer.
+    expect(result.releasable).toHaveLength(1)
+    expect(await bufferedEventCount(db, TENANT)).toBe(1)
+
+    // The consumer folds, then discards by seq in its own transaction.
+    await discardBufferedEvents(
+      db,
+      TENANT,
+      result.releasable.map((e) => e.seq),
+    )
     expect(await bufferedEventCount(db, TENANT)).toBe(0)
   })
 
@@ -272,7 +366,30 @@ describe('schema-version gating', () => {
       client: fakeClient(snapshotV2()),
     })
 
-    expect(result.released).toHaveLength(0)
+    expect(result.releasable).toHaveLength(0)
     expect(await bufferedEventCount(db, TENANT)).toBe(1)
+  })
+
+  it('rejects an event with an unknown family at the buffer boundary', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    const bad = { ...futureEvent, family: 'widget' } as unknown as BufferableEvent
+
+    await expect(bufferEvent(db, TENANT, bad)).rejects.toBeInstanceOf(
+      InvalidBufferableEventError,
+    )
+    expect(await bufferedEventCount(db, TENANT)).toBe(0)
+  })
+
+  it('rejects an event whose body lacks a valid discriminator tag', async () => {
+    const db = await openLocalDb(TENANT, { memory: true })
+    const bad = {
+      ...futureEvent,
+      body: { event: 'typo', values: {} },
+    } as unknown as BufferableEvent
+
+    await expect(bufferEvent(db, TENANT, bad)).rejects.toBeInstanceOf(
+      InvalidBufferableEventError,
+    )
+    expect(await bufferedEventCount(db, TENANT)).toBe(0)
   })
 })
