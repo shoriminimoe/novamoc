@@ -99,6 +99,46 @@ async def test_drain_respects_batch_size(settings) -> None:
     await cfg.get_engine().dispose()
 
 
+async def test_run_loop_survives_transient_publish_failure(settings) -> None:
+    cfg = await _make_config(settings)
+    await _insert(cfg, DEV_TENANT_ID_A)
+
+    class _FlakyRegistry(_StubRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def publish(self, tenant_id, message) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient")
+            await super().publish(tenant_id, message)
+
+    reg = _FlakyRegistry()
+    bcast = EventBroadcaster(reg, cfg, batch_size=500)
+    task = asyncio.create_task(bcast.run())
+    try:
+        bcast.notify()  # first drain: publish raises → caught by run()
+        for _ in range(50):
+            if reg.calls >= 1:
+                break
+            await asyncio.sleep(0.01)
+        assert reg.published == []  # the failed attempt delivered nothing
+        assert not task.done()  # the loop survived
+
+        bcast.notify()  # second drain: publish succeeds; _last_seq hadn't advanced
+        for _ in range(200):
+            if reg.published:
+                break
+            await asyncio.sleep(0.01)
+        assert len(reg.published) == 1  # delivered on retry
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    await cfg.get_engine().dispose()
+
+
 async def test_run_loop_drains_on_signal(settings) -> None:
     cfg = await _make_config(settings)
     reg = _StubRegistry()

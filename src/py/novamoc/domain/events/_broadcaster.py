@@ -41,6 +41,9 @@ class EventBroadcaster:
         self._wake = asyncio.Event()
 
     async def start_at_tip(self) -> None:
+        """Set the cursor to the current global tip so a restart does not
+        replay history. Returning clients catch up over HTTP and then connect
+        for the live tail from here (ADR-013)."""
         async with self._alchemy_config.get_session() as session:
             self._last_seq = await EventLogService(
                 session=session
@@ -54,6 +57,10 @@ class EventBroadcaster:
         for row in rows:
             payload = msgspec.json.encode(_row_to_recorded_event(row))
             await self._registry.publish(row.tenant_id, payload)
+            # Advance only after a successful publish: a transient failure
+            # leaves _last_seq behind this row, so run()'s except retries it
+            # from here on the next signal. (Rows are validated at accept, so
+            # there is no persistent-encode-failure case to skip past.)
             self._last_seq = row.seq
         return len(rows)
 
