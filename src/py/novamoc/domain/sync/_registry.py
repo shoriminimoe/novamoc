@@ -8,7 +8,10 @@ deployment — without touching the controller.
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from litestar.exceptions import WebSocketException
 
 if TYPE_CHECKING:
     import uuid
@@ -27,14 +30,31 @@ class SubscriberRegistry(Protocol):
     async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None: ...
 
 
-class NoopSubscriberRegistry:
-    """No-op placeholder until the real registry is implemented."""
+class InMemorySubscriberRegistry:
+    """Per-process tenant → connected-sockets map (ADR-013 fan-out scoping).
+
+    Single event loop: subscribe/unsubscribe mutate without awaiting, so
+    they are atomic relative to publish; publish snapshots the set before
+    awaiting any send.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: dict[uuid.UUID, set[WebSocket]] = {}
 
     async def subscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
-        return
+        self._subscribers.setdefault(tenant_id, set()).add(socket)
 
     async def unsubscribe(self, tenant_id: uuid.UUID, socket: WebSocket) -> None:
-        return
+        subscribers = self._subscribers.get(tenant_id)
+        if subscribers is None:
+            return
+        subscribers.discard(socket)
+        if not subscribers:
+            del self._subscribers[tenant_id]
 
     async def publish(self, tenant_id: uuid.UUID, message: bytes) -> None:
-        return
+        for socket in list(self._subscribers.get(tenant_id, ())):
+            # Best-effort: a closed peer must not abort fan-out to the rest;
+            # its own handler's unsubscribe removes it.
+            with contextlib.suppress(WebSocketException, RuntimeError):
+                await socket.send_data(message, mode="text")

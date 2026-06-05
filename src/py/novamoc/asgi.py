@@ -70,7 +70,7 @@ def create_app(
     from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema.controllers import SchemaController
     from novamoc.domain.snapshot.controllers import SnapshotController
-    from novamoc.domain.sync import NoopSubscriberRegistry, SyncController
+    from novamoc.domain.sync import InMemorySubscriberRegistry, SyncController
 
     s = settings if settings is not None else Settings()
 
@@ -131,7 +131,7 @@ def create_app(
         parallelism=s.auth.argon2_parallelism,
     )
 
-    subscriber_registry = NoopSubscriberRegistry()
+    subscriber_registry = InMemorySubscriberRegistry()
 
     async def _assert_alembic_at_head(_app: Litestar) -> None:
         """Refuse to serve when the DB is not at HEAD (see ADR-021)."""
