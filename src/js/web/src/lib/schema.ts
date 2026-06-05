@@ -7,35 +7,21 @@
  */
 
 import type { ApiClient } from './api'
+import type {
+  FieldDataType,
+  SchemaSnapshotWire,
+  SchemaWireField,
+  SchemaWireType,
+} from './db/types'
 
-export type FieldDataType =
-  | 'text'
-  | 'number'
-  | 'integer'
-  | 'boolean'
-  | 'date'
-  | 'datetime'
-
-export interface FieldView {
-  id: string
-  name: string
-  data_type: FieldDataType
-  validation: Record<string, unknown> | null
-  active: boolean
-}
-
-export interface TypeView {
-  id: string
-  name: string
-  active: boolean
-  fields: FieldView[]
-}
-
-export interface SchemaSnapshot {
-  schema_version: number
-  asset_types: TypeView[]
-  maintenance_record_types: TypeView[]
-}
+// The wire shape is defined once in `db/types.ts` (the fold's single source
+// of truth) and surfaced here under the HTTP client's names so the two cannot
+// drift. A plain type import from a sibling client `lib/` module carries no
+// Litestar/runtime edge, so the db-layer layering rule is unaffected.
+export type { FieldDataType }
+export type FieldView = SchemaWireField
+export type TypeView = SchemaWireType
+export type SchemaSnapshot = SchemaSnapshotWire
 
 export function fetchSchema(client: ApiClient): Promise<SchemaSnapshot> {
   return client.get<SchemaSnapshot>('/schema')
