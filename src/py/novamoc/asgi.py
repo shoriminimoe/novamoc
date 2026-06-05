@@ -3,13 +3,49 @@
 # ruff: noqa: PLC0415
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+    from typing import Any
+
     from advanced_alchemy.extensions.litestar import SQLAlchemyAsyncConfig
     from litestar import Litestar
 
     from novamoc.config import Settings
+    from novamoc.domain.events._broadcaster import EventBroadcaster
+
+    _LifecycleHook = Callable[[Litestar], Coroutine[Any, Any, None]]
+
+
+def _make_broadcaster_lifecycle(
+    broadcaster: EventBroadcaster,
+    enabled: bool,
+) -> tuple[_LifecycleHook, _LifecycleHook]:
+    """Return ``(on_startup, on_shutdown)`` lifecycle hooks for the broadcaster.
+
+    Extracted from ``create_app`` to keep the factory's statement count
+    under the PLR0915 limit. The two closures capture ``broadcaster`` and
+    ``enabled``; ``asyncio`` / ``contextlib`` come from module-level imports.
+    """
+
+    async def _start(app: Litestar) -> None:
+        if not enabled:
+            return
+        await broadcaster.start_at_tip()
+        app.state.broadcaster_task = asyncio.create_task(broadcaster.run())
+
+    async def _stop(app: Litestar) -> None:
+        task = app.state.get("broadcaster_task")
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    return _start, _stop
 
 
 def create_app(
@@ -67,6 +103,7 @@ def create_app(
     from novamoc.domain.accounts._session_backend import (
         RequestScopedSessionBackend,
     )
+    from novamoc.domain.events._broadcaster import EventBroadcaster
     from novamoc.domain.events.controllers import EventsController
     from novamoc.domain.schema.controllers import SchemaController
     from novamoc.domain.snapshot.controllers import SnapshotController
@@ -133,6 +170,13 @@ def create_app(
 
     subscriber_registry = InMemorySubscriberRegistry()
 
+    event_broadcaster = EventBroadcaster(
+        subscriber_registry, cfg, batch_size=s.app.broadcaster_batch_size
+    )
+    _start_broadcaster, _stop_broadcaster = _make_broadcaster_lifecycle(
+        event_broadcaster, s.app.broadcaster_enabled
+    )
+
     async def _assert_alembic_at_head(_app: Litestar) -> None:
         """Refuse to serve when the DB is not at HEAD (see ADR-021)."""
         await assert_alembic_at_head(cfg)
@@ -179,10 +223,12 @@ def create_app(
                 "settings": s,
                 "password_hasher": password_hasher,
                 "subscriber_registry": subscriber_registry,
+                "event_broadcaster": event_broadcaster,
             }
         ),
         # Default Litestar OpenAPI mount is /schema; move it so it doesn't
         # collide with our POST /schema route.
         openapi_config=OpenAPIConfig(title="novaMOC", version="0.1.0", path="/openapi"),
-        on_startup=[_assert_alembic_at_head],
+        on_startup=[_assert_alembic_at_head, _start_broadcaster],
+        on_shutdown=[_stop_broadcaster],
     )
