@@ -187,7 +187,9 @@ class EventBatchResponse(msgspec.Struct, forbid_unknown_fields=True):
     outcomes: tuple[EventOutcome, ...]
 
 
-class RecordedEvent(msgspec.Struct, forbid_unknown_fields=True):
+class RecordedEvent(
+    msgspec.Struct, forbid_unknown_fields=True, tag_field="type", tag="event"
+):
     """Server-recorded event, as emitted on read transports.
 
     The read-side twin of :class:`EventEnvelope`. Adds the server-
