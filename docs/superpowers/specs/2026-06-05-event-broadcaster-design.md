@@ -60,7 +60,53 @@ and the catch-up HTTP endpoint.
 field. The catch-up / pagination tests that assert exact `RecordedEvent` dicts
 update accordingly. Pre-release — this wire change is acceptable.
 
-### 2. `EventBroadcaster` (`domain/events/_broadcaster.py`)
+### 2. `EventLogService` cross-tenant readers (`services.py`)
+
+The broadcaster reads `event_log` through `EventLogService` — the same service
+the catch-up paginator uses and where `current_seq()` already lives — not raw
+queries. But `current_seq()` is deliberately tenant-scoped (Layer 1 injects
+`WHERE tenant_id`), and the broadcaster needs *global* reads across all tenants.
+So two explicitly-named cross-tenant reader methods are added to
+`EventLogService`, each encapsulating the `SKIP_TENANT_FILTER` escape hatch the
+same way `current_seq()` already wraps a raw aggregate:
+
+```python
+# added to EventLogService
+async def current_seq_all_tenants(self) -> int:
+    """Global ``MAX(seq)`` across every tenant (or 0). Cross-tenant: uses the
+    ``SKIP_TENANT_FILTER`` escape hatch — for the broadcaster's start-at-tip."""
+    stmt = select(func.coalesce(func.max(EventLog.seq), 0)).execution_options(
+        **{SKIP_TENANT_FILTER: True}
+    )
+    result = await self.repository.session.execute(stmt)
+    return int(result.scalar_one())
+
+async def list_after_all_tenants(
+    self, after_seq: int, limit: int
+) -> Sequence[EventLog]:
+    """Rows with ``seq > after_seq`` across every tenant, ascending, capped at
+    ``limit``. Cross-tenant (``SKIP_TENANT_FILTER``) — for the broadcaster's
+    drain."""
+    stmt = (
+        select(EventLog)
+        .where(EventLog.seq > after_seq)
+        .order_by(EventLog.seq)
+        .limit(limit)
+        .execution_options(**{SKIP_TENANT_FILTER: True})
+    )
+    result = await self.repository.session.execute(stmt)
+    return list(result.scalars().all())
+```
+
+`SKIP_TENANT_FILTER` is the execution-option key `"novamoc_skip_tenant_filter"`
+(`db/_tenant_context.py`), checked by Layer 1 and Layer 3 of `db/_listeners`.
+These methods are its first production callers — legitimate system-level
+cross-tenant reads, exactly what the escape hatch documents. The `_all_tenants`
+suffix flags the intent (the hatch is greppable by design); the broadcaster is
+their only caller. Keeping the SQL on the service preserves the single
+`event_log` access pattern rather than reaching past it to raw queries.
+
+### 3. `EventBroadcaster` (`domain/events/_broadcaster.py`)
 
 Lives in the events domain (it tails `event_log`, an events-domain table, and
 reuses the events encoder), depending only on the narrow `SubscriberRegistry`
@@ -80,23 +126,16 @@ class EventBroadcaster:
         self._wake = asyncio.Event()
 
     async def start_at_tip(self) -> None:
-        # MAX(seq) across all tenants; default 0 on an empty log.
         async with self._alchemy_config.get_session() as session:
-            stmt = select(func.coalesce(func.max(EventLog.seq), 0)).execution_options(
-                **{SKIP_TENANT_FILTER: True}
-            )
-            self._last_seq = int((await session.execute(stmt)).scalar_one())
+            self._last_seq = await EventLogService(
+                session=session
+            ).current_seq_all_tenants()
 
     async def drain_once(self) -> int:
         async with self._alchemy_config.get_session() as session:
-            stmt = (
-                select(EventLog)
-                .where(EventLog.seq > self._last_seq)
-                .order_by(EventLog.seq)
-                .limit(self._batch_size)
-                .execution_options(**{SKIP_TENANT_FILTER: True})
+            rows = await EventLogService(session=session).list_after_all_tenants(
+                self._last_seq, self._batch_size
             )
-            rows = list((await session.execute(stmt)).scalars().all())
         for row in rows:
             payload = msgspec.json.encode(_row_to_recorded_event(row))
             await self._registry.publish(row.tenant_id, payload)
@@ -115,23 +154,20 @@ class EventBroadcaster:
 ```
 
 Notes:
-- `SKIP_TENANT_FILTER` is the execution-option key `"novamoc_skip_tenant_filter"`
-  (`db/_tenant_context.py`), checked by Layer 1 and Layer 3 of `db/_listeners`.
-  The broadcaster is the first production caller — a legitimate system-level
-  cross-tenant reader, exactly what the escape hatch documents.
-- The cross-tenant read returns each row's `tenant_id`; fan-out routes per row to
-  that tenant's subscribers via `registry.publish(row.tenant_id, ...)`. The
-  registry no-ops for tenants with no subscribers.
+- The cross-tenant readers (component 2) return each row with its `tenant_id`;
+  fan-out routes per row to that tenant's subscribers via
+  `registry.publish(row.tenant_id, ...)`. The registry no-ops for tenants with no
+  subscribers.
 - `_row_to_recorded_event` is reused as-is from `domain/events/_pagination.py`
   (no move needed — the broadcaster reads rows, so there is no `_bundle` import
   cycle).
 - `_last_seq` advances per row, so a partial batch (capped at `batch_size`) is
   resumed by the next `drain_once` (`run` loops until a drain returns 0).
-- Each `drain_once` opens and closes a fresh session; rows are materialized
-  (`list(...)`) before the session closes so the per-row publish loop does not
-  hold the session across `await registry.publish`.
+- Each `drain_once` opens and closes a fresh session via `EventLogService`; the
+  service returns a materialized `list`, so the per-row publish loop does not
+  hold the session open across `await registry.publish`.
 
-### 3. Lifecycle wiring (`asgi.create_app`)
+### 4. Lifecycle wiring (`asgi.create_app`)
 
 Build `EventBroadcaster(subscriber_registry, alchemy_config, batch_size=...)` and
 put it on `State` under `event_broadcaster`. Add:
@@ -144,7 +180,7 @@ put it on `State` under `event_broadcaster`. Add:
 (`AppSettings`), defaulting to a sensible bound (e.g. 500). Production-safe
 default; no env override needed for dev.
 
-### 4. Accept-path flag + `after_response` signal (`EventsController`)
+### 5. Accept-path flag + `after_response` signal (`EventsController`)
 
 - In the `append` handler, after building outcomes, set
   `request.state.broadcaster_notify = True` iff at least one outcome is
@@ -202,7 +238,10 @@ records `publish(tenant_id, payload)` calls.
   `drain_once()` publishes each row to its own `tenant_id` on the stub registry,
   with the payload decoding to the expected `RecordedEvent` (incl. `type:event`);
   `_last_seq` advances to the max; a second `drain_once()` returns 0 and publishes
-  nothing.
+  nothing. (This also exercises `EventLogService.list_after_all_tenants` /
+  `current_seq_all_tenants` cross-tenant — the two-tenant delivery proves the
+  reads cross tenants, complementing the existing per-tenant `current_seq`
+  isolation tests.)
 - **start_at_tip skips history** — seed rows, `start_at_tip()`, then
   `drain_once()` publishes nothing (already at the tip); insert a new row →
   `drain_once()` publishes only the new one.
