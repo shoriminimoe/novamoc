@@ -100,6 +100,10 @@ export default defineConfig({
         // covered by tests/e2e/db-bootstrap.spec.ts.
         'src/lib/db/worker.ts',
         'src/lib/db/worker-handle.ts',
+        // Debug-only sync route: drives ingestSnapshot against the OPFS DB
+        // worker, so it's only reachable in a real browser — covered by the
+        // Playwright snapshot-ingest spec, not jsdom.
+        'src/routes/_debug/sync/+page.svelte',
       ],
       // No `thresholds:` block — the ratchet does the gating. Setting a
       // threshold here would either duplicate the ratchet's role or fight it.
