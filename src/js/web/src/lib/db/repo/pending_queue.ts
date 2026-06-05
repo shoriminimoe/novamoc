@@ -15,8 +15,10 @@
  *     next drain re-sends it — which is the entire durability guarantee
  *     (a failed POST must not lose the event). Persisting a *permanent*
  *     rejection (a status/reason column for the debug surface) requires a DDL
- *     column that lands with E1.10; until then `recordFailure` records the
- *     attempt without mutating the row, keeping it eligible for retry.
+ *     column that lands with E1.10; until then `recordFailure` only asserts the
+ *     row exists (so draining an unknown client_seq is a loud error, not a
+ *     silent no-op) and leaves it eligible for retry. The rejection reason gets
+ *     a parameter once there's a column to store it in.
  */
 
 import type { TenantContext, TenantScoped } from './_tenant'
@@ -47,10 +49,10 @@ export interface PendingQueueRepo<B> {
   /** A row the server accepted; remove it from the queue. */
   markSent(clientSeq: number): Promise<void>
   /**
-   * Report a failed send attempt. Leaves the row queued for retry; the
-   * `reason` is for the caller's logging/debug surface, not persisted yet.
+   * Report a failed send attempt. Leaves the row queued for retry. Throws if
+   * `clientSeq` names no pending row for this tenant.
    */
-  recordFailure(clientSeq: number, reason: string): Promise<void>
+  recordFailure(clientSeq: number): Promise<void>
 }
 
 const DEFAULT_LIMIT = 500
@@ -77,15 +79,18 @@ export function makePendingQueueRepo<B>(
       )
     },
 
-    async recordFailure(clientSeq, _reason) {
-      // No status/reason column on the queue table yet (it lands with the
-      // E1.10 write path). The durability guarantee — a failed send keeps the
-      // event — is satisfied by leaving the row untouched. We still confirm the
-      // row exists and belongs to this tenant so a bad client_seq surfaces.
-      await db.exec(
+    async recordFailure(clientSeq) {
+      // No status/reason column on the queue table yet (it lands with the E1.10
+      // write path), so the durability guarantee — a failed send keeps the
+      // event — is met by leaving the row untouched. Assert it exists, though,
+      // so draining an unknown client_seq surfaces loudly instead of silently.
+      const rows = await db.exec(
         'SELECT 1 FROM local_pending_events WHERE tenant_id = ? AND client_seq = ?',
         [tenantId, clientSeq],
       )
+      if (rows.length === 0) {
+        throw new Error(`recordFailure: unknown client_seq ${clientSeq}`)
+      }
     },
   }
 }

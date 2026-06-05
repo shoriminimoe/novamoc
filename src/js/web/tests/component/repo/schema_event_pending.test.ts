@@ -131,9 +131,15 @@ describe('pendingQueueRepo', () => {
 
   it('recordFailure leaves the row queued for retry', async () => {
     const seq = await enqueue(HLC_1)
-    await repos.pending.recordFailure(seq, 'network down')
+    await repos.pending.recordFailure(seq)
 
     const pending = await repos.pending.listPending()
     expect(pending.map((p) => p.client_seq)).toEqual([seq])
+  })
+
+  it('recordFailure throws on an unknown client_seq', async () => {
+    await expect(repos.pending.recordFailure(999_999)).rejects.toThrow(
+      /unknown client_seq/,
+    )
   })
 })

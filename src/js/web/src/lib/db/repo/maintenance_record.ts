@@ -17,6 +17,7 @@ function rowToRecord<B>(row: unknown[]): TenantScoped<MaintenanceRecordRow, B> {
     id: row[0] as string,
     type_id: row[1] as string,
     asset_id: row[2] as string,
+    // Invariant: maintenance_records.properties is always a JSON object (ADR-012 fold).
     properties: parseJson(row[3]) as Record<string, unknown>,
     deleted: toBool(row[4]),
     row_state_hlc: row[5] as string,

@@ -22,6 +22,7 @@ function rowToAsset<B>(row: unknown[]): TenantScoped<AssetRow, B> {
   return {
     id: row[0] as string,
     type_id: row[1] as string,
+    // Invariant: assets.properties is always a JSON object (ADR-012 fold).
     properties: parseJson(row[2]) as Record<string, unknown>,
     deleted: toBool(row[3]),
     row_state_hlc: row[4] as string,
