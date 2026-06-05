@@ -10,6 +10,7 @@ from __future__ import annotations
 from advanced_alchemy.extensions.litestar import repository, service
 from sqlalchemy import func, select
 
+from novamoc.db._tenant_context import SKIP_TENANT_FILTER
 from novamoc.db.models.data import EventLog
 
 
@@ -33,6 +34,37 @@ class EventLogService(service.SQLAlchemyAsyncRepositoryService[EventLog]):
         stmt = select(func.coalesce(func.max(EventLog.seq), 0))
         result = await self.repository.session.execute(stmt)
         return int(result.scalar_one())
+
+    async def current_seq_all_tenants(self) -> int:
+        """Global ``MAX(event_log.seq)`` across every tenant (or 0).
+
+        Cross-tenant: uses the ``SKIP_TENANT_FILTER`` escape hatch, for the
+        broadcaster's start-at-tip. The ``_all_tenants`` suffix flags the
+        deliberate cross-tenant read.
+        """
+        stmt = select(func.coalesce(func.max(EventLog.seq), 0)).execution_options(
+            **{SKIP_TENANT_FILTER: True}
+        )
+        result = await self.repository.session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def list_after_all_tenants(
+        self, after_seq: int, limit: int
+    ) -> list[EventLog]:
+        """Rows with ``seq > after_seq`` across every tenant, ascending, capped
+        at ``limit``.
+
+        Cross-tenant (``SKIP_TENANT_FILTER``), for the broadcaster's drain.
+        """
+        stmt = (
+            select(EventLog)
+            .where(EventLog.seq > after_seq)
+            .order_by(EventLog.seq)
+            .limit(limit)
+            .execution_options(**{SKIP_TENANT_FILTER: True})
+        )
+        result = await self.repository.session.execute(stmt)
+        return list(result.scalars().all())
 
 
 __all__ = ("EventLogService",)
