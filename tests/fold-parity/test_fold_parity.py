@@ -151,6 +151,52 @@ def _scenario_events(scenario: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return list(scenario.get("events", []))
 
 
+def _fold_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Fold a scenario's bulk-snapshot rows into the parity projection shape.
+
+    Mirrors the vitest runner's ``foldSnapshot`` / client ``applySnapshotRow``:
+    snapshot rows are committed projection state, applied unconditionally. The
+    field-value rows name their entity FK ``asset_id`` /
+    ``maintenance_record_id`` on the wire; both normalise to ``entity_id``. The
+    result must equal the event fold's ``expected_projection`` —
+    snapshot-rows-fold == event-fold equivalence (ADR-015), independent of
+    catch-up (E1.8).
+    """
+
+    def entity(row: Mapping[str, Any], *, with_parent: bool) -> dict[str, Any]:
+        entry = {
+            "id": row["id"],
+            "type_id": row["type_id"],
+            "deleted": row["deleted"],
+            "row_state_hlc": row["row_state_hlc"],
+        }
+        if with_parent:
+            entry["asset_id"] = row["asset_id"]
+        return entry
+
+    def field(row: Mapping[str, Any], id_key: str) -> dict[str, Any]:
+        return {
+            "entity_id": row[id_key],
+            "field_id": row["field_id"],
+            "value_json": row["value_json"],
+            "hlc": row["hlc"],
+        }
+
+    return {
+        "assets": [entity(r, with_parent=False) for r in snapshot["assets"]],
+        "asset_field_values": [
+            field(r, "asset_id") for r in snapshot["asset_field_values"]
+        ],
+        "maintenance_records": [
+            entity(r, with_parent=True) for r in snapshot["maintenance_records"]
+        ],
+        "maintenance_record_field_values": [
+            field(r, "maintenance_record_id")
+            for r in snapshot["maintenance_record_field_values"]
+        ],
+    }
+
+
 def _entity_rows(rows: list[Any], *, with_parent: bool) -> list[dict[str, Any]]:
     """Project entity ORM rows to the structural columns the parity
     contract compares. ``name`` / ``properties`` are excluded — those are
@@ -239,3 +285,10 @@ async def test_server_fold_matches_expected(
     actual = await _read_projection(session)
     expected = _normalise_expected(scenario["expected_projection"])
     assert actual == expected
+
+    # Snapshot round-trip scenarios also carry the bulk-snapshot rows the
+    # server would emit; folding them must reproduce the same projection
+    # (ADR-015), keeping the client's snapshot ingest pinned to the event fold.
+    if "snapshot" in scenario:
+        snapshot_projection = _normalise_expected(_fold_snapshot(scenario["snapshot"]))
+        assert snapshot_projection == expected

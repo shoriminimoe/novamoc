@@ -48,6 +48,7 @@ import type {
   SchemaSnapshotWire,
   SchemaType,
   SchemaWireType,
+  SnapshotRow,
 } from './types'
 
 function flattenTypes(types: SchemaWireType[]): {
@@ -230,6 +231,75 @@ export function fold(
     applyRowState(tables, event)
     for (const [fieldId, value] of Object.entries(bodyValues(event.body))) {
       applyFieldValue(tables, event.instance_id, fieldId, value, event.hlc)
+    }
+  }
+  return next
+}
+
+/**
+ * Apply one `GET /snapshot` row to `projection`, returning a new projection.
+ * The input is left untouched.
+ *
+ * Snapshot rows are *already-committed* projection state — the server resolved
+ * LWW before serving them — so this is an unconditional write, not the
+ * HLC-guarded merge {@link fold} runs on events. It still honours the fold's
+ * materialization contract: entity rows carry only structural columns (`id`,
+ * `type_id`, `asset_id`, `deleted`, `row_state_hlc`); `name`/`properties` are
+ * never materialized (reconstructed from per-field rows at read time, ADR-015).
+ * The field-value rows carry their `hlc` so a subsequent event fold against
+ * this state stays LWW-correct (ADR-007). The four snapshot tables map onto the
+ * same four projection maps the fold writes, so applying every snapshot row
+ * yields the same projection as folding the events that produced them.
+ */
+export function applySnapshotRow(
+  projection: Projection,
+  snapshot: SnapshotRow,
+): Projection {
+  const next = cloneProjection(projection)
+  switch (snapshot.table) {
+    case 'assets': {
+      const { row } = snapshot
+      next.assets.set(row.id, {
+        id: row.id,
+        type_id: row.type_id,
+        deleted: row.deleted,
+        row_state_hlc: row.row_state_hlc,
+      })
+      break
+    }
+    case 'maintenance_records': {
+      const { row } = snapshot
+      next.maintenance_records.set(row.id, {
+        id: row.id,
+        type_id: row.type_id,
+        asset_id: row.asset_id,
+        deleted: row.deleted,
+        row_state_hlc: row.row_state_hlc,
+      })
+      break
+    }
+    case 'asset_field_values': {
+      const { row } = snapshot
+      next.asset_field_values.set(fieldKey(row.entity_id, row.field_id), {
+        entity_id: row.entity_id,
+        field_id: row.field_id,
+        value_json: row.value_json,
+        hlc: row.hlc,
+      })
+      break
+    }
+    case 'maintenance_record_field_values': {
+      const { row } = snapshot
+      next.maintenance_record_field_values.set(
+        fieldKey(row.entity_id, row.field_id),
+        {
+          entity_id: row.entity_id,
+          field_id: row.field_id,
+          value_json: row.value_json,
+          hlc: row.hlc,
+        },
+      )
+      break
     }
   }
   return next

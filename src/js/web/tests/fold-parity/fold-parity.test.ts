@@ -17,9 +17,13 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { emptyProjection, fold } from '../../src/lib/db/fold'
+import { applySnapshotRow, emptyProjection, fold } from '../../src/lib/db/fold'
 import { gateEvent } from '../../src/lib/sync/schema'
-import type { EventEnvelope, Projection } from '../../src/lib/db/types'
+import type {
+  EventEnvelope,
+  Projection,
+  SnapshotRow,
+} from '../../src/lib/db/types'
 
 /**
  * An event in a gating scenario: a fold envelope plus the schema version it
@@ -40,10 +44,40 @@ interface Gating {
   phases: GatingPhase[]
 }
 
+/**
+ * The bulk-snapshot rows the server would emit for this scenario's tenant —
+ * the field-value rows name their entity FK `asset_id` / `maintenance_record_id`
+ * on the wire, mirroring `domain/snapshot/_payloads.py`. Present only on
+ * snapshot round-trip scenarios.
+ */
+interface SnapshotEntityRow {
+  id: string
+  type_id: string
+  asset_id?: string
+  deleted: boolean
+  row_state_hlc: string
+}
+
+interface SnapshotFieldRow {
+  asset_id?: string
+  maintenance_record_id?: string
+  field_id: string
+  value_json: unknown
+  hlc: string
+}
+
+interface SnapshotBlock {
+  assets: SnapshotEntityRow[]
+  asset_field_values: SnapshotFieldRow[]
+  maintenance_records: SnapshotEntityRow[]
+  maintenance_record_field_values: SnapshotFieldRow[]
+}
+
 interface Scenario {
   name: string
   events?: EventEnvelope[]
   gating?: Gating
+  snapshot?: SnapshotBlock
   expected_projection: ExpectedProjection
 }
 
@@ -166,6 +200,60 @@ function fieldRows(values: Projection['asset_field_values']): ExpectedFieldRow[]
     )
 }
 
+/**
+ * Fold a scenario's `snapshot` block through `applySnapshotRow`, in the
+ * server's fixed table order, starting from an empty projection. This is the
+ * client's ingest of the bulk snapshot the server would emit; the result must
+ * equal the event fold's `expected_projection` — snapshot-rows-fold ==
+ * event-fold equivalence (ADR-015). Independent of catch-up (E1.8).
+ */
+function foldSnapshot(snapshot: SnapshotBlock): Projection {
+  const rows: SnapshotRow[] = [
+    ...snapshot.assets.map(
+      (row): SnapshotRow => ({ table: 'assets', row }),
+    ),
+    ...snapshot.asset_field_values.map(
+      (row): SnapshotRow => ({
+        table: 'asset_field_values',
+        row: {
+          entity_id: row.asset_id ?? '',
+          field_id: row.field_id,
+          value_json: row.value_json,
+          hlc: row.hlc,
+        },
+      }),
+    ),
+    ...snapshot.maintenance_records.map(
+      (row): SnapshotRow => ({
+        table: 'maintenance_records',
+        row: {
+          id: row.id,
+          type_id: row.type_id,
+          asset_id: row.asset_id ?? '',
+          deleted: row.deleted,
+          row_state_hlc: row.row_state_hlc,
+        },
+      }),
+    ),
+    ...snapshot.maintenance_record_field_values.map(
+      (row): SnapshotRow => ({
+        table: 'maintenance_record_field_values',
+        row: {
+          entity_id: row.maintenance_record_id ?? '',
+          field_id: row.field_id,
+          value_json: row.value_json,
+          hlc: row.hlc,
+        },
+      }),
+    ),
+  ]
+  let projection = emptyProjection()
+  for (const row of rows) {
+    projection = applySnapshotRow(projection, row)
+  }
+  return projection
+}
+
 function actualProjection(projection: Projection): ExpectedProjection {
   return {
     assets: entityRows(projection.assets, false),
@@ -208,5 +296,16 @@ describe('LWW fold parity (shared scenarios)', () => {
         sortExpected(scenario.expected_projection),
       )
     })
+
+    // Snapshot round-trip scenarios also carry the bulk-snapshot rows the
+    // server would emit; folding them must reproduce the same projection.
+    if (scenario.snapshot) {
+      it(`snapshot ingest matches event fold: ${scenario.name} (${file})`, () => {
+        const result = foldSnapshot(scenario.snapshot as SnapshotBlock)
+        expect(actualProjection(result)).toEqual(
+          sortExpected(scenario.expected_projection),
+        )
+      })
+    }
   }
 })

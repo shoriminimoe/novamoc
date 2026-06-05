@@ -58,6 +58,17 @@ const STEPS: readonly ((db: Database) => void)[] = [
       PRIMARY KEY (tenant_id, seq)
     )`)
   },
+  // 3 -> 4: checkpoint columns for a resumable bulk snapshot ingest (ADR-015).
+  // Fresh DBs already have them from the IF NOT EXISTS DDL above, so guard each
+  // ALTER against the duplicate-column error for DBs that predate them.
+  (db) => {
+    if (!hasColumn(db, 'sync_state', 'snapshot_page')) {
+      db.exec('ALTER TABLE sync_state ADD COLUMN snapshot_page TEXT')
+    }
+    if (!hasColumn(db, 'sync_state', 'snapshot_schema_version')) {
+      db.exec('ALTER TABLE sync_state ADD COLUMN snapshot_schema_version INTEGER')
+    }
+  },
 ]
 
 export const SCHEMA_VERSION = STEPS.length

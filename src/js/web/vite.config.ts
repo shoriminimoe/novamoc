@@ -26,7 +26,14 @@ const crossOriginIsolation: Plugin = {
 // uses relative paths so production deployments can serve client and API
 // from the same origin without rewriting URLs.
 const API_PROXY_TARGET = process.env.NOVAMOC_API_URL ?? 'http://127.0.0.1:8000'
-const API_PROXY_PATHS = ['/auth', '/schema', '/events', '/problems', '/openapi']
+const API_PROXY_PATHS = [
+  '/auth',
+  '/schema',
+  '/events',
+  '/snapshot',
+  '/problems',
+  '/openapi',
+]
 
 // Serve dev over HTTPS with a self-signed cert by default. Mobile
 // testing puts the dev server on a LAN IP, which is a non-secure

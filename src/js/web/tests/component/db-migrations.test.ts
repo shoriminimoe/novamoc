@@ -108,4 +108,42 @@ describe('migrate', () => {
     expect(userVersion(db)).toBe(SCHEMA_VERSION)
     db.close()
   })
+
+  it('upgrades a v3 DB: adds the snapshot-resume columns, preserves the row', () => {
+    // A build stamped at user_version=3 had sync_state without the snapshot
+    // checkpoint columns. The 3->4 step backfills both; a fresh DB never takes
+    // the ALTER path, so only this exercises it.
+    const db = freshDb()
+    db.exec(`CREATE TABLE sync_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_seen_seq INTEGER NOT NULL DEFAULT 0,
+      active_schema_version INTEGER NOT NULL DEFAULT 0,
+      node_id TEXT,
+      last_sync_at TEXT,
+      last_hlc TEXT
+    )`)
+    db.exec("INSERT INTO sync_state (id, last_seen_seq, last_hlc) VALUES (1, 9, 'h-9')")
+    db.exec('PRAGMA user_version = 3')
+
+    migrate(db)
+
+    const cols = db.exec({
+      sql: "SELECT name FROM pragma_table_info('sync_state') WHERE name IN ('snapshot_page', 'snapshot_schema_version')",
+      returnValue: 'resultRows',
+      rowMode: 'array',
+    })
+    expect(cols.length).toBe(2)
+    expect(userVersion(db)).toBe(SCHEMA_VERSION)
+
+    const [[seq, lastHlc, page, snapVersion]] = db.exec({
+      sql: 'SELECT last_seen_seq, last_hlc, snapshot_page, snapshot_schema_version FROM sync_state WHERE id = 1',
+      returnValue: 'resultRows',
+      rowMode: 'array',
+    })
+    expect(seq).toBe(9)
+    expect(lastHlc).toBe('h-9')
+    expect(page).toBeNull()
+    expect(snapVersion).toBeNull()
+    db.close()
+  })
 })
