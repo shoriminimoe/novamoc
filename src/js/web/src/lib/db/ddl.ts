@@ -211,16 +211,26 @@ export const DDL: readonly string[] = [
   // the table can hold at most one row.
   // ``last_hlc`` is the most recent HLC this node issued (ADR-006); the
   // client clock resumes from it on reload so a reopened tab can't regress.
-  // It is declared last so this fresh-DB column order matches the order an
-  // older DB ends up with after ``ALTER TABLE ... ADD COLUMN`` (which always
-  // appends) in the v1->v2 migration.
+  //
+  // ``snapshot_page`` / ``snapshot_schema_version`` checkpoint an in-flight
+  // bulk snapshot ingest (ADR-015): the opaque ``?page=`` token to resume
+  // from after a transport error, and the ``schema_version`` the transfer
+  // started under. A subsequent batch reporting a different version means the
+  // server advanced past this snapshot — it's invalidated and the ingest
+  // restarts from scratch. Both are ``NULL`` when no ingest is in flight.
+  //
+  // The trailing columns are declared in the order an older DB ends up with
+  // after successive ``ALTER TABLE ... ADD COLUMN`` (which always appends), so
+  // a fresh DB and a migrated DB have an identical column layout.
   `CREATE TABLE IF NOT EXISTS sync_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     last_seen_seq INTEGER NOT NULL DEFAULT 0,
     active_schema_version INTEGER NOT NULL DEFAULT 0,
     node_id TEXT,
     last_sync_at TEXT,
-    last_hlc TEXT
+    last_hlc TEXT,
+    snapshot_page TEXT,
+    snapshot_schema_version INTEGER
   )`,
 
   `INSERT OR IGNORE INTO sync_state (id) VALUES (1)`,

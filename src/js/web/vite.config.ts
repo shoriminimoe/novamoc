@@ -26,7 +26,14 @@ const crossOriginIsolation: Plugin = {
 // uses relative paths so production deployments can serve client and API
 // from the same origin without rewriting URLs.
 const API_PROXY_TARGET = process.env.NOVAMOC_API_URL ?? 'http://127.0.0.1:8000'
-const API_PROXY_PATHS = ['/auth', '/schema', '/events', '/problems', '/openapi']
+const API_PROXY_PATHS = [
+  '/auth',
+  '/schema',
+  '/events',
+  '/snapshot',
+  '/problems',
+  '/openapi',
+]
 
 // Serve dev over HTTPS with a self-signed cert by default. Mobile
 // testing puts the dev server on a LAN IP, which is a non-secure
@@ -93,6 +100,10 @@ export default defineConfig({
         // covered by tests/e2e/db-bootstrap.spec.ts.
         'src/lib/db/worker.ts',
         'src/lib/db/worker-handle.ts',
+        // Debug-only sync route: drives ingestSnapshot against the OPFS DB
+        // worker, so it's only reachable in a real browser — covered by the
+        // Playwright snapshot-ingest spec, not jsdom.
+        'src/routes/_debug/sync/+page.svelte',
       ],
       // No `thresholds:` block — the ratchet does the gating. Setting a
       // threshold here would either duplicate the ratchet's role or fight it.
