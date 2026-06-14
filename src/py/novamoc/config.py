@@ -139,6 +139,11 @@ class AppSettings:
             waits for the client's first (hello) frame before closing
             the connection. Resource-leak guard against an opened
             socket that never speaks.
+        broadcaster_batch_size: Max event_log rows the fan-out broadcaster
+            drains per query.
+        broadcaster_enabled: Whether the background fan-out broadcaster loop
+            runs. Production-safe default True; the test suite disables the
+            loop and drives drain_once() directly for determinism.
     """
 
     docs_base_url: str = field(
@@ -154,6 +159,12 @@ class AppSettings:
     )
     ws_handshake_timeout_seconds: float = field(
         default_factory=_float_env("NOVAMOC_WS_HANDSHAKE_TIMEOUT_SECONDS", 10.0)
+    )
+    broadcaster_batch_size: int = field(
+        default_factory=_int_env("NOVAMOC_BROADCASTER_BATCH_SIZE", 500)
+    )
+    broadcaster_enabled: bool = field(
+        default_factory=_bool_env("NOVAMOC_BROADCASTER_ENABLED", True)
     )
 
 

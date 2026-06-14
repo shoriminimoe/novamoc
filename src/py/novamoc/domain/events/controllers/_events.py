@@ -76,6 +76,15 @@ if TYPE_CHECKING:
     from novamoc.domain.events._payloads import EventEnvelope
 
 
+async def _notify_broadcaster(request: Request) -> None:
+    """Post-commit fan-out signal. ``after_response`` runs after the
+    autocommit ``before_send`` commit, so the accepted rows are committed
+    and visible to the broadcaster's next drain. No DB or fan-out work here
+    — just the signal."""
+    if getattr(request.state, "broadcaster_notify", False):
+        request.app.state.event_broadcaster.notify()
+
+
 async def _provide_drift_limit_seconds(state: State) -> float:
     return state.settings.app.hlc_drift_limit_seconds
 
@@ -194,6 +203,7 @@ async def _process_event(event: EventEnvelope, ctx: _BatchContext) -> EventOutco
 class EventsController(Controller):
     path = "/events"
     tags = ("events",)
+    after_response = staticmethod(_notify_broadcaster)
     dependencies = (
         {
             "drift_limit_seconds": Provide(_provide_drift_limit_seconds),
@@ -244,6 +254,8 @@ class EventsController(Controller):
         )
 
         outcomes = [await _process_event(event, ctx) for event in data.events]
+        if any(o.outcome == "accepted" for o in outcomes):
+            request.state.broadcaster_notify = True
         return EventBatchResponse(outcomes=tuple(outcomes))
 
     @get(
