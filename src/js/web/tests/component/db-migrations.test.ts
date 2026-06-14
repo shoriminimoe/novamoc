@@ -88,4 +88,24 @@ describe('migrate', () => {
     expect(lastHlc).toBeNull()
     db.close()
   })
+
+  it('upgrades a v2 DB: adds the pending_schema_buffer table', () => {
+    // A build stamped at user_version=2 had every table except the
+    // schema-version-gated buffer. The 2->3 step backfills it.
+    const db = freshDb()
+    db.exec('CREATE TABLE sync_state (id INTEGER PRIMARY KEY CHECK (id = 1))')
+    db.exec('INSERT INTO sync_state (id) VALUES (1)')
+    db.exec('PRAGMA user_version = 2')
+
+    migrate(db)
+
+    const hasBuffer = db.exec({
+      sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_schema_buffer'",
+      returnValue: 'resultRows',
+      rowMode: 'array',
+    })
+    expect(hasBuffer.length).toBe(1)
+    expect(userVersion(db)).toBe(SCHEMA_VERSION)
+    db.close()
+  })
 })

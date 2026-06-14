@@ -29,6 +29,7 @@ const EXPECTED_TABLES = [
   'schema_change_log',
   'event_log',
   'local_pending_events',
+  'pending_schema_buffer',
   'sync_state',
 ].sort()
 

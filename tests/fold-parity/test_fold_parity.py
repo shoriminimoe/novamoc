@@ -112,6 +112,45 @@ def _envelope(raw: Mapping[str, Any]) -> EventEnvelope:
     )
 
 
+def _gate(event_schema_version: int, active_version: int) -> str:
+    """ADR-009 gate, mirroring the client's ``gateEvent``."""
+    return "apply" if event_schema_version <= active_version else "buffer"
+
+
+def _gated_event_order(gating: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Replay a gating scenario and return events in applicable order.
+
+    Symmetric with the vitest runner's ``gatedEventOrder``: within each phase
+    the active version rises monotonically, arriving events gate to apply or
+    buffer, then every parked event the new version unblocks releases in
+    ``seq`` order. The fold then runs over this stream.
+    """
+    applied: list[Mapping[str, Any]] = []
+    buffer: list[Mapping[str, Any]] = []
+    active = 0
+    for phase in gating["phases"]:
+        active = max(active, phase["active_schema_version"])
+        for event in phase["events"]:
+            if _gate(event["schema_version"], active) == "apply":
+                applied.append(event)
+            else:
+                buffer.append(event)
+        released = sorted(
+            (e for e in buffer if _gate(e["schema_version"], active) == "apply"),
+            key=lambda e: e["seq"],
+        )
+        for event in released:
+            applied.append(event)
+            buffer.remove(event)
+    return applied
+
+
+def _scenario_events(scenario: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    if "gating" in scenario:
+        return _gated_event_order(scenario["gating"])
+    return list(scenario.get("events", []))
+
+
 def _entity_rows(rows: list[Any], *, with_parent: bool) -> list[dict[str, Any]]:
     """Project entity ORM rows to the structural columns the parity
     contract compares. ``name`` / ``properties`` are excluded — those are
@@ -193,7 +232,7 @@ async def test_server_fold_matches_expected(
         event_log_service=EventLogService(session=session),
         schema_version=_SCHEMA_VERSION,
     )
-    for raw in scenario["events"]:
+    for raw in _scenario_events(scenario):
         await bundle.append_event(_envelope(raw))
     await session.flush()
 

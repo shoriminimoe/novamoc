@@ -18,11 +18,32 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { emptyProjection, fold } from '../../src/lib/db/fold'
+import { gateEvent } from '../../src/lib/sync/schema'
 import type { EventEnvelope, Projection } from '../../src/lib/db/types'
+
+/**
+ * An event in a gating scenario: a fold envelope plus the schema version it
+ * carries and its replication `seq` (release order). Mirrors the server
+ * runner's `_GatedEvent`.
+ */
+interface GatedEvent extends EventEnvelope {
+  seq: number
+  schema_version: number
+}
+
+interface GatingPhase {
+  active_schema_version: number
+  events: GatedEvent[]
+}
+
+interface Gating {
+  phases: GatingPhase[]
+}
 
 interface Scenario {
   name: string
-  events: EventEnvelope[]
+  events?: EventEnvelope[]
+  gating?: Gating
   expected_projection: ExpectedProjection
 }
 
@@ -67,6 +88,45 @@ function loadScenarios(): { file: string; scenario: Scenario }[] {
         readFileSync(join(SCENARIO_DIR, file), 'utf-8'),
       ) as Scenario,
     }))
+}
+
+/**
+ * Replay a gating scenario through the ADR-009 gate and return the events in
+ * the order they become applicable. Within a phase: the active version rises
+ * (monotonic), arriving events that gate to `'apply'` fold immediately while
+ * `'buffer'` ones are parked, then every parked event the new version
+ * unblocks is released in `seq` order. Symmetric with the pytest runner so
+ * the same JSON folds identically in both languages.
+ */
+function gatedEventOrder(gating: Gating): EventEnvelope[] {
+  const applied: EventEnvelope[] = []
+  const buffer: GatedEvent[] = []
+  let active = 0
+  for (const phase of gating.phases) {
+    active = Math.max(active, phase.active_schema_version)
+    for (const event of phase.events) {
+      if (gateEvent(event, active) === 'apply') {
+        applied.push(event)
+      } else {
+        buffer.push(event)
+      }
+    }
+    const released = buffer
+      .filter((e) => gateEvent(e, active) === 'apply')
+      .sort((a, b) => a.seq - b.seq)
+    for (const event of released) {
+      applied.push(event)
+      buffer.splice(buffer.indexOf(event), 1)
+    }
+  }
+  return applied
+}
+
+function scenarioEvents(scenario: Scenario): EventEnvelope[] {
+  if (scenario.gating) {
+    return gatedEventOrder(scenario.gating)
+  }
+  return scenario.events ?? []
 }
 
 function entityRows(
@@ -143,7 +203,7 @@ describe('LWW fold parity (shared scenarios)', () => {
 
   for (const { file, scenario } of scenarios) {
     it(`matches expected projection: ${scenario.name} (${file})`, () => {
-      const result = fold(emptyProjection(), scenario.events)
+      const result = fold(emptyProjection(), scenarioEvents(scenario))
       expect(actualProjection(result)).toEqual(
         sortExpected(scenario.expected_projection),
       )

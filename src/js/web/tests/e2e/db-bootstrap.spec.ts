@@ -36,6 +36,7 @@ const EXPECTED_TABLES = [
   'maintenance_record_type_fields',
   'maintenance_record_types',
   'maintenance_records',
+  'pending_schema_buffer',
   'schema_change_log',
   'sync_state',
 ]
