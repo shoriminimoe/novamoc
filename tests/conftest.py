@@ -201,7 +201,7 @@ def settings() -> Settings:
             before_send_handler="autocommit",
         ),
         server=ServerSettings(granian=False),
-        app=AppSettings(docs_base_url="http://test"),
+        app=AppSettings(docs_base_url="http://test", broadcaster_enabled=False),
         auth=AuthSettings(
             argon2_time_cost=1,
             argon2_memory_cost_kib=8192,

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import msgspec
 import pytest
 
 from novamoc.domain.events._pagination import EventLogCursorPaginator
 from novamoc.domain.events._payloads import (
+    Activated,
     Created,
     EntityFamily,
     EventEnvelope,
@@ -111,3 +114,18 @@ async def test_get_items_exact_page_boundary_signals_caught_up(
     items, cursor = await paginator.get_items(cursor=None, results_per_page=4)
     assert len(items) == 4
     assert cursor is None  # the +1 fetch returned only 4, so we're done
+
+
+def test_recorded_event_encodes_type_tag() -> None:
+    rec = RecordedEvent(
+        seq=1,
+        schema_version=1,
+        hlc="hlc-1",
+        family=EntityFamily.ASSET,
+        type_id=uuid4(),
+        instance_id=uuid4(),
+        body=Activated(),
+        received_at=datetime.datetime.now(datetime.UTC),
+    )
+    decoded = msgspec.json.decode(msgspec.json.encode(rec))
+    assert decoded["type"] == "event"

@@ -159,6 +159,24 @@ class TestAppSettings:
         monkeypatch.setenv("NOVAMOC_WS_HANDSHAKE_TIMEOUT_SECONDS", "2.5")
         assert AppSettings().ws_handshake_timeout_seconds == 2.5
 
+    def test_broadcaster_batch_size_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVAMOC_BROADCASTER_BATCH_SIZE", raising=False)
+        assert AppSettings().broadcaster_batch_size == 500
+
+    def test_broadcaster_enabled_default_true(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NOVAMOC_BROADCASTER_ENABLED", raising=False)
+        assert AppSettings().broadcaster_enabled is True
+
+    def test_broadcaster_enabled_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NOVAMOC_BROADCASTER_ENABLED", "false")
+        assert AppSettings().broadcaster_enabled is False
+
 
 class TestAuthSettings:
     def test_defaults_are_production_safe(
