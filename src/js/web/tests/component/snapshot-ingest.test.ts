@@ -398,5 +398,53 @@ describe('ingestSnapshot', () => {
       expect(second.paths[0]).toBe('/snapshot?page=PAGE-1')
       expect(second.paths[1]).toBe('/snapshot')
     })
+
+    it('nulls the checkpoint at invalidation so an interrupted restart resumes clean', async () => {
+      const db = await openLocalDb(TENANT, { memory: true })
+      await seedSchema(db)
+
+      // Batch 1 (v7) checkpoints PAGE-1. Batch 2 reports v8 → invalidation,
+      // which must null the checkpoint and clear the projection before the
+      // restart. We then fail the restart's first fetch to simulate an
+      // interruption in exactly that window.
+      const first = scriptedClient([
+        fullTransfer(7)[0],
+        {
+          schema_version: 8,
+          page: 'PAGE-X',
+          cursor: null,
+          body: { table: 'assets', items: [] },
+        },
+        () => {
+          throw new Error('network down')
+        },
+      ])
+      await expect(
+        ingestSnapshot({ store: db, tenantId: TENANT, client: first.client }),
+      ).rejects.toThrow('network down')
+
+      // No resumable token survives the invalidation: a crash here leaves
+      // snapshot_page NULL and an empty projection, not the stale PAGE-1/v7.
+      const [[page, snapVersion]] = await rows(
+        db,
+        'SELECT snapshot_page, snapshot_schema_version FROM sync_state WHERE id = 1',
+      )
+      expect(page).toBeNull()
+      expect(snapVersion).toBeNull()
+      const [[assetCount]] = await rows(db, 'SELECT count(*) FROM assets')
+      expect(assetCount).toBe(0)
+      // The interrupted restart fetched from the start, not the invalid token.
+      expect(first.paths.at(-1)).toBe('/snapshot')
+
+      // Reload: a fresh run restarts from scratch (page null), not PAGE-1.
+      const second = scriptedClient(fullTransfer(8))
+      const result = await ingestSnapshot({
+        store: db,
+        tenantId: TENANT,
+        client: second.client,
+      })
+      expect(result).toEqual({ cursor: 42, schema_version: 8 })
+      expect(second.paths[0]).toBe('/snapshot')
+    })
   })
 })

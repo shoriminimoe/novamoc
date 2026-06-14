@@ -280,9 +280,13 @@ export async function ingestSnapshot(
       const batch = await fetchBatch(client, page)
 
       // Invalidation: a version different from the one this transfer began under
-      // means a schema change committed mid-transfer (ADR-015). Discard the
-      // partial projection and restart from the beginning.
+      // means a schema change committed mid-transfer (ADR-015). The partial
+      // projection and the checkpoint are both invalid. Null the checkpoint
+      // BEFORE wiping rows so an interruption in this window leaves
+      // `snapshot_page = NULL` — the next run re-clears and restarts from
+      // scratch rather than resuming the invalidated token.
       if (snapshotVersion !== null && batch.schema_version !== snapshotVersion) {
+        await persistInFlight(store, { page: null, schema_version: null })
         await clearProjection(store, tenantId)
         page = null
         snapshotVersion = null
